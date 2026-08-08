@@ -1,0 +1,1726 @@
+/* KP Kitchen Premium Admin CSS Dashboard Theme */
+
+:root {
+  /* Colors */
+  --primary-color: #FF6B6B;
+  --primary-hover: #FF5252;
+  --primary-gradient: linear-gradient(135deg, #FF6B6B, #FF8E53);
+  --success-color: #2ECC71;
+  --warning-color: #F1C40F;
+  --danger-color: #E74C3C;
+  --info-color: #3498DB;
+  
+  /* Fonts */
+  --font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  --font-title: 'Outfit', sans-serif;
+
+  /* Layout */
+  --sidebar-width: 260px;
+  --header-height: 70px;
+  --border-radius: 16px;
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.08);
+
+  /* Light Theme Variables */
+  --bg-color: #F8F9FA;
+  --panel-bg: #FFFFFF;
+  --panel-border: rgba(0, 0, 0, 0.05);
+  --text-primary: #1E293B;
+  --text-secondary: #64748B;
+  --text-muted: #94A3B8;
+  --sidebar-bg: #0F172A;
+  --sidebar-text: #E2E8F0;
+  --sidebar-active: #FF6B6B;
+  --sidebar-hover: rgba(255, 255, 255, 0.08);
+  --modal-overlay: rgba(15, 23, 42, 0.4);
+}
+
+[data-kp-theme="dark"] {
+  /* Dark Theme Variables */
+  --bg-color: #0B0F19;
+  --panel-bg: rgba(22, 28, 45, 0.7);
+  --panel-border: rgba(255, 255, 255, 0.05);
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --sidebar-bg: #0B0E14;
+  --sidebar-text: #E2E8F0;
+  --sidebar-active: #FF6B6B;
+  --sidebar-hover: rgba(255, 255, 255, 0.04);
+  --modal-overlay: rgba(0, 0, 0, 0.8);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+/* Global Reset & Base */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body.kp_kitchen_admin_panel_body {
+  font-family: var(--font-family);
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: var(--transition);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-color);
+}
+
+/* Authentication Visual Pages styling */
+.kp_kitchen_admin_panel_auth_body {
+  background: radial-gradient(circle at 10% 20%, rgba(255,107,107,0.15) 0%, rgba(255,142,83,0.15) 90.1%), var(--bg-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.kp_kitchen_admin_panel_auth_shell {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 24px;
+  display: flex;
+  overflow: hidden;
+  width: 1000px;
+  max-width: 100%;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.kp_kitchen_admin_panel_auth_visual {
+  background: var(--primary-gradient);
+  color: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 48px;
+  width: 50%;
+  position: relative;
+}
+
+.kp_kitchen_admin_panel_auth_visual::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(circle at 80% 20%, rgba(255,255,255,0.2) 0%, transparent 60%);
+}
+
+.kp_kitchen_admin_panel_auth_brand {
+  font-family: var(--font-title);
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.kp_kitchen_admin_panel_auth_badge {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 30px;
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  display: inline-block;
+  margin-bottom: 16px;
+}
+
+.kp_kitchen_admin_panel_auth_title {
+  font-family: var(--font-title);
+  font-size: 2.2rem;
+  font-weight: 800;
+  line-height: 1.25;
+  margin-bottom: 16px;
+  letter-spacing: -1px;
+}
+
+.kp_kitchen_admin_panel_auth_text {
+  opacity: 0.85;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.kp_kitchen_admin_panel_auth_form_wrap {
+  padding: 48px;
+  width: 50%;
+  display: flex;
+  align-items: center;
+}
+
+.kp_kitchen_admin_panel_auth_form {
+  width: 100%;
+}
+
+.kp_kitchen_admin_panel_auth_form_heading {
+  margin-bottom: 32px;
+}
+
+.kp_kitchen_admin_panel_auth_eyebrow {
+  color: var(--primary-color);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.kp_kitchen_admin_panel_auth_form_title {
+  font-family: var(--font-title);
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 4px;
+}
+
+.kp_kitchen_admin_panel_auth_form_text {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-top: 8px;
+}
+
+.kp_kitchen_admin_panel_auth_options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 20px 0 24px 0;
+}
+
+.kp_kitchen_admin_panel_checkbox_label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.kp_kitchen_admin_panel_checkbox {
+  accent-color: var(--primary-color);
+  width: 16px;
+  height: 16px;
+}
+
+.kp_kitchen_admin_panel_checkbox_text {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.kp_kitchen_admin_panel_auth_switch {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-top: 24px;
+}
+
+.kp_kitchen_admin_panel_auth_link {
+  color: var(--primary-color);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.kp_kitchen_admin_panel_auth_link:hover {
+  text-decoration: underline;
+}
+
+.kp_kitchen_admin_panel_demo_note {
+  background: var(--bg-color);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-top: 20px;
+  border: 1px dashed var(--panel-border);
+}
+
+/* Dashboard Core Layout */
+.kp_kitchen_admin_panel_app {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Sidebar Styling */
+.kp_kitchen_admin_panel_sidebar {
+  width: var(--sidebar-width);
+  background-color: var(--sidebar-bg);
+  color: var(--sidebar-text);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
+  border-right: 1px solid var(--panel-border);
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_sidebar_brand {
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.kp_kitchen_admin_panel_brand_mark {
+  background: var(--primary-gradient);
+  color: #FFFFFF;
+  font-family: var(--font-title);
+  font-weight: 800;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-size: 1.1rem;
+}
+
+.kp_kitchen_admin_panel_brand_text_wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.kp_kitchen_admin_panel_brand_name {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: -0.2px;
+}
+
+.kp_kitchen_admin_panel_brand_subtitle {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.kp_kitchen_admin_panel_sidebar_close {
+  display: none;
+  background: transparent;
+  border: 0;
+  color: #FFFFFF;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.kp_kitchen_admin_panel_navigation {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 12px;
+}
+
+.kp_kitchen_admin_panel_nav_group_title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 1.5px;
+  margin: 16px 0 8px 8px;
+}
+
+.kp_kitchen_admin_panel_nav_item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 4px;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_nav_item:hover {
+  background-color: var(--sidebar-hover);
+}
+
+.kp_kitchen_admin_panel_nav_item_active {
+  background: var(--primary-gradient) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+}
+
+.kp_kitchen_admin_panel_nav_icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.kp_kitchen_admin_panel_nav_badge {
+  margin-left: auto;
+  background: var(--primary-color);
+  color: #FFFFFF;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.kp_kitchen_admin_panel_sidebar_footer {
+  padding: 20px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.kp_kitchen_admin_panel_sidebar_help {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.kp_kitchen_admin_panel_sidebar_help_title {
+  font-size: 0.8rem;
+  display: block;
+}
+
+.kp_kitchen_admin_panel_sidebar_help_text {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.kp_kitchen_admin_panel_logout_button {
+  width: 100%;
+  background: rgba(231, 76, 60, 0.15);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  color: #E74C3C;
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_logout_button:hover {
+  background: #E74C3C;
+  color: #FFFFFF;
+}
+
+/* Sidebar Overlay */
+.kp_kitchen_admin_panel_sidebar_overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 99;
+}
+
+/* Main Dashboard section layout */
+.kp_kitchen_admin_panel_main {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header Styling */
+.kp_kitchen_admin_panel_header {
+  height: var(--header-height);
+  background-color: var(--panel-bg);
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_header_left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.kp_kitchen_admin_panel_menu_button {
+  display: none;
+  background: transparent;
+  border: 0;
+  font-size: 1.5rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.kp_kitchen_admin_panel_page_title {
+  font-family: var(--font-title);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.kp_kitchen_admin_panel_page_subtitle {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.kp_kitchen_admin_panel_header_right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.kp_kitchen_admin_panel_header_search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.kp_kitchen_admin_panel_header_search_icon {
+  position: absolute;
+  left: 12px;
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+.kp_kitchen_admin_panel_header_search_input {
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  height: 36px;
+  padding: 0 16px 0 32px;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  outline: none;
+  width: 220px;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_header_search_input:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.15);
+  width: 260px;
+}
+
+.kp_kitchen_admin_panel_theme_button {
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  color: var(--text-primary);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_theme_button:hover {
+  background: var(--panel-border);
+}
+
+.kp_kitchen_admin_panel_header_notification_button {
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  color: var(--text-primary);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_header_notification_button:hover {
+  background: var(--panel-border);
+}
+
+.kp_kitchen_admin_panel_header_notification_count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--primary-color);
+  color: #FFFFFF;
+  font-size: 0.65rem;
+  font-weight: 700;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--panel-bg);
+}
+
+.kp_kitchen_admin_panel_admin_profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.kp_kitchen_admin_panel_admin_avatar {
+  background: var(--primary-gradient);
+  color: #FFFFFF;
+  font-family: var(--font-title);
+  font-weight: 700;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kp_kitchen_admin_panel_admin_info {
+  display: flex;
+  flex-direction: column;
+}
+
+.kp_kitchen_admin_panel_admin_name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.kp_kitchen_admin_panel_admin_role {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+/* Page Content View Wrap */
+.kp_kitchen_admin_panel_content {
+  flex: 1;
+  padding: 32px;
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* Welcome Banner card widget */
+.kp_kitchen_admin_panel_welcome_banner {
+  background: var(--primary-gradient);
+  color: #FFFFFF;
+  border-radius: var(--border-radius);
+  padding: 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+  box-shadow: 0 10px 30px rgba(255, 107, 107, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.kp_kitchen_admin_panel_welcome_banner::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(circle at 90% 50%, rgba(255,255,255,0.15) 0%, transparent 60%);
+}
+
+.kp_kitchen_admin_panel_welcome_tag {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.kp_kitchen_admin_panel_welcome_title {
+  font-family: var(--font-title);
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-top: 12px;
+  margin-bottom: 8px;
+}
+
+.kp_kitchen_admin_panel_welcome_text {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+/* Statistics cards grids styling */
+.kp_kitchen_admin_panel_stats_grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.kp_kitchen_admin_panel_stats_grid_three {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.kp_kitchen_admin_panel_stat_card {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--border-radius);
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_stat_card:hover {
+  transform: translateY(-4px);
+}
+
+.kp_kitchen_admin_panel_stat_icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.bg-primary-soft { background: rgba(255, 107, 107, 0.1); }
+.bg-success-soft { background: rgba(46, 204, 113, 0.1); }
+.bg-warning-soft { background: rgba(241, 196, 15, 0.1); }
+.bg-info-soft { background: rgba(52, 152, 219, 0.1); }
+
+.kp_kitchen_admin_panel_stat_content {
+  display: flex;
+  flex-direction: column;
+}
+
+.kp_kitchen_admin_panel_stat_label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.kp_kitchen_admin_panel_stat_value {
+  font-family: var(--font-title);
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 2px 0;
+}
+
+.kp_kitchen_admin_panel_stat_hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* Charts Analytics Grid styling */
+.kp_kitchen_admin_panel_analytics_grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.kp_kitchen_admin_panel_chart_container {
+  height: 280px;
+  position: relative;
+  width: 100%;
+}
+
+/* Grid layout for cards */
+.kp_kitchen_admin_panel_dashboard_grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+/* Dashboard core Card widget styling */
+.kp_kitchen_admin_panel_card {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--border-radius);
+  padding: 24px;
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_card_header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.kp_kitchen_admin_panel_card_title {
+  font-family: var(--font-title);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.kp_kitchen_admin_panel_card_subtitle {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Button Stylings */
+.kp_kitchen_admin_panel_primary_button {
+  background: var(--primary-gradient);
+  color: #FFFFFF;
+  border: 0;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 15px rgba(255, 107, 107, 0.2);
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_primary_button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 107, 107, 0.3);
+}
+
+.kp_kitchen_admin_panel_secondary_button {
+  background: var(--bg-color);
+  color: var(--text-primary);
+  border: 1px solid var(--panel-border);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_secondary_button:hover {
+  background: var(--panel-border);
+}
+
+.kp_kitchen_admin_panel_danger_button {
+  background: rgba(231, 76, 60, 0.1);
+  border: 1px solid rgba(231, 76, 60, 0.2);
+  color: #E74C3C;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_danger_button:hover {
+  background: #E74C3C;
+  color: #FFFFFF;
+}
+
+.kp_kitchen_admin_panel_small_button {
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.2);
+  color: var(--primary-color);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_small_button:hover {
+  background: var(--primary-color);
+  color: #FFFFFF;
+}
+
+.kp_kitchen_admin_panel_text_button {
+  color: var(--primary-color);
+  background: transparent;
+  border: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.kp_kitchen_admin_panel_text_button:hover {
+  text-decoration: underline;
+}
+
+/* Toolbars for listing sections */
+.kp_kitchen_admin_panel_section_toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.kp_kitchen_admin_panel_section_title {
+  font-family: var(--font-title);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.kp_kitchen_admin_panel_section_text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+/* Table Stylings */
+.kp_kitchen_admin_panel_table_wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.kp_kitchen_admin_panel_table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.kp_kitchen_admin_panel_table_head {
+  border-bottom: 2px solid var(--panel-border);
+}
+
+.kp_kitchen_admin_panel_table_heading {
+  padding: 12px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.kp_kitchen_admin_panel_table_row {
+  border-bottom: 1px solid var(--panel-border);
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_table_row:hover {
+  background-color: rgba(255, 107, 107, 0.02);
+}
+
+.kp_kitchen_admin_panel_table_cell {
+  padding: 16px;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.kp_kitchen_admin_panel_table_primary {
+  display: block;
+  font-weight: 600;
+}
+
+.kp_kitchen_admin_panel_table_secondary {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Form Select elements in grids */
+.kp_kitchen_admin_panel_inline_select {
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-family: var(--font-family);
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  width: 100%;
+}
+
+.kp_kitchen_admin_panel_inline_select_warning {
+  border-color: var(--danger-color);
+  background: rgba(231, 76, 60, 0.05);
+}
+
+.kp_kitchen_admin_panel_assignment_hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 4px;
+}
+
+/* Status Badges */
+.kp_kitchen_admin_panel_status {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.kp_kitchen_admin_panel_status_active,
+.kp_kitchen_admin_panel_status_delivered,
+.kp_kitchen_admin_panel_status_paid,
+.kp_kitchen_admin_panel_status_successful {
+  background-color: rgba(46, 204, 113, 0.1);
+  color: #2ECC71;
+}
+
+.kp_kitchen_admin_panel_status_inactive,
+.kp_kitchen_admin_panel_status_cancelled,
+.kp_kitchen_admin_panel_status_unpaid,
+.kp_kitchen_admin_panel_status_failed {
+  background-color: rgba(231, 76, 60, 0.1);
+  color: #E74C3C;
+}
+
+.kp_kitchen_admin_panel_status_pending {
+  background-color: rgba(241, 196, 15, 0.1);
+  color: #F1C40F;
+}
+
+.kp_kitchen_admin_panel_status_preparing,
+.kp_kitchen_admin_panel_status_confirmed {
+  background-color: rgba(52, 152, 219, 0.1);
+  color: #3498DB;
+}
+
+.kp_kitchen_admin_panel_status_out_for_delivery {
+  background-color: rgba(155, 89, 182, 0.1);
+  color: #9B59B6;
+}
+
+/* Delivery Summary lists */
+.kp_kitchen_admin_panel_progress_item {
+  margin-bottom: 16px;
+}
+
+.kp_kitchen_admin_panel_progress_header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+
+.kp_kitchen_admin_panel_progress_label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.kp_kitchen_admin_panel_progress_value {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.kp_kitchen_admin_panel_progress_track {
+  height: 6px;
+  background-color: var(--bg-color);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.kp_kitchen_admin_panel_progress_fill {
+  display: block;
+  height: 100%;
+  background: var(--primary-gradient);
+  border-radius: 10px;
+}
+
+/* Tiffins and Menu Items Grids */
+.kp_kitchen_admin_panel_tiffin_grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+}
+
+.kp_kitchen_admin_panel_tiffin_card {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  box-shadow: var(--glass-shadow);
+  display: flex;
+  flex-direction: column;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_tiffin_card:hover {
+  transform: translateY(-4px);
+}
+
+.kp_kitchen_admin_panel_tiffin_image {
+  height: 180px;
+  background: var(--bg-color);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.kp_kitchen_admin_panel_tiffin_photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.kp_kitchen_admin_panel_tiffin_emoji {
+  font-size: 4rem;
+}
+
+.kp_kitchen_admin_panel_tiffin_card .kp_kitchen_admin_panel_status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.kp_kitchen_admin_panel_tiffin_content {
+  padding: 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.kp_kitchen_admin_panel_tiffin_type {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--primary-color);
+  letter-spacing: 0.5px;
+}
+
+.kp_kitchen_admin_panel_tiffin_name {
+  font-family: var(--font-title);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 6px 0;
+}
+
+.kp_kitchen_admin_panel_tiffin_description {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 12px;
+  flex: 1;
+}
+
+.kp_kitchen_admin_panel_tiffin_item_chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.kp_kitchen_admin_panel_tiffin_item_chip {
+  background-color: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.kp_kitchen_admin_panel_tiffin_footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 16px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.kp_kitchen_admin_panel_tiffin_price {
+  font-family: var(--font-title);
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.kp_kitchen_admin_panel_card_actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Form Groups & Inputs */
+.kp_kitchen_admin_panel_form_group {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.kp_kitchen_admin_panel_form_label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.kp_kitchen_admin_panel_form_input,
+.kp_kitchen_admin_panel_form_select,
+.kp_kitchen_admin_panel_form_textarea {
+  width: 100%;
+  background-color: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  outline: none;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_form_input:focus,
+.kp_kitchen_admin_panel_form_select:focus,
+.kp_kitchen_admin_panel_form_textarea:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.1);
+}
+
+.kp_kitchen_admin_panel_form_textarea {
+  height: 80px;
+  resize: vertical;
+}
+
+.kp_kitchen_admin_panel_form_grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.kp_kitchen_admin_panel_form_help {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  display: block;
+}
+
+/* Modals Overlay & Content Layouts */
+.kp_kitchen_admin_panel_modal {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--modal-overlay);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.kp_kitchen_admin_panel_modal_visible {
+  display: flex !important;
+}
+
+.kp_kitchen_admin_panel_modal_dialog {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  width: 500px;
+  max-width: 100%;
+  box-shadow: var(--glass-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalEnter 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.kp_kitchen_admin_panel_modal_large {
+  width: 800px !important;
+}
+
+@keyframes modalEnter {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.kp_kitchen_admin_panel_modal_header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.kp_kitchen_admin_panel_modal_title {
+  font-family: var(--font-title);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.kp_kitchen_admin_panel_modal_close {
+  background: transparent;
+  border: 0;
+  font-size: 1.5rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.kp_kitchen_admin_panel_modal_form {
+  padding: 24px;
+}
+
+.kp_kitchen_admin_panel_modal_content_body {
+  padding: 24px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+
+.kp_kitchen_admin_panel_modal_actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.kp_kitchen_admin_panel_image_preview {
+  height: 120px;
+  background-color: var(--bg-color);
+  border: 2px dashed var(--panel-border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.kp_kitchen_admin_panel_image_preview img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+/* Toast Messages */
+.kp_kitchen_admin_panel_toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background-color: #0F172A;
+  color: #FFFFFF;
+  padding: 12px 24px;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+  z-index: 1100;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translateY(100px);
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.kp_kitchen_admin_panel_toast_visible {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+/* Notifications list layout */
+.kp_kitchen_admin_panel_notifications_list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kp_kitchen_admin_panel_notification_item {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--border-radius);
+  padding: 20px;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_notification_item_unread {
+  border-left: 4px solid var(--primary-color);
+  background-color: rgba(255, 107, 107, 0.02);
+}
+
+.kp_kitchen_admin_panel_notification_icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--primary-color);
+  flex-shrink: 0;
+}
+
+.kp_kitchen_admin_panel_notification_content {
+  flex: 1;
+}
+
+.kp_kitchen_admin_panel_notification_heading {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.kp_kitchen_admin_panel_notification_title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.kp_kitchen_admin_panel_notification_time {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.kp_kitchen_admin_panel_notification_message {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.kp_kitchen_admin_panel_notification_read_button {
+  background: transparent;
+  border: 0;
+  color: var(--primary-color);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  align-self: center;
+}
+
+/* Empty State placeholder styling */
+.kp_kitchen_admin_panel_empty_state {
+  padding: 48px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* Visual Highlights */
+.hover-card {
+  cursor: pointer;
+}
+.hover-card:hover {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 10px 25px rgba(255, 107, 107, 0.05);
+}
+
+/* Drivers Grid list visual overrides */
+.kp_kitchen_admin_panel_cards_grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.kp_kitchen_admin_panel_driver_card {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--border-radius);
+  padding: 20px;
+  box-shadow: var(--glass-shadow);
+  display: flex;
+  flex-direction: column;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_driver_card:hover {
+  transform: translateY(-4px);
+}
+
+.kp_kitchen_admin_panel_driver_top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.kp_kitchen_admin_panel_driver_avatar {
+  background: var(--primary-gradient);
+  color: #FFFFFF;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.kp_kitchen_admin_panel_driver_name {
+  font-family: var(--font-title);
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.kp_kitchen_admin_panel_driver_meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.kp_kitchen_admin_panel_driver_card .kp_kitchen_admin_panel_card_actions {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+
+/* License and Vehicle layouts for driver cards */
+.kp_kitchen_admin_panel_doc_upload_grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.kp_kitchen_admin_panel_doc_preview_card {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px;
+  background-color: var(--bg-color);
+  text-align: center;
+}
+
+.kp_kitchen_admin_panel_doc_preview_card span {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.kp_kitchen_admin_panel_doc_image_wrap {
+  height: 80px;
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: rgba(0,0,0,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kp_kitchen_admin_panel_doc_image_wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.kp_kitchen_admin_panel_doc_image_wrap svg {
+  color: var(--text-muted);
+}
+
+/* Customer card layout visual designs */
+.customer-card-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.customer-detail-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.customer-detail-block {
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.customer-detail-block-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--primary-color);
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 6px;
+}
+
+.customer-detail-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+}
+
+.customer-detail-row span:first-child {
+  color: var(--text-secondary);
+}
+
+.customer-detail-row span:last-child {
+  font-weight: 600;
+}
+
+/* Inline list visual list overrides */
+.inline-badge-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* General Layout Responsive Medias */
+@media (max-width: 1024px) {
+  .kp_kitchen_admin_panel_sidebar {
+    left: -260px;
+  }
+  .kp_kitchen_admin_panel_sidebar_open {
+    left: 0;
+  }
+  .kp_kitchen_admin_panel_sidebar_close {
+    display: block;
+  }
+  .kp_kitchen_admin_panel_sidebar_overlay_visible {
+    display: block;
+  }
+  .kp_kitchen_admin_panel_main {
+    margin-left: 0;
+  }
+  .kp_kitchen_admin_panel_menu_button {
+    display: block;
+  }
+  .kp_kitchen_admin_panel_analytics_grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .kp_kitchen_admin_panel_auth_shell {
+    flex-direction: column;
+  }
+  .kp_kitchen_admin_panel_auth_visual,
+  .kp_kitchen_admin_panel_auth_form_wrap {
+    width: 100%;
+    padding: 32px;
+  }
+  .kp_kitchen_admin_panel_dashboard_grid {
+    grid-template-columns: 1fr;
+  }
+  .kp_kitchen_admin_panel_welcome_banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  .kp_kitchen_admin_panel_header_search_input {
+    width: 150px;
+  }
+  .kp_kitchen_admin_panel_header_search_input:focus {
+    width: 180px;
+  }
+  .kp_kitchen_admin_panel_section_toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .customer-detail-section {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Collapsible Navigation Dropdowns */
+.kp_kitchen_admin_panel_nav_group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 6px;
+}
+
+.kp_kitchen_admin_panel_nav_group_header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  color: var(--sidebar-text);
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: var(--font-family);
+  transition: var(--transition);
+  outline: none;
+}
+
+.kp_kitchen_admin_panel_nav_group_header:hover {
+  background-color: var(--sidebar-hover);
+  color: #FFFFFF;
+}
+
+.kp_kitchen_admin_panel_nav_arrow {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  transition: var(--transition);
+}
+
+.kp_kitchen_admin_panel_nav_group_active .kp_kitchen_admin_panel_nav_arrow {
+  transform: rotate(180deg);
+}
+
+.kp_kitchen_admin_panel_nav_group_items {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+  padding-left: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kp_kitchen_admin_panel_nav_group_active .kp_kitchen_admin_panel_nav_group_items {
+  max-height: 200px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.kp_kitchen_admin_panel_nav_sub_item {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  padding: 8px 14px;
+  border-radius: 8px;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kp_kitchen_admin_panel_nav_sub_item:hover {
+  color: #FFFFFF;
+  background-color: var(--sidebar-hover);
+}
+
+.kp_kitchen_admin_panel_nav_sub_item_active {
+  color: #FFFFFF !important;
+  font-weight: 600;
+  background-color: rgba(255, 255, 255, 0.05);
+}
