@@ -508,12 +508,23 @@
   function renderInvoices() {
     if (!getElement('invoicesTableBody')) return;
     const search = getSearchQuery();
-    const filtered = invoices.filter(inv => 
-      !search || 
-      inv.id.toLowerCase().includes(search) || 
-      (inv.customer && inv.customer.name.toLowerCase().includes(search)) || 
-      (inv.order_id && inv.order_id.toLowerCase().includes(search))
-    );
+    const statusFilter = getElement('invoiceStatusFilter')?.value || 'all';
+    const startDate = getElement('invoiceStartDateFilter')?.value || '';
+    const endDate = getElement('invoiceEndDateFilter')?.value || '';
+
+    const filtered = invoices.filter(inv => {
+      // Status filter
+      if (statusFilter !== 'all' && inv.status !== statusFilter) return false;
+
+      // Date range filter
+      if (startDate && inv.due_date < startDate) return false;
+      if (endDate && inv.due_date > endDate) return false;
+
+      return !search || 
+             inv.id.toLowerCase().includes(search) || 
+             (inv.customer && inv.customer.name.toLowerCase().includes(search)) || 
+             (inv.order_id && inv.order_id.toLowerCase().includes(search));
+    });
 
     getElement('invoicesTableBody').innerHTML = filtered.map(inv => {
       const custName = inv.customer ? inv.customer.name : 'Unknown';
@@ -1550,6 +1561,10 @@
   if (getElement('orderAreaFilter')) getElement('orderAreaFilter').addEventListener('change', () => renderOrders(getElement('orderStatusFilter')?.value || 'all'));
   if (getElement('orderStartDateFilter')) getElement('orderStartDateFilter').addEventListener('change', () => renderOrders(getElement('orderStatusFilter')?.value || 'all'));
   if (getElement('orderEndDateFilter')) getElement('orderEndDateFilter').addEventListener('change', () => renderOrders(getElement('orderStatusFilter')?.value || 'all'));
+
+  if (getElement('invoiceStatusFilter')) getElement('invoiceStatusFilter').addEventListener('change', () => renderInvoices());
+  if (getElement('invoiceStartDateFilter')) getElement('invoiceStartDateFilter').addEventListener('change', () => renderInvoices());
+  if (getElement('invoiceEndDateFilter')) getElement('invoiceEndDateFilter').addEventListener('change', () => renderInvoices());
   
   if (getElement('markAllReadButton')) {
     getElement('markAllReadButton').addEventListener('click', async () => {

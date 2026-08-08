@@ -12,6 +12,17 @@
       <h2 class="kp_kitchen_admin_panel_section_title">Invoice Management</h2>
       <p class="kp_kitchen_admin_panel_section_text">Review customer billing records.</p>
     </div>
+    <div class="kp_kitchen_admin_panel_filter_group" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+      <input type="date" class="kp_kitchen_admin_panel_form_input" id="invoiceStartDateFilter" title="Start Date" style="max-width: 140px; padding: 6px 10px;">
+      <span style="font-size: 0.8rem; color: var(--text-secondary);">to</span>
+      <input type="date" class="kp_kitchen_admin_panel_form_input" id="invoiceEndDateFilter" title="End Date" style="max-width: 140px; padding: 6px 10px;">
+      <select class="kp_kitchen_admin_panel_form_select" id="invoiceStatusFilter" style="max-width: 130px; padding: 6px 10px;">
+        <option value="all">All statuses</option>
+        <option value="Paid">Paid</option>
+        <option value="Unpaid">Unpaid</option>
+        <option value="Pending">Pending</option>
+      </select>
+    </div>
   </div>
 
   <article class="kp_kitchen_admin_panel_card">
