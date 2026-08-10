@@ -11,7 +11,6 @@ class Tiffin extends Model
 
     protected $fillable = [
         'name',
-        'type',
         'price',
         'items',
         'description',
@@ -19,6 +18,10 @@ class Tiffin extends Model
         'status',
         'image',
         'category_id',
+    ];
+
+    protected $casts = [
+        'items' => 'array',
     ];
 
     public function category()

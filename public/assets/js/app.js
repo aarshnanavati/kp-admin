@@ -315,27 +315,44 @@
   function renderTiffins() {
     if (!getElement('tiffinsGrid')) return;
     const search = getSearchQuery();
-    const filtered = tiffins.filter(tiffin => 
-      !search || 
-      tiffin.name.toLowerCase().includes(search) || 
-      tiffin.type.toLowerCase().includes(search) || 
-      tiffin.items.toLowerCase().includes(search) || 
-      (tiffin.description && tiffin.description.toLowerCase().includes(search))
-    );
+    const filtered = tiffins.filter(tiffin => {
+      if (!search) return true;
+      const nameMatch = tiffin.name.toLowerCase().includes(search);
+      const descMatch = (tiffin.description && tiffin.description.toLowerCase().includes(search));
+      
+      let itemsMatch = false;
+      if (tiffin.items && Array.isArray(tiffin.items)) {
+        itemsMatch = tiffin.items.some(id => {
+          const mi = items.find(item => item.id === id);
+          return mi && mi.name.toLowerCase().includes(search);
+        });
+      }
+      return nameMatch || descMatch || itemsMatch;
+    });
 
     getElement('tiffinsGrid').innerHTML = filtered.map(tiffin => {
       const image = tiffin.image ? `<img class="kp_kitchen_admin_panel_tiffin_photo" src="${escapeHtml(tiffin.image)}" alt="${escapeHtml(tiffin.name)}">` : '<span class="kp_kitchen_admin_panel_tiffin_emoji">🍱</span>';
+      
+      let chipsHtml = '';
+      if (tiffin.items && Array.isArray(tiffin.items)) {
+        chipsHtml = tiffin.items.map(id => {
+          const mi = items.find(item => item.id === id);
+          return mi ? `<span class="kp_kitchen_admin_panel_tiffin_item_chip">${escapeHtml(mi.name)}</span>` : '';
+        }).filter(Boolean).join('');
+      }
+
       return `<article class="kp_kitchen_admin_panel_tiffin_card">
                 <div class="kp_kitchen_admin_panel_tiffin_image">
                   ${image}
                   <span class="${statusClass(tiffin.status)}">${escapeHtml(tiffin.status)}</span>
                 </div>
                 <div class="kp_kitchen_admin_panel_tiffin_content">
-                  <span class="kp_kitchen_admin_panel_tiffin_type">${escapeHtml(tiffin.type)} • ${escapeHtml(tiffin.prep_time)} min</span>
+                  <span class="kp_kitchen_admin_panel_tiffin_type">${escapeHtml(tiffin.prep_time)} min prep</span>
                   <h3 class="kp_kitchen_admin_panel_tiffin_name">${escapeHtml(tiffin.name)}</h3>
-                  <p class="kp_kitchen_admin_panel_tiffin_description">${escapeHtml(tiffin.description)}</p>
-                  <div class="kp_kitchen_admin_panel_tiffin_item_chips">
-                    ${String(tiffin.items).split(/,|\n/).filter(Boolean).map(item => `<span class="kp_kitchen_admin_panel_tiffin_item_chip">${escapeHtml(item.trim())}</span>`).join('')}
+                  <p class="kp_kitchen_admin_panel_tiffin_description" style="font-size:0.85rem; opacity:0.8; margin-bottom: 8px;">${escapeHtml(tiffin.description || 'No description.')}</p>
+                  <div style="font-size: 0.75rem; font-weight:600; color: var(--primary-color); margin: 8px 0 4px 0;">Included Items:</div>
+                  <div class="kp_kitchen_admin_panel_tiffin_item_chips" style="margin-bottom: 12px;">
+                    ${chipsHtml || '<span style="opacity:0.5; font-size:0.75rem;">None</span>'}
                   </div>
                   <div class="kp_kitchen_admin_panel_tiffin_footer">
                     <strong class="kp_kitchen_admin_panel_tiffin_price">${formatCurrency(tiffin.price)}</strong>
@@ -480,7 +497,6 @@
                 </td>
                 <td class="kp_kitchen_admin_panel_table_cell">
                   <strong>${escapeHtml(order.customer)}</strong>
-                  <span class="kp_kitchen_admin_panel_table_secondary">Meal Choice: ${escapeHtml(order.choices || 'N/A')}</span>
                 </td>
                 <td class="kp_kitchen_admin_panel_table_cell">
                   <strong>${escapeHtml(order.tiffin)}</strong>
@@ -735,7 +751,32 @@
   };
 
   const tiffinFields = tiffin => {
+    const categoriesCheckboxes = categories.map(cat => {
+      const catItems = items.filter(item => item.category_id === cat.id && item.status === 'Active');
+      if (catItems.length === 0) return '';
+      
+      const checkboxes = catItems.map(item => {
+        const isChecked = tiffin && tiffin.items && Array.isArray(tiffin.items) && tiffin.items.includes(item.id) ? 'checked' : '';
+        return `
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; margin-bottom: 6px;">
+            <input type="checkbox" name="tiffin_items" value="${item.id}" data-price="${item.price}" ${isChecked} style="width: auto; margin: 0;">
+            <span>${escapeHtml(item.name)} (+$${Number(item.price).toFixed(2)})</span>
+          </label>
+        `;
+      }).join('');
+
+      return `
+        <div class="tiffin-form-category-group" style="margin-bottom: 16px;">
+          <strong style="display: block; font-size: 0.8rem; text-transform: uppercase; color: var(--primary-color); margin-bottom: 8px; border-bottom: 1px solid var(--panel-border); padding-bottom: 4px;">${escapeHtml(cat.name)} Options</strong>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px;">
+            ${checkboxes}
+          </div>
+        </div>
+      `;
+    }).join('');
+
     const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === tiffin?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    
     return `
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Tiffin Image</span>
@@ -756,28 +797,24 @@
           </select>
         </label>
         <label class="kp_kitchen_admin_panel_form_group">
-          <span class="kp_kitchen_admin_panel_form_label">Price ($ AUD)</span>
+          <span class="kp_kitchen_admin_panel_form_label">Base Price ($ AUD)</span>
           <input name="price" type="number" step="0.01" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.price || ''}" required placeholder="19.90">
         </label>
       </div>
-      <div class="kp_kitchen_admin_panel_form_grid">
-        <label class="kp_kitchen_admin_panel_form_group">
-          <span class="kp_kitchen_admin_panel_form_label">Meal Schedule</span>
-          <select name="type" class="kp_kitchen_admin_panel_form_select">
-            <option ${tiffin?.type === 'Lunch' ? 'selected' : ''}>Lunch</option>
-            <option ${tiffin?.type === 'Dinner' ? 'selected' : ''}>Dinner</option>
-            <option ${tiffin?.type === 'Both' ? 'selected' : ''}>Both</option>
-          </select>
-        </label>
-        <label class="kp_kitchen_admin_panel_form_group">
-          <span class="kp_kitchen_admin_panel_form_label">Prep Time (mins)</span>
-          <input name="prepTime" type="number" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.prep_time || 30}" required>
-        </label>
-      </div>
       <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Included Dishes</span>
-        <textarea name="items" class="kp_kitchen_admin_panel_form_textarea" required placeholder="4 Roti, 2 Curries, Rice, Gulab Jamun">${escapeHtml(tiffin?.items || '')}</textarea>
+        <span class="kp_kitchen_admin_panel_form_label">Prep Time (mins)</span>
+        <input name="prepTime" type="number" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.prep_time || 30}" required>
       </label>
+      <div class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 12px; display: block;">Select Tiffin Menu Items</span>
+        <div class="tiffin-items-checkboxes-container" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 8px; padding: 16px; max-height: 250px; overflow-y: auto;">
+          ${categoriesCheckboxes || '<div style="opacity:0.6; font-size:0.8rem;">Add menu items in menu management first.</div>'}
+        </div>
+      </div>
+      <div class="tiffin-modal-total-price-bar" style="background: var(--primary-color-light, rgba(255, 107, 107, 0.1)); border: 1px solid var(--primary-color); border-radius: 8px; padding: 12px 16px; margin: 16px 0; display: flex; justify-content: space-between; align-items: center;">
+        <strong style="color: var(--text-primary); font-size: 0.9rem;">Total Plan Price (Base + Options):</strong>
+        <strong id="tiffinModalTotalPrice" style="font-size: 1.25rem; color: var(--primary-color); font-weight:800;">$0.00</strong>
+      </div>
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Description</span>
         <textarea name="description" class="kp_kitchen_admin_panel_form_textarea" placeholder="Describe the plan">${escapeHtml(tiffin?.description || '')}</textarea>
@@ -949,6 +986,34 @@
   function setupItemImagePreview() { setupImagePreview('itemImageInput', 'itemImageData', 'itemImagePreview'); }
   function setupTiffinImagePreview() { setupImagePreview('tiffinImageInput', 'tiffinImageData', 'tiffinImagePreview'); }
   
+  function setupTiffinModalListeners(tiffin) {
+    setupTiffinImagePreview();
+    const form = getElement('modalForm');
+    if (!form) return;
+    const basePriceInput = form.querySelector('input[name="price"]');
+    const checkboxes = form.querySelectorAll('input[name="tiffin_items"]');
+    const totalDisplay = getElement('tiffinModalTotalPrice');
+    const updateCalculatedTotal = () => {
+      if (!totalDisplay) return;
+      const basePrice = Number(basePriceInput?.value || 0);
+      let selectedSum = 0;
+      checkboxes.forEach(cb => {
+        if (cb.checked) {
+          const itemId = Number(cb.value);
+          // If we are editing a tiffin, and this item is in the tiffin's default items list, it is free (adds 0)
+          const isDefaultItem = tiffin && tiffin.items && Array.isArray(tiffin.items) && tiffin.items.includes(itemId);
+          if (!isDefaultItem) {
+            selectedSum += Number(cb.dataset.price || 0);
+          }
+        }
+      });
+      totalDisplay.textContent = `$${(basePrice + selectedSum).toFixed(2)}`;
+    };
+    if (basePriceInput) basePriceInput.addEventListener('input', updateCalculatedTotal);
+    checkboxes.forEach(cb => cb.addEventListener('change', updateCalculatedTotal));
+    updateCalculatedTotal();
+  }
+  
   function setupDriverImagePreviews() {
     setupImagePreview('driverLicenseFrontInput', 'driverLicenseFrontData', 'driverLicenseFrontPreview');
     setupImagePreview('driverLicenseBackInput', 'driverLicenseBackData', 'driverLicenseBackPreview');
@@ -995,13 +1060,13 @@
     getElement('addTiffinButton').addEventListener('click', () => {
       openModal('Add Complete Tiffin Plan', tiffinFields(), 'Add Tiffin', async data => {
         try {
+          const selectedItems = Array.from(document.querySelectorAll('input[name="tiffin_items"]:checked')).map(cb => Number(cb.value));
           const result = await apiRequest('api/tiffins', 'POST', {
             action: 'create',
             name: data.get('name').trim(),
             category_id: data.get('category_id') ? Number(data.get('category_id')) : null,
-            type: data.get('type'),
             price: Number(data.get('price')),
-            items: data.get('items').trim(),
+            items: selectedItems,
             description: data.get('description').trim(),
             prepTime: Number(data.get('prepTime')),
             status: data.get('status'),
@@ -1009,7 +1074,7 @@
           });
           if (result.success) { closeModal(); showToast('Tiffin added successfully.'); refreshData(); }
         } catch (e) { showToast('Failed to add tiffin.'); }
-      }, setupTiffinImagePreview);
+      }, () => setupTiffinModalListeners(null));
     });
   }
 
@@ -1153,14 +1218,14 @@
       if (!tiffin) return;
       openModal('Edit Tiffin Plan Details', tiffinFields(tiffin), 'Save Changes', async data => {
         try {
+          const selectedItems = Array.from(document.querySelectorAll('input[name="tiffin_items"]:checked')).map(cb => Number(cb.value));
           const result = await apiRequest('api/tiffins', 'POST', {
             action: 'update',
             id: tiffin.id,
             category_id: data.get('category_id') ? Number(data.get('category_id')) : null,
             name: data.get('name').trim(),
-            type: data.get('type'),
             price: Number(data.get('price')),
-            items: data.get('items').trim(),
+            items: selectedItems,
             description: data.get('description').trim(),
             prepTime: Number(data.get('prepTime')),
             status: data.get('status'),
@@ -1168,7 +1233,7 @@
           });
           if (result.success) { closeModal(); showToast('Tiffin plan updated.'); refreshData(); }
         } catch (e) { showToast('Failed to update tiffin plan.'); }
-      }, setupTiffinImagePreview);
+      }, () => setupTiffinModalListeners(tiffin));
     }
     if (target.dataset.deleteTiffin && confirm('Delete this tiffin plan?')) {
       try {

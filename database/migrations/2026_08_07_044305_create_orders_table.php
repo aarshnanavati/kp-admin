@@ -23,7 +23,6 @@ return new class extends Migration
             $table->decimal('amount', 10, 2);
             $table->string('status')->default('Pending');
             $table->date('date');
-            $table->string('choices')->nullable(); // Lunch or Dinner choice
             $table->text('add_ons')->nullable(); // JSON list of add-ons
             $table->timestamps();
         });

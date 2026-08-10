@@ -24,7 +24,6 @@ class Order extends Model
         'amount',
         'status',
         'date',
-        'choices',
         'add_ons',
     ];
 

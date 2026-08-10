@@ -14,9 +14,8 @@ return new class extends Migration
         Schema::create('tiffins', function (Blueprint $table) {
             $table->id();
             $table->string('name');
-            $table->string('type'); // Lunch, Dinner, Both
             $table->decimal('price', 10, 2);
-            $table->text('items'); // List of items
+            $table->text('items'); // JSON list of allowed customizable item IDs
             $table->text('description')->nullable();
             $table->integer('prep_time')->default(30);
             $table->string('status')->default('Active');

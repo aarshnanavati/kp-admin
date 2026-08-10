@@ -264,7 +264,7 @@ class AdminPanelController extends Controller
             $file = fopen('php://output', 'w');
 
             if ($type === 'sales') {
-                fputcsv($file, ['Order ID', 'Date', 'Customer', 'Tiffin Plan', 'Area / Postcode', 'Driver', 'Meal Choice', 'Add-ons', 'Amount ($)', 'Status']);
+                fputcsv($file, ['Order ID', 'Date', 'Customer', 'Tiffin Plan', 'Area / Postcode', 'Driver', 'Add-ons', 'Amount ($)', 'Status']);
                 $orders = Order::orderBy('date', 'desc')->get();
                 foreach ($orders as $order) {
                     $addonsStr = '';
@@ -283,7 +283,6 @@ class AdminPanelController extends Controller
                         $order->tiffin,
                         $order->area,
                         $order->driver,
-                        $order->choices,
                         $addonsStr,
                         $order->amount,
                         $order->status,
@@ -446,9 +445,8 @@ class AdminPanelController extends Controller
 
             $data = [
                 'name' => trim($request->name),
-                'type' => $request->type,
                 'price' => (float) $request->price,
-                'items' => trim($request->items),
+                'items' => is_array($request->items) ? $request->items : [],
                 'description' => trim($request->description),
                 'prep_time' => (int) $request->prepTime,
                 'status' => $request->status,
