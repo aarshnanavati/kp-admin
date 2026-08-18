@@ -27,9 +27,40 @@
   let itemsChartInstance = null;
 
   const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+  const getBaseUrl = () => (window.AppConfig && window.AppConfig.baseUrl) ? window.AppConfig.baseUrl : '';
+
+  const getTiffinBasicItems = tiffin => {
+    if (!tiffin || !tiffin.items) return [];
+    if (Array.isArray(tiffin.items)) {
+      return tiffin.items.map(val => {
+        if (!isNaN(val)) {
+          const mi = items.find(item => item.id === Number(val));
+          return mi ? mi.name : '';
+        }
+        return val;
+      }).filter(Boolean);
+    }
+    if (tiffin.items.basic && Array.isArray(tiffin.items.basic)) {
+      return tiffin.items.basic;
+    }
+    return [];
+  };
+
+  const getTiffinAddonIds = tiffin => {
+    if (!tiffin || !tiffin.items) return [];
+    if (Array.isArray(tiffin.items)) {
+      return [];
+    }
+    if (tiffin.items.addons && Array.isArray(tiffin.items.addons)) {
+      return tiffin.items.addons.map(id => Number(id));
+    }
+    return [];
+  };
 
   // Generic secure API request handler
   const apiRequest = async (url, method = 'GET', body = null) => {
+    const cleanUrl = url.startsWith('/') ? url : '/' + url;
+    const absoluteUrl = getBaseUrl() + cleanUrl;
     const options = {
       method,
       headers: {
@@ -41,7 +72,7 @@
       options.headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(body);
     }
-    const response = await fetch(url, options);
+    const response = await fetch(absoluteUrl, options);
     if (!response.ok) {
       const errData = await response.json();
       throw new Error(errData.message || 'API request failed.');
@@ -268,6 +299,7 @@
         <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(c.description || 'No description.')}</td>
         <td class="kp_kitchen_admin_panel_table_cell">
           <div class="kp_kitchen_admin_panel_card_actions">
+            <button class="kp_kitchen_admin_panel_small_button" data-view-category-items="${c.id}" style="background-color: var(--info-color); color: white;">View Items</button>
             <button class="kp_kitchen_admin_panel_small_button" data-edit-category="${c.id}">Edit</button>
             <button class="kp_kitchen_admin_panel_danger_button" data-delete-category="${c.id}">Delete</button>
           </div>
@@ -321,11 +353,9 @@
       const descMatch = (tiffin.description && tiffin.description.toLowerCase().includes(search));
       
       let itemsMatch = false;
-      if (tiffin.items && Array.isArray(tiffin.items)) {
-        itemsMatch = tiffin.items.some(id => {
-          const mi = items.find(item => item.id === id);
-          return mi && mi.name.toLowerCase().includes(search);
-        });
+      const basicItems = getTiffinBasicItems(tiffin);
+      if (basicItems.length > 0) {
+        itemsMatch = basicItems.some(name => name.toLowerCase().includes(search));
       }
       return nameMatch || descMatch || itemsMatch;
     });
@@ -334,11 +364,9 @@
       const image = tiffin.image ? `<img class="kp_kitchen_admin_panel_tiffin_photo" src="${escapeHtml(tiffin.image)}" alt="${escapeHtml(tiffin.name)}">` : '<span class="kp_kitchen_admin_panel_tiffin_emoji">🍱</span>';
       
       let chipsHtml = '';
-      if (tiffin.items && Array.isArray(tiffin.items)) {
-        chipsHtml = tiffin.items.map(id => {
-          const mi = items.find(item => item.id === id);
-          return mi ? `<span class="kp_kitchen_admin_panel_tiffin_item_chip">${escapeHtml(mi.name)}</span>` : '';
-        }).filter(Boolean).join('');
+      const basicItems = getTiffinBasicItems(tiffin);
+      if (basicItems.length > 0) {
+        chipsHtml = basicItems.map(name => `<span class="kp_kitchen_admin_panel_tiffin_item_chip">${escapeHtml(name)}</span>`).join('');
       }
 
       return `<article class="kp_kitchen_admin_panel_tiffin_card">
@@ -751,35 +779,52 @@
   };
 
   const tiffinFields = tiffin => {
-    const categoriesCheckboxes = categories.map(cat => {
-      const catItems = items.filter(item => item.category_id === cat.id && item.status === 'Active');
-      if (catItems.length === 0) return '';
-      
-      const checkboxes = catItems.map(item => {
-        const isChecked = tiffin && tiffin.items && Array.isArray(tiffin.items) && tiffin.items.includes(item.id) ? 'checked' : '';
-        return `
-          <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; margin-bottom: 6px;">
-            <input type="checkbox" name="tiffin_items" value="${item.id}" data-price="${item.price}" ${isChecked} style="width: auto; margin: 0;">
-            <span>${escapeHtml(item.name)} (+$${Number(item.price).toFixed(2)})</span>
-          </label>
-        `;
-      }).join('');
+    const basicItems = getTiffinBasicItems(tiffin);
+    const addonIds = getTiffinAddonIds(tiffin);
 
-      return `
-        <div class="tiffin-form-category-group" style="margin-bottom: 16px;">
-          <strong style="display: block; font-size: 0.8rem; text-transform: uppercase; color: var(--primary-color); margin-bottom: 8px; border-bottom: 1px solid var(--panel-border); padding-bottom: 4px;">${escapeHtml(cat.name)} Options</strong>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px;">
-            ${checkboxes}
-          </div>
-        </div>
-      `;
-    }).join('');
+    // Group active items by Category for the Add-ons checkboxes
+    const renderCheckboxGroup = (itemsToRender) => {
+      if (itemsToRender.length === 0) {
+        return `<div style="opacity:0.6; font-size:0.8rem; padding: 4px 0; color: var(--text-secondary);">None</div>`;
+      }
+      
+      // Group by Category name
+      const grouped = {};
+      categories.forEach(cat => {
+        grouped[cat.name] = itemsToRender.filter(i => i.category_id === cat.id);
+      });
+
+      return Object.entries(grouped)
+        .map(([catName, catItems]) => {
+          if (catItems.length === 0) return '';
+          const checkboxes = catItems.map(item => {
+            const isChecked = addonIds.includes(item.id) ? 'checked' : '';
+            return `
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; margin-bottom: 6px;">
+                <input type="checkbox" name="tiffin_addons" value="${item.id}" data-price="${item.price}" ${isChecked} style="width: auto; margin: 0;">
+                <span>${escapeHtml(item.name)} <span style="font-size:0.75rem; font-weight:600; color: var(--text-secondary);">(+$${Number(item.price).toFixed(2)})</span></span>
+              </label>
+            `;
+          }).join('');
+
+          return `
+            <div style="margin-bottom: 12px;">
+              <strong style="display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--primary-color); margin-bottom: 4px; border-bottom: 1px solid var(--panel-border); padding-bottom: 2px;">${escapeHtml(catName)}</strong>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px;">
+                ${checkboxes}
+              </div>
+            </div>
+          `;
+        }).filter(Boolean).join('');
+    };
+
+    const addOnHtml = renderCheckboxGroup(items.filter(item => item.status === 'Active'));
 
     const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === tiffin?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
     
     return `
       <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Tiffin Image</span>
+        <span class="kp_kitchen_admin_panel_form_label">Tiffin Plan Image</span>
         <input id="tiffinImageInput" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
         <input id="tiffinImageData" name="image" type="hidden" value="${escapeHtml(tiffin?.image || '')}">
         <div id="tiffinImagePreview" class="kp_kitchen_admin_panel_image_preview">${tiffin?.image ? `<img src="${escapeHtml(tiffin.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
@@ -806,9 +851,28 @@
         <input name="prepTime" type="number" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.prep_time || 30}" required>
       </label>
       <div class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 12px; display: block;">Select Tiffin Menu Items</span>
-        <div class="tiffin-items-checkboxes-container" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 8px; padding: 16px; max-height: 250px; overflow-y: auto;">
-          ${categoriesCheckboxes || '<div style="opacity:0.6; font-size:0.8rem;">Add menu items in menu management first.</div>'}
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 0;">Included Items (Basic Menu)</span>
+          <button type="button" id="addBasicMenuItemBtn" class="kp_kitchen_admin_panel_small_button" style="padding: 4px 10px; font-size: 0.75rem;">+ Add Item</button>
+        </div>
+        <div id="basicMenuItemsInputsContainer" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+          ${(() => {
+            const defaultPlaceholders = ["enter the subzi", "enter the rice", "enter the breads", "enter the dal"];
+            const count = Math.max(4, basicItems.length);
+            let html = '';
+            for (let i = 0; i < count; i++) {
+              const val = basicItems[i] || '';
+              const ph = defaultPlaceholders[i] || "enter new item";
+              html += `<input type="text" name="basic_menu_items[]" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(val)}" placeholder="${ph}" style="margin-bottom:0;">`;
+            }
+            return html;
+          })()}
+        </div>
+      </div>
+      <div class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 6px; display: block;">Extra Add-Ons (Increases Plan Price)</span>
+        <div class="tiffin-items-checkboxes-container" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 16px; max-height: 180px; overflow-y: auto;">
+          ${addOnHtml}
         </div>
       </div>
       <div class="tiffin-modal-total-price-bar" style="background: var(--primary-color-light, rgba(255, 107, 107, 0.1)); border: 1px solid var(--primary-color); border-radius: 8px; padding: 12px 16px; margin: 16px 0; display: flex; justify-content: space-between; align-items: center;">
@@ -990,8 +1054,24 @@
     setupTiffinImagePreview();
     const form = getElement('modalForm');
     if (!form) return;
+
+    // Dynamically append basic menu item inputs
+    const addBtn = getElement('addBasicMenuItemBtn');
+    const inputsContainer = getElement('basicMenuItemsInputsContainer');
+    if (addBtn && inputsContainer) {
+      addBtn.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.name = 'basic_menu_items[]';
+        input.className = 'kp_kitchen_admin_panel_form_input';
+        input.placeholder = 'enter new item';
+        input.style.marginBottom = '0';
+        inputsContainer.appendChild(input);
+      });
+    }
+
     const basePriceInput = form.querySelector('input[name="price"]');
-    const checkboxes = form.querySelectorAll('input[name="tiffin_items"]');
+    const checkboxes = form.querySelectorAll('input[name="tiffin_addons"]');
     const totalDisplay = getElement('tiffinModalTotalPrice');
     const updateCalculatedTotal = () => {
       if (!totalDisplay) return;
@@ -999,12 +1079,7 @@
       let selectedSum = 0;
       checkboxes.forEach(cb => {
         if (cb.checked) {
-          const itemId = Number(cb.value);
-          // If we are editing a tiffin, and this item is in the tiffin's default items list, it is free (adds 0)
-          const isDefaultItem = tiffin && tiffin.items && Array.isArray(tiffin.items) && tiffin.items.includes(itemId);
-          if (!isDefaultItem) {
-            selectedSum += Number(cb.dataset.price || 0);
-          }
+          selectedSum += Number(cb.dataset.price || 0);
         }
       });
       totalDisplay.textContent = `$${(basePrice + selectedSum).toFixed(2)}`;
@@ -1060,13 +1135,21 @@
     getElement('addTiffinButton').addEventListener('click', () => {
       openModal('Add Complete Tiffin Plan', tiffinFields(), 'Add Tiffin', async data => {
         try {
-          const selectedItems = Array.from(document.querySelectorAll('input[name="tiffin_items"]:checked')).map(cb => Number(cb.value));
+          const basicMenuItems = Array.from(document.querySelectorAll('input[name="basic_menu_items[]"]'))
+            .map(input => input.value.trim())
+            .filter(Boolean);
+          const addonIds = Array.from(document.querySelectorAll('input[name="tiffin_addons"]:checked'))
+            .map(cb => Number(cb.value));
+
           const result = await apiRequest('api/tiffins', 'POST', {
             action: 'create',
             name: data.get('name').trim(),
             category_id: data.get('category_id') ? Number(data.get('category_id')) : null,
             price: Number(data.get('price')),
-            items: selectedItems,
+            items: {
+              basic: basicMenuItems,
+              addons: addonIds
+            },
             description: data.get('description').trim(),
             prepTime: Number(data.get('prepTime')),
             status: data.get('status'),
@@ -1185,6 +1268,52 @@
       } catch (e) { showToast('Failed to delete category.'); }
     }
 
+    // Category view items (add-ons)
+    if (target.dataset.viewCategoryItems) {
+      const c = categories.find(item => item.id === Number(target.dataset.viewCategoryItems));
+      if (!c) return;
+      
+      const catItems = items.filter(item => item.category_id === c.id);
+      
+      let bodyHtml = '';
+      if (catItems.length === 0) {
+        bodyHtml = `<div style="text-align:center; padding: 24px; opacity:0.6; color: var(--text-secondary);">No items found in this category.</div>`;
+      } else {
+        const rows = catItems.map(item => {
+          const image = item.image ? `<img src="${escapeHtml(item.image)}" style="width: 40px; height: 40px; border-radius: 8px; object-fit: cover; border: 1px solid var(--panel-border);">` : '<span style="font-size: 1.5rem;">🍲</span>';
+          const statusBadge = `<span class="${statusClass(item.status)}" style="padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; display: inline-block;">${escapeHtml(item.status)}</span>`;
+          return `
+            <tr class="kp_kitchen_admin_panel_table_row" style="border-bottom: 1px solid var(--panel-border);">
+              <td class="kp_kitchen_admin_panel_table_cell" style="padding: 12px 16px; vertical-align: middle;">${image}</td>
+              <td class="kp_kitchen_admin_panel_table_cell" style="padding: 12px 16px; vertical-align: middle;"><strong>${escapeHtml(item.name)}</strong></td>
+              <td class="kp_kitchen_admin_panel_table_cell" style="padding: 12px 16px; vertical-align: middle; color: var(--primary-color); font-weight: 700; font-family: var(--font-title);">$${Number(item.price).toFixed(2)}</td>
+              <td class="kp_kitchen_admin_panel_table_cell" style="padding: 12px 16px; vertical-align: middle;">${statusBadge}</td>
+            </tr>
+          `;
+        }).join('');
+
+        bodyHtml = `
+          <div class="kp_kitchen_admin_panel_table_wrap" style="margin-top: 10px; max-height: 400px; overflow-y: auto;">
+            <table class="kp_kitchen_admin_panel_table" style="width: 100%; border-collapse: collapse;">
+              <thead class="kp_kitchen_admin_panel_table_head" style="position: sticky; top: 0; background: var(--panel-bg); z-index: 1;">
+                <tr class="kp_kitchen_admin_panel_table_row" style="border-bottom: 2px solid var(--panel-border);">
+                  <th class="kp_kitchen_admin_panel_table_heading" style="padding: 12px 16px; text-align: left; font-weight:700;">Image</th>
+                  <th class="kp_kitchen_admin_panel_table_heading" style="padding: 12px 16px; text-align: left; font-weight:700;">Name</th>
+                  <th class="kp_kitchen_admin_panel_table_heading" style="padding: 12px 16px; text-align: left; font-weight:700;">Price</th>
+                  <th class="kp_kitchen_admin_panel_table_heading" style="padding: 12px 16px; text-align: left; font-weight:700;">Status</th>
+                </tr>
+              </thead>
+              <tbody class="kp_kitchen_admin_panel_table_body">
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+      
+      openDetailsModal(`Items in Category: ${c.name}`, bodyHtml);
+    }
+
     // Menu Item edit/delete
     if (target.dataset.editItem) {
       const item = items.find(i => i.id === Number(target.dataset.editItem));
@@ -1218,14 +1347,22 @@
       if (!tiffin) return;
       openModal('Edit Tiffin Plan Details', tiffinFields(tiffin), 'Save Changes', async data => {
         try {
-          const selectedItems = Array.from(document.querySelectorAll('input[name="tiffin_items"]:checked')).map(cb => Number(cb.value));
+          const basicMenuItems = Array.from(document.querySelectorAll('input[name="basic_menu_items[]"]'))
+            .map(input => input.value.trim())
+            .filter(Boolean);
+          const addonIds = Array.from(document.querySelectorAll('input[name="tiffin_addons"]:checked'))
+            .map(cb => Number(cb.value));
+
           const result = await apiRequest('api/tiffins', 'POST', {
             action: 'update',
             id: tiffin.id,
             category_id: data.get('category_id') ? Number(data.get('category_id')) : null,
             name: data.get('name').trim(),
             price: Number(data.get('price')),
-            items: selectedItems,
+            items: {
+              basic: basicMenuItems,
+              addons: addonIds
+            },
             description: data.get('description').trim(),
             prepTime: Number(data.get('prepTime')),
             status: data.get('status'),

@@ -1,0 +1,123 @@
+<?php
+
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\AdminPanelController;
+use Illuminate\Support\Facades\Route;
+
+// --- Guest API Routes ---
+Route::middleware('guest')->group(function () {
+    // Stateless Admin Auth (Postman/Mobile clients)
+    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/register', [AuthController::class, 'register']);
+    Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
+    Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
+    Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+
+    // Stateful Web Admin Auth (Browser Dashboard)
+    Route::prefix('auth')->group(function () {
+        Route::post('/login', [AuthController::class, 'login']);
+        Route::post('/register', [AuthController::class, 'register']);
+        Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
+        Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
+        Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+    });
+
+    // Customer Guest Auth Routes
+    Route::post('/customer/register', [AuthController::class, 'customerRegister']);
+    Route::post('/customer/login', [AuthController::class, 'customerLogin']);
+    Route::post('/customer/forget-password', [AuthController::class, 'customerForgetPassword']);
+    Route::post('/customer/verify-otp', [AuthController::class, 'customerVerifyOtp']);
+    Route::post('/customer/reset-password', [AuthController::class, 'customerResetPassword']);
+
+    // Driver Guest Auth Routes
+    Route::post('/driver/register', [AuthController::class, 'driverRegister']);
+    Route::post('/driver/login', [AuthController::class, 'driverLogin']);
+    Route::post('/driver/forget-password', [AuthController::class, 'driverForgetPassword']);
+    Route::post('/driver/verify-otp', [AuthController::class, 'driverVerifyOtp']);
+    Route::post('/driver/reset-password', [AuthController::class, 'driverResetPassword']);
+});
+
+// --- Customer Authenticated API Routes ---
+
+Route::middleware('customer.auth')->group(function () {
+    Route::post('/customer/logout', [AuthController::class, 'customerLogout']);
+    Route::get('/customer/profile', [AuthController::class, 'customerProfile']);
+});
+
+// --- Driver Authenticated API Routes ---
+Route::middleware('driver.auth')->group(function () {
+    Route::post('/driver/logout', [AuthController::class, 'driverLogout']);
+    Route::get('/driver/profile', [AuthController::class, 'driverProfile']);
+});
+
+// --- Admin Dashboard & Operational API Routes (Session & Bearer Token Protected) ---
+Route::middleware('api.or.session')->group(function () {
+
+    // Operational APIs
+    Route::get('/data', [AdminPanelController::class, 'getData']);
+    Route::get('/dashboard-charts', [AdminPanelController::class, 'getDashboardCharts']);
+    Route::get('/reports/export', [AdminPanelController::class, 'exportReports']);
+
+    // Drivers API
+    Route::get('/drivers', [AdminPanelController::class, 'getDrivers']);
+    Route::get('/driver', [AdminPanelController::class, 'getDrivers']);
+    Route::post('/drivers', [AdminPanelController::class, 'manageDriver']);
+    Route::post('/driver', [AdminPanelController::class, 'manageDriver']);
+
+    // Tiffins API
+    Route::get('/tiffins', [AdminPanelController::class, 'getTiffins']);
+    Route::get('/tiffin', [AdminPanelController::class, 'getTiffins']);
+    Route::post('/tiffins', [AdminPanelController::class, 'manageTiffin']);
+    Route::post('/tiffin', [AdminPanelController::class, 'manageTiffin']);
+
+    // Orders API
+    Route::get('/orders', [AdminPanelController::class, 'getOrders']);
+    Route::get('/order', [AdminPanelController::class, 'getOrders']);
+    Route::post('/orders', [AdminPanelController::class, 'updateOrder']);
+    Route::post('/order', [AdminPanelController::class, 'updateOrder']);
+    Route::post('/orders/update', [AdminPanelController::class, 'updateOrder']);
+    Route::post('/order/update', [AdminPanelController::class, 'updateOrder']);
+
+    // Payments API
+    Route::get('/payments', [AdminPanelController::class, 'getPayments']);
+    Route::get('/payment', [AdminPanelController::class, 'getPayments']);
+    Route::post('/payments', [AdminPanelController::class, 'runDeduction']);
+    Route::post('/payment', [AdminPanelController::class, 'runDeduction']);
+    Route::post('/payments/deduct', [AdminPanelController::class, 'runDeduction']);
+    Route::post('/payment/deduct', [AdminPanelController::class, 'runDeduction']);
+
+    // Notifications API
+    Route::get('/notifications', [AdminPanelController::class, 'getNotifications']);
+    Route::get('/notification', [AdminPanelController::class, 'getNotifications']);
+    Route::post('/notifications', [AdminPanelController::class, 'readNotification']);
+    Route::post('/notification', [AdminPanelController::class, 'readNotification']);
+    Route::post('/notifications/read', [AdminPanelController::class, 'readNotification']);
+    Route::post('/notification/read', [AdminPanelController::class, 'readNotification']);
+
+    // Categories API
+    Route::get('/categories', [AdminPanelController::class, 'getCategories']);
+    Route::post('/categories', [AdminPanelController::class, 'manageCategory']);
+
+    // Items API
+    Route::get('/items', [AdminPanelController::class, 'getItems']);
+    Route::post('/items', [AdminPanelController::class, 'manageItem']);
+
+    // Customers API
+    Route::get('/customers', [AdminPanelController::class, 'getCustomers']);
+    Route::post('/customers', [AdminPanelController::class, 'manageCustomer']);
+
+    // Coupons API
+    Route::get('/coupons', [AdminPanelController::class, 'getCoupons']);
+    Route::post('/coupons', [AdminPanelController::class, 'manageCoupon']);
+
+    // Invoices API
+    Route::get('/invoices', [AdminPanelController::class, 'getInvoices']);
+    Route::post('/invoices', [AdminPanelController::class, 'manageInvoice']);
+
+    // Users API
+    Route::get('/users', [AdminPanelController::class, 'getUsers']);
+    Route::post('/users', [AdminPanelController::class, 'manageUser']);
+
+    // Web-based Logout
+    Route::post('/auth/logout', [AuthController::class, 'logout']);
+});

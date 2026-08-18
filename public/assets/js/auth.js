@@ -1,5 +1,6 @@
 (function () {
   const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+  const getBaseUrl = () => (window.AppConfig && window.AppConfig.baseUrl) ? window.AppConfig.baseUrl : '';
 
   const loginForm = document.getElementById('loginForm');
   if (loginForm) {
@@ -11,7 +12,7 @@
       const message = document.getElementById('loginMessage');
 
       try {
-        const response = await fetch('api/auth/login', {
+        const response = await fetch(getBaseUrl() + '/api/auth/login', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -55,7 +56,7 @@
       }
 
       try {
-        const response = await fetch('api/auth/register', {
+        const response = await fetch(getBaseUrl() + '/api/auth/register', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

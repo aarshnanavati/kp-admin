@@ -1,0 +1,18 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Handle Authorization Header
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # 1. Route static asset requests to public/ if they exist there
+    RewriteCond %{REQUEST_URI} ^(/[^/]+)/(.*)$
+    RewriteCond %{DOCUMENT_ROOT}%1/public/%2 -f [OR]
+    RewriteCond %{DOCUMENT_ROOT}%1/public/%2 -d
+    RewriteRule ^(.*)$ public/$1 [L]
+
+    # 2. Send all router paths to the root index.php
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [L]
+</IfModule>

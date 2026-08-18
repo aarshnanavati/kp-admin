@@ -208,7 +208,8 @@ class AdminPanelController extends Controller
 
         // Most ordered items in the previous 7 days
         $sevenDaysAgo = Carbon::now()->subDays(7)->toDateString();
-        $recentOrders = Order::where('date', '>=', $sevenDaysAgo)->get();
+        $recentOrders = Order::where('date', '>=',
+            $sevenDaysAgo)->get();
 
         $itemCounts = [];
         foreach ($recentOrders as $order) {

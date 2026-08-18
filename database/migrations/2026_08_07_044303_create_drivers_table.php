@@ -24,6 +24,8 @@ return new class extends Migration
             $table->string('vehicle_reg_no')->nullable();
             $table->string('assigned_zip')->nullable(); // Zip/Postcode assignment
             $table->string('area')->nullable(); // Area (compatibility copy of postcode)
+            $table->string('password')->nullable();
+            $table->string('api_token', 80)->unique()->nullable()->default(null);
             $table->string('status')->default('Active');
             $table->timestamps();
         });

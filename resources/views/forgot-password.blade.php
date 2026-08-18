@@ -9,6 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ asset('assets/css/style.css') }}">
+  <script>
+    window.AppConfig = {
+      baseUrl: "{{ url('/') }}"
+    };
+  </script>
   <style>
     /* Styling to manage steps visibility transition */
     .otp_step {
@@ -103,6 +108,7 @@
   <script>
     (function () {
       const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      const getBaseUrl = () => (window.AppConfig && window.AppConfig.baseUrl) ? window.AppConfig.baseUrl : '';
       
       let emailAddress = '';
       let verificationOtp = '';
@@ -124,7 +130,7 @@
         message.className = 'kp_kitchen_admin_panel_form_message';
 
         try {
-          const response = await fetch('api/auth/forget-password', {
+          const response = await fetch(getBaseUrl() + '/api/auth/forget-password', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -169,7 +175,7 @@
         message.className = 'kp_kitchen_admin_panel_form_message';
 
         try {
-          const response = await fetch('api/auth/verify-otp', {
+          const response = await fetch(getBaseUrl() + '/api/auth/verify-otp', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -208,7 +214,7 @@
         message.className = 'kp_kitchen_admin_panel_form_message';
 
         try {
-          const response = await fetch('api/auth/forget-password', {
+          const response = await fetch(getBaseUrl() + '/api/auth/forget-password', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -250,7 +256,7 @@
         }
 
         try {
-          const response = await fetch('api/auth/reset-password', {
+          const response = await fetch(getBaseUrl() + '/api/auth/reset-password', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

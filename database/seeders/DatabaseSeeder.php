@@ -221,7 +221,10 @@ class DatabaseSeeder extends Seeder
 
         $driverModels = [];
         foreach ($drivers as $d) {
-            $driverModels[] = Driver::create(array_merge($d, ['area' => $d['assigned_zip']]));
+            $driverModels[] = Driver::create(array_merge($d, [
+                'area' => $d['assigned_zip'],
+                'password' => Hash::make('password')
+            ]));
         }
 
         // 6. Create 33 Customers (Australia Localized)
@@ -262,6 +265,7 @@ class DatabaseSeeder extends Seeder
                 'email' => $email,
                 'pincode' => $zip,
                 'address' => $address,
+                'password' => Hash::make('password'),
             ]);
 
             // Add secondary address

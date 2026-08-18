@@ -1239,7 +1239,7 @@ body.kp_kitchen_admin_panel_body {
 /* Modals Overlay & Content Layouts */
 .kp_kitchen_admin_panel_modal {
     display: none;
-    position: sticky;
+    position: fixed;
     top: 0;
     left: 0;
     right: 0;

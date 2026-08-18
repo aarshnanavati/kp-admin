@@ -13,6 +13,7 @@ class Driver extends Model
         'name',
         'phone',
         'email',
+        'password',
         'address',
         'license_no',
         'license_copy_front',
@@ -21,6 +22,7 @@ class Driver extends Model
         'vehicle_reg_no',
         'assigned_zip',
         'status',
+        'api_token',
     ];
 
     public function trips()

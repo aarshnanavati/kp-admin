@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\Customer;
 use App\Models\PasswordOtp;
 use App\Mail\SendOtpMail;
+use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -38,10 +40,15 @@ class AuthController extends Controller
         ];
 
         if (Auth::attempt($credentials, $request->boolean('remember'))) {
-            $request->session()->regenerate();
+            if ($request->hasSession()) {
+                $request->session()->regenerate();
+            }
             $user = Auth::user();
+            $token = Str::random(60);
+            $user->update(['api_token' => $token]);
             return response()->json([
                 'success' => true,
+                'token' => $token,
                 'admin' => [
                     'name' => $user->name,
                     'email' => $user->email,
@@ -106,9 +113,15 @@ class AuthController extends Controller
      */
     public function logout(Request $request)
     {
+        $user = Auth::user();
+        if ($user) {
+            $user->update(['api_token' => null]);
+        }
         Auth::logout();
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
+        if ($request->hasSession()) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
 
         return response()->json([
             'success' => true,
@@ -259,6 +272,556 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Your password has been reset successfully. Redirecting to login...',
+        ]);
+    }
+
+    /**
+     * Handle customer registration.
+     */
+    public function customerRegister(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255',
+            'phone' => 'required|string|max:50',
+            'password' => 'required|string|min:6',
+            'pincode' => 'required|string|max:10',
+            'address' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        if (Customer::where('email', $email)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'A customer with this email already exists.',
+            ], 422);
+        }
+
+        $token = Str::random(60);
+
+        $customer = Customer::create([
+            'name' => trim($request->name),
+            'email' => $email,
+            'phone' => trim($request->phone),
+            'password' => Hash::make($request->password),
+            'pincode' => trim($request->pincode),
+            'address' => trim($request->address),
+            'api_token' => $token,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Registration successful.',
+            'token' => $token,
+            'customer' => [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'pincode' => $customer->pincode,
+                'address' => $customer->address,
+            ]
+        ], 201);
+    }
+
+    /**
+     * Handle customer login.
+     */
+    public function customerLogin(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+            'password' => 'required',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please provide email and password.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        $customer = Customer::where('email', $email)->first();
+
+        if (!$customer || !Hash::check($request->password, $customer->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid credentials.',
+            ], 401);
+        }
+
+        $token = Str::random(60);
+        $customer->update(['api_token' => $token]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Login successful.',
+            'token' => $token,
+            'customer' => [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'pincode' => $customer->pincode,
+                'address' => $customer->address,
+            ]
+        ]);
+    }
+
+    /**
+     * Handle customer logout.
+     */
+    public function customerLogout(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        if ($customer) {
+            $customer->update(['api_token' => null]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Logged out successfully.'
+        ]);
+    }
+
+    /**
+     * Get authenticated customer profile.
+     */
+    public function customerProfile(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        return response()->json([
+            'success' => true,
+            'customer' => [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'pincode' => $customer->pincode,
+                'address' => $customer->address,
+            ]
+        ]);
+    }
+
+    /**
+     * Handle driver registration.
+     */
+    public function driverRegister(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'phone' => 'required|string|max:50',
+            'email' => 'required|email|max:255',
+            'password' => 'required|string|min:6',
+            'address' => 'nullable|string',
+            'license_no' => 'nullable|string|max:100',
+            'license_expiry' => 'nullable|date',
+            'vehicle_reg_no' => 'nullable|string|max:50',
+            'assigned_zip' => 'nullable|string|max:10',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        if (\App\Models\Driver::where('email', $email)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'A driver with this email already exists.',
+            ], 422);
+        }
+
+        $token = Str::random(60);
+
+        $driver = \App\Models\Driver::create([
+            'name' => trim($request->name),
+            'phone' => trim($request->phone),
+            'email' => $email,
+            'password' => Hash::make($request->password),
+            'address' => $request->address ? trim($request->address) : null,
+            'license_no' => $request->license_no ? trim($request->license_no) : null,
+            'license_expiry' => $request->license_expiry ? trim($request->license_expiry) : null,
+            'vehicle_reg_no' => $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null,
+            'assigned_zip' => $request->assigned_zip ? trim($request->assigned_zip) : null,
+            'area' => $request->assigned_zip ? trim($request->assigned_zip) : null,
+            'api_token' => $token,
+            'status' => 'Active',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Driver registration successful.',
+            'token' => $token,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'assigned_zip' => $driver->assigned_zip,
+            ]
+        ], 201);
+    }
+
+    /**
+     * Handle driver login.
+     */
+    public function driverLogin(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+            'password' => 'required',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please provide email and password.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        $driver = \App\Models\Driver::where('email', $email)->first();
+
+        if (!$driver || !Hash::check($request->password, $driver->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid credentials.',
+            ], 401);
+        }
+
+        $token = Str::random(60);
+        $driver->update(['api_token' => $token]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Driver login successful.',
+            'token' => $token,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'assigned_zip' => $driver->assigned_zip,
+            ]
+        ]);
+    }
+
+    /**
+     * Handle driver logout.
+     */
+    public function driverLogout(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        if ($driver) {
+            $driver->update(['api_token' => null]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Driver logged out successfully.'
+        ]);
+    }
+
+    /**
+     * Get authenticated driver profile.
+     */
+    public function driverProfile(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        return response()->json([
+            'success' => true,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'assigned_zip' => $driver->assigned_zip,
+                'status' => $driver->status,
+            ]
+        ]);
+    }
+
+    /**
+     * Customer Forgot Password
+     */
+    public function customerForgetPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please enter a valid email address.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        if (!Customer::where('email', $email)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No customer account found with that email address.',
+            ], 422);
+        }
+
+        $otp = (string)rand(100000, 999999);
+        PasswordOtp::where('email', $email)->delete();
+        PasswordOtp::create([
+            'email' => $email,
+            'otp' => $otp,
+            'expires_at' => Carbon::now()->addMinutes(10),
+        ]);
+
+        Log::info("Customer Password Reset OTP for {$email}: {$otp}");
+
+        try {
+            Mail::to($email)->send(new SendOtpMail($otp));
+        } catch (\Exception $e) {
+            Log::warning("SMTP email sending failed. Fallback logged in laravel.log.");
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'A verification OTP has been sent to your email.',
+        ]);
+    }
+
+    /**
+     * Customer Verify OTP
+     */
+    public function customerVerifyOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+            'otp' => 'required|string|size:6',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please enter the 6-digit OTP sent to your email.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        $otpRecord = PasswordOtp::where('email', $email)
+            ->where('otp', trim($request->otp))
+            ->where('expires_at', '>', Carbon::now())
+            ->first();
+
+        if (!$otpRecord) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired OTP. Please request a new one.',
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'OTP verified successfully.',
+        ]);
+    }
+
+    /**
+     * Customer Reset Password
+     */
+    public function customerResetPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+            'otp' => 'required|string|size:6',
+            'password' => 'required|string|min:6',
+            'confirm_password' => 'required|string|min:6',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        if ($request->password !== $request->confirm_password) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Passwords do not match.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        $otpRecord = PasswordOtp::where('email', $email)
+            ->where('otp', trim($request->otp))
+            ->where('expires_at', '>', Carbon::now())
+            ->first();
+
+        if (!$otpRecord) {
+            return response()->json([
+                'success' => false,
+                'message' => 'OTP verification failed. Please request a new OTP.',
+            ], 422);
+        }
+
+        $customer = Customer::where('email', $email)->first();
+        if ($customer) {
+            $customer->update([
+                'password' => Hash::make($request->password),
+            ]);
+        }
+
+        $otpRecord->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Your password has been reset successfully.',
+        ]);
+    }
+
+    /**
+     * Driver Forgot Password
+     */
+    public function driverForgetPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please enter a valid email address.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        if (!\App\Models\Driver::where('email', $email)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No driver account found with that email address.',
+            ], 422);
+        }
+
+        $otp = (string)rand(100000, 999999);
+        PasswordOtp::where('email', $email)->delete();
+        PasswordOtp::create([
+            'email' => $email,
+            'otp' => $otp,
+            'expires_at' => Carbon::now()->addMinutes(10),
+        ]);
+
+        Log::info("Driver Password Reset OTP for {$email}: {$otp}");
+
+        try {
+            Mail::to($email)->send(new SendOtpMail($otp));
+        } catch (\Exception $e) {
+            Log::warning("SMTP email sending failed. Fallback logged in laravel.log.");
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'A verification OTP has been sent to your email.',
+        ]);
+    }
+
+    /**
+     * Driver Verify OTP
+     */
+    public function driverVerifyOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+            'otp' => 'required|string|size:6',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please enter the 6-digit OTP sent to your email.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        $otpRecord = PasswordOtp::where('email', $email)
+            ->where('otp', trim($request->otp))
+            ->where('expires_at', '>', Carbon::now())
+            ->first();
+
+        if (!$otpRecord) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired OTP. Please request a new one.',
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'OTP verified successfully.',
+        ]);
+    }
+
+    /**
+     * Driver Reset Password
+     */
+    public function driverResetPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+            'otp' => 'required|string|size:6',
+            'password' => 'required|string|min:6',
+            'confirm_password' => 'required|string|min:6',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        if ($request->password !== $request->confirm_password) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Passwords do not match.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        $otpRecord = PasswordOtp::where('email', $email)
+            ->where('otp', trim($request->otp))
+            ->where('expires_at', '>', Carbon::now())
+            ->first();
+
+        if (!$otpRecord) {
+            return response()->json([
+                'success' => false,
+                'message' => 'OTP verification failed. Please request a new OTP.',
+            ], 422);
+        }
+
+        $driver = \App\Models\Driver::where('email', $email)->first();
+        if ($driver) {
+            $driver->update([
+                'password' => Hash::make($request->password),
+            ]);
+        }
+
+        $otpRecord->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Your password has been reset successfully.',
         ]);
     }
 }

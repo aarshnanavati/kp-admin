@@ -9,6 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ asset('assets/css/style.css') }}">
+  <script>
+    window.AppConfig = {
+      baseUrl: "{{ url('/') }}"
+    };
+  </script>
 </head>
 <body class="kp_kitchen_admin_panel_auth_body">
   <main class="kp_kitchen_admin_panel_auth_shell">
