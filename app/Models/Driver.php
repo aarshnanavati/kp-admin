@@ -23,6 +23,7 @@ class Driver extends Model
         'assigned_zip',
         'status',
         'api_token',
+        'user_type',
     ];
 
     public function trips()

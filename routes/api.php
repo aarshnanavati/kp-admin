@@ -40,6 +40,16 @@ Route::post('/driver/reset-password', [AuthController::class, 'driverResetPasswo
 Route::middleware('customer.auth')->group(function () {
     Route::post('/customer/logout', [AuthController::class, 'customerLogout']);
     Route::get('/customer/profile', [AuthController::class, 'customerProfile']);
+    
+    // Customer Operational Endpoints
+    Route::get('/customer/tiffins', [AdminPanelController::class, 'getTiffins']);
+    Route::get('/customer/categories', [AdminPanelController::class, 'getCategories']);
+    Route::get('/customer/items', [AdminPanelController::class, 'getItems']);
+    Route::get('/customer/orders', [AuthController::class, 'customerOrders']);
+    Route::post('/customer/orders', [AuthController::class, 'placeCustomerOrder']);
+    Route::get('/customer/invoices', [AuthController::class, 'customerInvoices']);
+    Route::get('/customer/notifications', [AuthController::class, 'customerNotifications']);
+    Route::post('/customer/coupons/apply', [AuthController::class, 'applyCoupon']);
 });
 
 // --- Driver Authenticated API Routes ---
@@ -119,4 +129,7 @@ Route::middleware('api.or.session')->group(function () {
     // Web-based Logout
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    
+    // Admin Profile API
+    Route::get('/admin/profile', [AuthController::class, 'adminProfile']);
 });

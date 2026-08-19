@@ -771,7 +771,50 @@ class AdminPanelController extends Controller
 
     public function getTiffins()
     {
-        return response()->json(Tiffin::with('category')->get());
+        $tiffins = Tiffin::with('category')->get();
+
+        $formatted = $tiffins->map(function ($tiffin) {
+            $resolvedItems = [];
+            $itemsData = $tiffin->items;
+
+            if (is_array($itemsData)) {
+                if (isset($itemsData['basic']) || isset($itemsData['addons'])) {
+                    $basic = $itemsData['basic'] ?? [];
+                    foreach ($basic as $b) {
+                        if (is_numeric($b)) {
+                            $item = \App\Models\Item::find($b);
+                            if ($item) {
+                                $resolvedItems[] = $item->name;
+                            }
+                        } else {
+                            $resolvedItems[] = $b;
+                        }
+                    }
+
+                    $addons = $itemsData['addons'] ?? [];
+                    foreach ($addons as $addonId) {
+                        $item = \App\Models\Item::find($addonId);
+                        if ($item) {
+                            $resolvedItems[] = $item->name;
+                        }
+                    }
+                } else {
+                    foreach ($itemsData as $itemId) {
+                        $item = \App\Models\Item::find($itemId);
+                        if ($item) {
+                            $resolvedItems[] = $item->name;
+                        }
+                    }
+                }
+            }
+
+            $tiffinArray = $tiffin->toArray();
+            $tiffinArray['items'] = $resolvedItems;
+
+            return $tiffinArray;
+        });
+
+        return response()->json($formatted);
     }
 
     public function getOrders()

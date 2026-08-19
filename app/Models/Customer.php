@@ -18,6 +18,7 @@ class Customer extends Authenticatable
         'address',
         'password',
         'api_token',
+        'user_type',
     ];
 
     protected $hidden = [

@@ -49,6 +49,7 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'token' => $token,
+                'user_type' => $user->user_type,
                 'admin' => [
                     'name' => $user->name,
                     'email' => $user->email,
@@ -100,6 +101,7 @@ class AuthController extends Controller
             'name' => trim($request->name),
             'email' => $email,
             'password' => Hash::make($request->password),
+            'user_type' => 'admin',
         ]);
 
         return response()->json([
@@ -314,12 +316,14 @@ class AuthController extends Controller
             'pincode' => trim($request->pincode),
             'address' => trim($request->address),
             'api_token' => $token,
+            'user_type' => 'customer',
         ]);
 
         return response()->json([
             'success' => true,
             'message' => 'Registration successful.',
             'token' => $token,
+            'user_type' => $customer->user_type,
             'customer' => [
                 'id' => $customer->id,
                 'name' => $customer->name,
@@ -365,6 +369,7 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Login successful.',
             'token' => $token,
+            'user_type' => $customer->user_type,
             'customer' => [
                 'id' => $customer->id,
                 'name' => $customer->name,
@@ -407,6 +412,167 @@ class AuthController extends Controller
                 'phone' => $customer->phone,
                 'pincode' => $customer->pincode,
                 'address' => $customer->address,
+                'user_type' => $customer->user_type,
+                'total_orders' => $customer->orders()->count(),
+                'total_spent' => (float)$customer->orders()->sum('amount'),
+                'recent_orders' => $customer->orders()->latest()->take(5)->get(),
+            ]
+        ]);
+    }
+
+    /**
+     * Get orders for the authenticated customer.
+     */
+    public function customerOrders(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $orders = \App\Models\Order::where('customer_id', $customer->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
+        return response()->json([
+            'success' => true,
+            'orders' => $orders
+        ]);
+    }
+
+    /**
+     * Place a new order for the customer.
+     */
+    public function placeCustomerOrder(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $validator = Validator::make($request->all(), [
+            'tiffin_id' => 'required|exists:tiffins,id',
+            'add_ons' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $tiffin = \App\Models\Tiffin::findOrFail($request->tiffin_id);
+        
+        $amount = (float)$tiffin->price;
+        $addons = $request->input('add_ons', []);
+        if (!empty($addons)) {
+            foreach ($addons as $addonId) {
+                $item = \App\Models\Item::find($addonId);
+                if ($item) {
+                    $amount += (float)$item->price;
+                }
+            }
+        }
+
+        $orderId = 'ORD' . strtoupper(Str::random(8));
+
+        $addonsData = [];
+        foreach ($addons as $addonId) {
+            $item = \App\Models\Item::find($addonId);
+            if ($item) {
+                $addonsData[] = [
+                    'id' => $item->id,
+                    'name' => $item->name,
+                    'price' => $item->price,
+                    'qty' => 1
+                ];
+            }
+        }
+
+        $order = \App\Models\Order::create([
+            'id' => $orderId,
+            'customer_id' => $customer->id,
+            'customer' => $customer->name,
+            'tiffin_id' => $tiffin->id,
+            'tiffin' => $tiffin->name,
+            'area' => $customer->pincode,
+            'amount' => $amount,
+            'status' => 'Pending',
+            'date' => Carbon::now()->toDateString(),
+            'add_ons' => json_encode($addonsData),
+        ]);
+
+        \App\Models\Notification::create([
+            'title' => 'New Order Placed',
+            'message' => "Customer {$customer->name} placed order {$orderId} for plan {$tiffin->name}.",
+            'read_status' => false
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Order placed successfully.',
+            'order' => $order
+        ]);
+    }
+
+    /**
+     * Get invoices for the authenticated customer.
+     */
+    public function customerInvoices(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
+        return response()->json([
+            'success' => true,
+            'invoices' => $invoices
+        ]);
+    }
+
+    /**
+     * Get customer notifications.
+     */
+    public function customerNotifications(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $notifications = \App\Models\Notification::where('message', 'like', "%{$customer->name}%")
+            ->orWhere('title', 'like', '%System%')
+            ->orderBy('created_at', 'desc')
+            ->get();
+        return response()->json([
+            'success' => true,
+            'notifications' => $notifications
+        ]);
+    }
+
+    /**
+     * Apply coupon code.
+     */
+    public function applyCoupon(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'code' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please enter a valid coupon code.'
+            ], 422);
+        }
+
+        $coupon = \App\Models\Coupon::where('code', strtoupper(trim($request->code)))
+            ->where('status', 'Active')
+            ->where('expiry', '>=', Carbon::now()->toDateString())
+            ->first();
+
+        if (!$coupon) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired coupon code.'
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Coupon code applied successfully.',
+            'coupon' => [
+                'code' => $coupon->code,
+                'type' => $coupon->type,
+                'value' => (float)$coupon->value
             ]
         ]);
     }
@@ -458,12 +624,14 @@ class AuthController extends Controller
             'area' => $request->assigned_zip ? trim($request->assigned_zip) : null,
             'api_token' => $token,
             'status' => 'Active',
+            'user_type' => 'driver',
         ]);
 
         return response()->json([
             'success' => true,
             'message' => 'Driver registration successful.',
             'token' => $token,
+            'user_type' => $driver->user_type,
             'driver' => [
                 'id' => $driver->id,
                 'name' => $driver->name,
@@ -508,6 +676,7 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Driver login successful.',
             'token' => $token,
+            'user_type' => $driver->user_type,
             'driver' => [
                 'id' => $driver->id,
                 'name' => $driver->name,
@@ -547,8 +716,18 @@ class AuthController extends Controller
                 'name' => $driver->name,
                 'email' => $driver->email,
                 'phone' => $driver->phone,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $driver->license_copy_front ? asset($driver->license_copy_front) : null,
+                'license_copy_back' => $driver->license_copy_back ? asset($driver->license_copy_back) : null,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
                 'assigned_zip' => $driver->assigned_zip,
                 'status' => $driver->status,
+                'user_type' => $driver->user_type,
+                'total_assigned_orders' => $driver->orders()->count(),
+                'active_shipments' => $driver->orders()->whereIn('status', ['Cooking', 'Dispatched'])->count(),
+                'recent_deliveries' => $driver->orders()->latest()->take(5)->get(),
             ]
         ]);
     }
@@ -822,6 +1001,31 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Your password has been reset successfully.',
+        ]);
+    }
+
+    /**
+     * Get profile for the authenticated administrator.
+     */
+    public function adminProfile(Request $request)
+    {
+        $user = Auth::user();
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        return response()->json([
+            'success' => true,
+            'admin' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'user_type' => $user->user_type,
+                'created_at' => $user->created_at->toIso8601String(),
+            ]
         ]);
     }
 }
