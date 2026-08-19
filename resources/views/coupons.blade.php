@@ -28,7 +28,42 @@
             <th class="kp_kitchen_admin_panel_table_heading">Actions</th>
           </tr>
         </thead>
-        <tbody class="kp_kitchen_admin_panel_table_body" id="couponsTableBody"></tbody>
+        <tbody class="kp_kitchen_admin_panel_table_body" id="couponsTableBody">
+          @forelse ($coupons as $coupon)
+            <tr class="kp_kitchen_admin_panel_table_row">
+              <td class="kp_kitchen_admin_panel_table_cell"><strong style="letter-spacing: 1px; color: var(--primary-color);">{{ $coupon->code }}</strong></td>
+              <td class="kp_kitchen_admin_panel_table_cell">{{ $coupon->type }}</td>
+              <td class="kp_kitchen_admin_panel_table_cell">
+                <strong>{{ $coupon->type === 'Percentage' ? number_format($coupon->value, 0) . '%' : '$' . number_format($coupon->value, 2) }}</strong>
+              </td>
+              <td class="kp_kitchen_admin_panel_table_cell">{{ $coupon->expiry_date }}</td>
+              <td class="kp_kitchen_admin_panel_table_cell">
+                <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_{{ strtolower(str_replace(' ', '_', $coupon->status)) }}">{{ $coupon->status }}</span>
+              </td>
+              <td class="kp_kitchen_admin_panel_table_cell">
+                <div class="kp_kitchen_admin_panel_table_actions">
+                  <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_edit edit-coupon-btn"
+                    data-id="{{ $coupon->id }}"
+                    data-code="{{ $coupon->code }}"
+                    data-type="{{ $coupon->type }}"
+                    data-value="{{ $coupon->value }}"
+                    data-expiry_date="{{ $coupon->expiry_date }}"
+                    data-status="{{ $coupon->status }}">
+                    Edit
+                  </button>
+                  <form method="POST" action="{{ route('coupons.delete', $coupon->id) }}" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this coupon code?');">
+                    @csrf
+                    <button type="submit" class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_delete">Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          @empty
+            <tr>
+              <td colspan="6" class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">No coupons found. Click "+ Add Coupon" to create one.</td>
+            </tr>
+          @endforelse
+        </tbody>
       </table>
     </div>
   </article>

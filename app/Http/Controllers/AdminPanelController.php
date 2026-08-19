@@ -25,67 +25,709 @@ class AdminPanelController extends Controller
 
     public function dashboard()
     {
-        return view('dashboard');
+        $driversCount = Driver::where('status', 'Active')->count();
+        $ordersCount = Order::count();
+        $totalRevenue = Payment::where('status', 'Successful')->sum('amount');
+        $customersCount = Customer::count();
+        $tiffinsCount = Tiffin::count();
+        
+        $recentOrders = Order::orderBy('date', 'desc')->take(5)->get();
+        $latestPayments = Payment::orderBy('date', 'desc')->take(5)->get();
+        
+        $statuses = ['Pending', 'Confirmed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'];
+        $deliverySummary = [];
+        foreach ($statuses as $status) {
+            $count = Order::where('status', $status)->count();
+            $percent = $ordersCount ? round(($count / $ordersCount) * 100) : 0;
+            $deliverySummary[] = [
+                'status' => $status,
+                'count' => $count,
+                'percent' => $percent
+            ];
+        }
+        
+        return view('dashboard', compact(
+            'driversCount',
+            'ordersCount',
+            'totalRevenue',
+            'customersCount',
+            'tiffinsCount',
+            'recentOrders',
+            'latestPayments',
+            'deliverySummary'
+        ));
     }
 
-    public function drivers()
+    public function drivers(Request $request)
     {
-        return view('drivers');
+        $search = $request->query('search');
+        $query = Driver::query();
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%")
+                  ->orWhere('assigned_zip', 'like', "%{$search}%");
+        }
+        $drivers = $query->with('orders')->orderBy('created_at', 'desc')->get();
+        
+        $activeDeliveriesMap = [];
+        foreach ($drivers as $driver) {
+            $activeDeliveriesMap[$driver->id] = Order::where('driver_id', $driver->id)
+                ->whereNotIn('status', ['Delivered', 'Cancelled'])
+                ->count();
+        }
+        
+        return view('drivers', compact('drivers', 'activeDeliveriesMap'));
     }
 
-    public function tiffins()
+    public function tiffins(Request $request)
     {
-        return view('tiffins');
+        $search = $request->query('search');
+        $query = Tiffin::with('category');
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%");
+        }
+        $tiffins = $query->orderBy('created_at', 'desc')->get();
+        $categories = Category::all();
+        $items = Item::where('status', 'Active')->get();
+        $itemsMap = $items->pluck('name', 'id')->toArray();
+        return view('tiffins', compact('tiffins', 'categories', 'items', 'itemsMap'));
     }
 
-    public function orders()
+    public function orders(Request $request)
     {
-        return view('orders');
+        $query = Order::query();
+        
+        if ($request->filled('start_date')) {
+            $query->whereDate('date', '>=', $request->start_date);
+        }
+        if ($request->filled('end_date')) {
+            $query->whereDate('date', '<=', $request->end_date);
+        }
+        if ($request->filled('area') && $request->area !== 'all') {
+            $query->where('area', $request->area);
+        }
+        if ($request->filled('status') && $request->status !== 'all') {
+            $query->where('status', $request->status);
+        }
+        
+        $search = $request->query('search');
+        if ($search) {
+            $query->where(function($q) use ($search) {
+                $q->where('id', 'like', "%{$search}%")
+                  ->orWhere('customer', 'like', "%{$search}%")
+                  ->orWhere('tiffin', 'like', "%{$search}%")
+                  ->orWhere('area', 'like', "%{$search}%");
+            });
+        }
+        
+        $orders = $query->orderBy('date', 'desc')->get();
+        $drivers = Driver::all();
+        $uniqueAreas = Order::pluck('area')->unique()->filter()->values()->toArray();
+        
+        return view('orders', compact('orders', 'drivers', 'uniqueAreas'));
     }
 
     public function payments()
     {
-        return view('payments');
+        $payments = Payment::orderBy('date', 'desc')->get();
+        $successfulCount = $payments->where('status', 'Successful')->count();
+        $failedCount = $payments->where('status', 'Failed')->count();
+        $totalAmount = $payments->where('status', 'Successful')->sum('amount');
+        
+        return view('payments', compact('payments', 'successfulCount', 'failedCount', 'totalAmount'));
     }
 
     public function notifications()
     {
-        return view('notifications');
+        $notifications = Notification::orderBy('created_at', 'desc')->get();
+        return view('notifications', compact('notifications'));
     }
 
-    public function customers()
+    public function customers(Request $request)
     {
-        return view('customers');
+        $search = $request->query('search');
+        $query = Customer::query();
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+        }
+        $customers = $query->orderBy('created_at', 'desc')->get();
+        return view('customers', compact('customers'));
     }
 
-    public function categories()
+    public function categories(Request $request)
     {
-        return view('categories');
+        $search = $request->query('search');
+        $query = Category::with('items');
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%");
+        }
+        $categories = $query->orderBy('id', 'asc')->get();
+        return view('categories', compact('categories'));
     }
 
-    public function items()
+    public function items(Request $request)
     {
-        return view('items');
+        $search = $request->query('search');
+        $query = Item::with('category');
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%")
+                  ->orWhereHas('category', function($q) use ($search) {
+                      $q->where('name', 'like', "%{$search}%");
+                  });
+        }
+        $items = $query->orderBy('created_at', 'desc')->get();
+        $categories = Category::all();
+        return view('items', compact('items', 'categories'));
     }
 
-    public function coupons()
+    public function coupons(Request $request)
     {
-        return view('coupons');
+        $search = $request->query('search');
+        $query = Coupon::query();
+        if ($search) {
+            $query->where('code', 'like', "%{$search}%")
+                  ->orWhere('type', 'like', "%{$search}%");
+        }
+        $coupons = $query->orderBy('created_at', 'desc')->get();
+        return view('coupons', compact('coupons'));
     }
 
-    public function invoices()
+    public function invoices(Request $request)
     {
-        return view('invoices');
+        $query = Invoice::query();
+        
+        if ($request->filled('start_date')) {
+            $query->whereDate('due_date', '>=', $request->start_date);
+        }
+        if ($request->filled('end_date')) {
+            $query->whereDate('due_date', '<=', $request->end_date);
+        }
+        if ($request->filled('status') && $request->status !== 'all') {
+            $query->where('status', $request->status);
+        }
+        
+        $search = $request->query('search');
+        if ($search) {
+            $query->where(function($q) use ($search) {
+                $q->where('id', 'like', "%{$search}%")
+                  ->orWhere('order_id', 'like', "%{$search}%")
+                  ->orWhereHas('customer', function($sub) use ($search) {
+                      $sub->where('name', 'like', "%{$search}%");
+                  });
+            });
+        }
+        
+        $invoices = $query->with('customer')->orderBy('created_at', 'desc')->get();
+        $customers = Customer::all();
+        return view('invoices', compact('invoices', 'customers'));
     }
 
     public function users()
     {
-        return view('users');
+        $users = User::orderBy('created_at', 'desc')->get();
+        return view('users', compact('users'));
     }
 
     public function reports()
     {
-        return view('reports');
+        $trips = Trip::with(['driver', 'order'])->orderBy('created_at', 'desc')->get();
+        $drivers = Driver::all();
+        $customers = Customer::all();
+        return view('reports', compact('trips', 'drivers', 'customers'));
+    }
+
+    // --- Web CRUD Actions ---
+
+    public function saveCategory(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string',
+        ]);
+
+        $id = $request->input('id');
+        $data = [
+            'name' => trim($request->name),
+            'description' => $request->description ? trim($request->description) : null,
+        ];
+
+        if ($id) {
+            $category = Category::findOrFail($id);
+            $category->update($data);
+            $msg = 'Category updated successfully.';
+        } else {
+            Category::create($data);
+            $msg = 'Category created successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteCategory($id)
+    {
+        $category = Category::findOrFail($id);
+        $category->delete();
+        return redirect()->back()->with('success', 'Category deleted successfully.');
+    }
+
+    public function saveItem(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+            'category_id' => 'required|exists:categories,id',
+            'description' => 'nullable|string',
+            'status' => 'required|in:Active,Inactive',
+            'image_file' => 'nullable|image|max:2048',
+        ]);
+
+        $id = $request->input('id');
+        $imagePath = $request->input('image');
+
+        if ($request->hasFile('image_file')) {
+            $file = $request->file('image_file');
+            $fileName = 'item_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/items'), $fileName);
+            $imagePath = 'uploads/items/' . $fileName;
+        } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
+            $uploadsDir = public_path('uploads/items');
+            if (!File::exists($uploadsDir)) {
+                File::makeDirectory($uploadsDir, 0777, true, true);
+            }
+            $imageParts = explode(';base64,', $request->image);
+            $imageTypeAux = explode('image/', $imageParts[0]);
+            $imageType = $imageTypeAux[1];
+            $imageDecoded = base64_decode($imageParts[1]);
+            $fileName = 'item_' . uniqid() . '.' . $imageType;
+            File::put($uploadsDir . '/' . $fileName, $imageDecoded);
+            $imagePath = 'uploads/items/' . $fileName;
+        }
+
+        $data = [
+            'name' => trim($request->name),
+            'price' => (float)$request->price,
+            'category_id' => $request->category_id,
+            'description' => $request->description ? trim($request->description) : null,
+            'status' => $request->status,
+            'image' => $imagePath,
+        ];
+
+        if ($id) {
+            $item = Item::findOrFail($id);
+            $item->update($data);
+            $msg = 'Item updated successfully.';
+        } else {
+            Item::create($data);
+            $msg = 'Item created successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteItem($id)
+    {
+        $item = Item::findOrFail($id);
+        $item->delete();
+        return redirect()->back()->with('success', 'Item deleted successfully.');
+    }
+
+    public function saveTiffin(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+            'category_id' => 'nullable|exists:categories,id',
+            'description' => 'nullable|string',
+            'prep_time' => 'required|integer|min:1',
+            'status' => 'required|in:Active,Inactive',
+            'items' => 'nullable',
+        ]);
+
+        $id = $request->input('id');
+        $itemsInput = $request->input('items');
+        
+        if (is_array($itemsInput) && (isset($itemsInput['basic']) || isset($itemsInput['addons']))) {
+            $items = [
+                'basic' => isset($itemsInput['basic']) ? array_values(array_filter(array_map('strval', $itemsInput['basic']))) : [],
+                'addons' => isset($itemsInput['addons']) ? array_values(array_map('intval', $itemsInput['addons'])) : [],
+            ];
+        } else {
+            $basicMenuItems = $request->input('basic_menu_items', []);
+            $tiffinAddons = $request->input('tiffin_addons', []);
+            $items = [
+                'basic' => array_values(array_filter(array_map('strval', $basicMenuItems))),
+                'addons' => array_values(array_map('intval', $tiffinAddons)),
+            ];
+        }
+
+        $data = [
+            'name' => trim($request->name),
+            'price' => (float)$request->price,
+            'category_id' => $request->category_id,
+            'description' => $request->description ? trim($request->description) : null,
+            'prep_time' => (int)$request->prep_time,
+            'status' => $request->status,
+            'items' => $items,
+        ];
+
+        if ($id) {
+            $tiffin = Tiffin::findOrFail($id);
+            $tiffin->update($data);
+            $msg = 'Tiffin plan updated successfully.';
+        } else {
+            Tiffin::create($data);
+            $msg = 'Tiffin plan created successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteTiffin($id)
+    {
+        $tiffin = Tiffin::findOrFail($id);
+        $tiffin->delete();
+        return redirect()->back()->with('success', 'Tiffin plan deleted successfully.');
+    }
+
+    public function saveDriver(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'required|string|max:50',
+            'email' => 'required|email',
+            'address' => 'nullable|string',
+            'license_no' => 'nullable|string|max:100',
+            'license_expiry' => 'nullable|date',
+            'vehicle_reg_no' => 'nullable|string|max:50',
+            'assigned_zip' => 'nullable|string|max:10',
+            'status' => 'required|in:Active,Inactive',
+            'license_copy_front_file' => 'nullable|image|max:2048',
+            'license_copy_back_file' => 'nullable|image|max:2048',
+        ]);
+
+        $id = $request->input('id');
+        $frontPath = $request->input('license_copy_front');
+        $backPath = $request->input('license_copy_back');
+
+        $uploadsDir = public_path('uploads/licenses');
+        if (!File::exists($uploadsDir)) {
+            File::makeDirectory($uploadsDir, 0777, true, true);
+        }
+
+        if ($request->hasFile('license_copy_front_file')) {
+            $file = $request->file('license_copy_front_file');
+            $fileName = 'front_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $file->move($uploadsDir, $fileName);
+            $frontPath = 'uploads/licenses/' . $fileName;
+        }
+
+        if ($request->hasFile('license_copy_back_file')) {
+            $file = $request->file('license_copy_back_file');
+            $fileName = 'back_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $file->move($uploadsDir, $fileName);
+            $backPath = 'uploads/licenses/' . $fileName;
+        }
+
+        $data = [
+            'name' => trim($request->name),
+            'phone' => trim($request->phone),
+            'email' => trim($request->email),
+            'address' => $request->address ? trim($request->address) : null,
+            'license_no' => $request->license_no ? trim($request->license_no) : null,
+            'license_expiry' => $request->license_expiry,
+            'vehicle_reg_no' => $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null,
+            'assigned_zip' => $request->assigned_zip ? trim($request->assigned_zip) : null,
+            'area' => $request->assigned_zip ? trim($request->assigned_zip) : null,
+            'status' => $request->status,
+            'license_copy_front' => $frontPath,
+            'license_copy_back' => $backPath,
+        ];
+
+        if ($id) {
+            $driver = Driver::findOrFail($id);
+            $oldName = $driver->name;
+            $driver->update($data);
+
+            $areaKeyLower = strtolower(trim($driver->area));
+            $assignedOrders = Order::where('driver', $oldName)->get();
+            foreach ($assignedOrders as $order) {
+                if ($driver->status !== 'Active' || strtolower(trim($order->area)) !== $areaKeyLower) {
+                    $order->update(['driver' => 'Unassigned', 'driver_id' => null]);
+                } else {
+                    $order->update(['driver' => $driver->name, 'driver_id' => $driver->id]);
+                }
+            }
+
+            $msg = 'Driver details updated successfully.';
+        } else {
+            Driver::create($data);
+            $msg = 'Driver registered successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteDriver($id)
+    {
+        $driver = Driver::findOrFail($id);
+        Order::where('driver_id', $driver->id)->update(['driver' => 'Unassigned', 'driver_id' => null]);
+        $driver->delete();
+        return redirect()->back()->with('success', 'Driver deleted successfully.');
+    }
+
+    public function updateOrderStatus(Request $request)
+    {
+        $request->validate([
+            'id' => 'required|exists:orders,id',
+            'status' => 'required|in:Pending,Confirmed,Preparing,Out for Delivery,Delivered,Cancelled',
+            'driver_id' => 'nullable|exists:drivers,id',
+        ]);
+
+        $order = Order::findOrFail($request->id);
+        $status = $request->status;
+        $driverId = $request->driver_id;
+        
+        $driverName = 'Unassigned';
+        if ($driverId) {
+            $driver = Driver::find($driverId);
+            if ($driver) {
+                $driverName = $driver->name;
+            }
+        }
+
+        $order->update([
+            'status' => $status,
+            'driver_id' => $driverId,
+            'driver' => $driverName,
+        ]);
+
+        if ($driverId) {
+            $tripStatus = 'Assigned';
+            if ($status === 'Out for Delivery') {
+                $tripStatus = 'Out for Delivery';
+            } elseif ($status === 'Delivered') {
+                $tripStatus = 'Completed';
+            } elseif ($status === 'Cancelled') {
+                $tripStatus = 'Cancelled';
+            }
+
+            Trip::updateOrCreate(
+                ['order_id' => $order->id],
+                [
+                    'driver_id' => $driverId,
+                    'status' => $tripStatus,
+                    'started_at' => ($tripStatus === 'Completed' || $tripStatus === 'Out for Delivery') ? Carbon::now() : null,
+                    'completed_at' => ($tripStatus === 'Completed') ? Carbon::now() : null,
+                ]
+            );
+        }
+
+        return redirect()->back()->with('success', "Order {$order->id} status updated to {$status}.");
+    }
+
+    public function runManualDeduction(Request $request)
+    {
+        $orders = Order::where('status', 'Delivered')->get();
+        $count = 0;
+
+        foreach ($orders as $order) {
+            $exists = Payment::where('customer_id', $order->customer_id)
+                ->where('date', $order->date)
+                ->where('amount', $order->amount)
+                ->exists();
+
+            if (!$exists) {
+                Payment::create([
+                    'customer_id' => $order->customer_id,
+                    'customer' => $order->customer,
+                    'plan' => $order->tiffin,
+                    'amount' => $order->amount,
+                    'date' => $order->date,
+                    'status' => 'Successful',
+                ]);
+                $count++;
+            }
+        }
+
+        return redirect()->back()->with('success', "Processed payments deduction. Created {$count} new payment transactions.");
+    }
+
+    public function saveCustomer(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'required|string|max:50',
+            'email' => 'required|email',
+            'pincode' => 'required|string|max:10',
+            'address' => 'required|string',
+        ]);
+
+        $id = $request->input('id');
+        $data = [
+            'name' => trim($request->name),
+            'phone' => trim($request->phone),
+            'email' => strtolower(trim($request->email)),
+            'pincode' => trim($request->pincode),
+            'address' => trim($request->address),
+        ];
+
+        if ($id) {
+            $customer = Customer::findOrFail($id);
+            $customer->update($data);
+            $msg = 'Customer details updated successfully.';
+        } else {
+            Customer::create(array_merge($data, [
+                'password' => Hash::make('password')
+            ]));
+            $msg = 'Customer registered successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteCustomer($id)
+    {
+        $customer = Customer::findOrFail($id);
+        $customer->delete();
+        return redirect()->back()->with('success', 'Customer deleted successfully.');
+    }
+
+    public function saveCoupon(Request $request)
+    {
+        $request->validate([
+            'code' => 'required|string|max:50',
+            'type' => 'required|in:Percentage,Flat',
+            'value' => 'required|numeric|min:0',
+            'expiry_date' => 'required|date',
+            'status' => 'required|in:Active,Inactive',
+        ]);
+
+        $id = $request->input('id');
+        $data = [
+            'code' => strtoupper(trim($request->code)),
+            'type' => $request->type,
+            'value' => (float)$request->value,
+            'expiry_date' => $request->expiry_date,
+            'status' => $request->status,
+        ];
+
+        if ($id) {
+            $coupon = Coupon::findOrFail($id);
+            $coupon->update($data);
+            $msg = 'Coupon updated successfully.';
+        } else {
+            Coupon::create($data);
+            $msg = 'Coupon created successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteCoupon($id)
+    {
+        $coupon = Coupon::findOrFail($id);
+        $coupon->delete();
+        return redirect()->back()->with('success', 'Coupon deleted successfully.');
+    }
+
+    public function saveInvoice(Request $request)
+    {
+        $request->validate([
+            'customer_id' => 'required|exists:customers,id',
+            'amount' => 'required|numeric|min:0',
+            'due_date' => 'required|date',
+            'status' => 'required|in:Pending,Paid,Unpaid',
+        ]);
+
+        $id = $request->input('id');
+        $data = [
+            'customer_id' => $request->customer_id,
+            'amount' => (float)$request->amount,
+            'due_date' => $request->due_date,
+            'status' => $request->status,
+        ];
+
+        if ($id) {
+            $invoice = Invoice::findOrFail($id);
+            $invoice->update($data);
+            $msg = 'Invoice updated successfully.';
+        } else {
+            Invoice::create(array_merge($data, [
+                'order_id' => 'KP' . rand(1101, 9999)
+            ]));
+            $msg = 'Invoice generated successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteInvoice($id)
+    {
+        $invoice = Invoice::findOrFail($id);
+        $invoice->delete();
+        return redirect()->back()->with('success', 'Invoice deleted successfully.');
+    }
+
+    public function saveUser(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email',
+            'password' => 'nullable|string|min:6',
+        ]);
+
+        $id = $request->input('id');
+        $data = [
+            'name' => trim($request->name),
+            'email' => strtolower(trim($request->email)),
+        ];
+
+        if ($request->filled('password')) {
+            $data['password'] = Hash::make($request->password);
+        }
+
+        if ($id) {
+            $user = User::findOrFail($id);
+            $user->update($data);
+            $msg = 'User details updated successfully.';
+        } else {
+            if (!$request->filled('password')) {
+                return back()->withErrors(['password' => 'A password is required for new users.']);
+            }
+            User::create($data);
+            $msg = 'System administrator added successfully.';
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
+
+    public function deleteUser($id)
+    {
+        if (User::count() <= 1) {
+            return redirect()->back()->with('error', 'Cannot delete the only remaining administrator.');
+        }
+
+        $user = User::findOrFail($id);
+        $user->delete();
+        return redirect()->back()->with('success', 'System administrator removed successfully.');
+    }
+
+    public function readAllNotifications(Request $request)
+    {
+        Notification::where('read_status', false)->update(['read_status' => true]);
+        return redirect()->back()->with('success', 'All notifications marked as read.');
+    }
+
+    public function readSingleNotification($id)
+    {
+        $notification = Notification::findOrFail($id);
+        $notification->update(['read_status' => true]);
+        return redirect()->back()->with('success', 'Notification marked as read.');
     }
 
     // --- API Methods ---

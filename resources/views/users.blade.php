@@ -27,7 +27,34 @@
             <th class="kp_kitchen_admin_panel_table_heading">Actions</th>
           </tr>
         </thead>
-        <tbody class="kp_kitchen_admin_panel_table_body" id="usersTableBody"></tbody>
+        <tbody class="kp_kitchen_admin_panel_table_body" id="usersTableBody">
+          @forelse ($users as $user)
+            <tr class="kp_kitchen_admin_panel_table_row">
+              <td class="kp_kitchen_admin_panel_table_cell">#ADM{{ $user->id }}</td>
+              <td class="kp_kitchen_admin_panel_table_cell"><strong>{{ $user->name }}</strong></td>
+              <td class="kp_kitchen_admin_panel_table_cell">{{ $user->email }}</td>
+              <td class="kp_kitchen_admin_panel_table_cell">{{ $user->created_at->toDateString() }}</td>
+              <td class="kp_kitchen_admin_panel_table_cell">
+                <div class="kp_kitchen_admin_panel_table_actions">
+                  <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_edit edit-user-btn"
+                    data-id="{{ $user->id }}"
+                    data-name="{{ $user->name }}"
+                    data-email="{{ $user->email }}">
+                    Edit
+                  </button>
+                  <form method="POST" action="{{ route('users.delete', $user->id) }}" style="display: inline;" onsubmit="return confirm('Are you sure you want to remove this administrator?');">
+                    @csrf
+                    <button type="submit" class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_delete">Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          @empty
+            <tr>
+              <td colspan="5" class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">No administrators found.</td>
+            </tr>
+          @endforelse
+        </tbody>
       </table>
     </div>
   </article>

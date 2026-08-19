@@ -29,4 +29,9 @@ class Driver extends Model
     {
         return $this->hasMany(Trip::class);
     }
+
+    public function orders()
+    {
+        return $this->hasMany(Order::class, 'driver_id');
+    }
 }

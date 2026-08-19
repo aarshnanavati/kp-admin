@@ -184,9 +184,12 @@
                     <strong class="kp_kitchen_admin_panel_sidebar_help_title">Need help?</strong>
                     <span class="kp_kitchen_admin_panel_sidebar_help_text">Contact technical support.</span>
                 </div>
-                <button id="logoutButton" class="kp_kitchen_admin_panel_logout_button">
-                    Logout
-                </button>
+                <form method="POST" action="{{ route('logout') }}" style="width: 100%; margin: 0;">
+                    @csrf
+                    <button type="submit" class="kp_kitchen_admin_panel_logout_button" style="width: 100%; border: none; cursor: pointer; display: block; text-align: center;">
+                        Logout
+                    </button>
+                </form>
             </div>
         </aside>
         <div id="sidebarOverlay" class="kp_kitchen_admin_panel_sidebar_overlay"></div>
@@ -242,6 +245,25 @@
                 </div>
             </header>
             <main class="kp_kitchen_admin_panel_content">
+                @if (session('success'))
+                    <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; color: #2e7d32; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
+                        {{ session('success') }}
+                    </div>
+                @endif
+                @if (session('error'))
+                    <div style="background-color: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
+                        {{ session('error') }}
+                    </div>
+                @endif
+                @if ($errors->any())
+                    <div style="background-color: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
+                        <ul style="margin: 0; padding-left: 20px;">
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
                 @yield('content')
             </main>
         </section>

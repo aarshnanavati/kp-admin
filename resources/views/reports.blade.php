@@ -22,7 +22,7 @@
       <div class="kp_kitchen_admin_panel_stat_content" style="flex:1;">
         <span class="kp_kitchen_admin_panel_stat_label">Sales &amp; Orders Log</span>
         <p class="kp_kitchen_admin_panel_card_subtitle" style="margin: 0.25rem 0 1rem 0;">Download detailed list of orders, plans, and add-ons.</p>
-        <a href="/api/reports/export?type=sales" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-block; text-align:center;">Export CSV</a>
+        <a href="{{ url('/api/reports/export?type=sales') }}" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-block; text-align:center;">Export CSV</a>
       </div>
     </article>
 
@@ -33,7 +33,7 @@
       <div class="kp_kitchen_admin_panel_stat_content" style="flex:1;">
         <span class="kp_kitchen_admin_panel_stat_label">Driver Performance</span>
         <p class="kp_kitchen_admin_panel_card_subtitle" style="margin: 0.25rem 0 1rem 0;">Download driver profiles, vehicles, and assigned postcodes.</p>
-        <a href="/api/reports/export?type=drivers" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-block; text-align:center;">Export CSV</a>
+        <a href="{{ url('/api/reports/export?type=drivers') }}" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-block; text-align:center;">Export CSV</a>
       </div>
     </article>
 
@@ -44,7 +44,7 @@
       <div class="kp_kitchen_admin_panel_stat_content" style="flex:1;">
         <span class="kp_kitchen_admin_panel_stat_label">Customer Directory</span>
         <p class="kp_kitchen_admin_panel_card_subtitle" style="margin: 0.25rem 0 1rem 0;">Download customer contacts, default postcodes, and total spend.</p>
-        <a href="/api/reports/export?type=customers" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-block; text-align:center;">Export CSV</a>
+        <a href="{{ url('/api/reports/export?type=customers') }}" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-block; text-align:center;">Export CSV</a>
       </div>
     </article>
   </div>

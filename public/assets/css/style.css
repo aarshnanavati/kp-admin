@@ -1312,6 +1312,8 @@ body.kp_kitchen_admin_panel_body {
 
 .kp_kitchen_admin_panel_modal_form {
     padding: 24px;
+    overflow-y: auto;
+    max-height: 75vh;
 }
 
 .kp_kitchen_admin_panel_modal_content_body {
@@ -1779,4 +1781,53 @@ div#notificationsList {
     display: flex;
     flex-direction: column;
     gap: 15px;
+}
+
+/* Action Button Styles for CRUD Tables */
+.kp_kitchen_admin_panel_action_button {
+    font-family: var(--font-family);
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: var(--transition);
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.kp_kitchen_admin_panel_action_edit {
+    background-color: rgba(241, 196, 15, 0.1);
+    border: 1px solid rgba(241, 196, 15, 0.2);
+    color: #F1C40F;
+}
+
+.kp_kitchen_admin_panel_action_edit:hover {
+    background-color: #F1C40F;
+    color: #1E1E2F;
+}
+
+.kp_kitchen_admin_panel_action_view {
+    background-color: rgba(52, 152, 219, 0.1);
+    border: 1px solid rgba(52, 152, 219, 0.2);
+    color: #3498DB;
+}
+
+.kp_kitchen_admin_panel_action_view:hover {
+    background-color: #3498DB;
+    color: #FFFFFF;
+}
+
+.kp_kitchen_admin_panel_action_delete {
+    background-color: rgba(231, 76, 60, 0.1);
+    border: 1px solid rgba(231, 76, 60, 0.2);
+    color: #E74C3C;
+}
+
+.kp_kitchen_admin_panel_action_delete:hover {
+    background-color: #E74C3C;
+    color: #FFFFFF;
 }

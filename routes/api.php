@@ -5,37 +5,35 @@ use App\Http\Controllers\AdminPanelController;
 use Illuminate\Support\Facades\Route;
 
 // --- Guest API Routes ---
-Route::middleware('guest')->group(function () {
-    // Stateless Admin Auth (Postman/Mobile clients)
+// Stateless Admin Auth (Postman/Mobile clients)
+Route::post('/login', [AuthController::class, 'login']);
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
+Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
+Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+
+// Stateful Web Admin Auth (Browser Dashboard)
+Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
     Route::post('/reset-password', [AuthController::class, 'resetPassword']);
-
-    // Stateful Web Admin Auth (Browser Dashboard)
-    Route::prefix('auth')->group(function () {
-        Route::post('/login', [AuthController::class, 'login']);
-        Route::post('/register', [AuthController::class, 'register']);
-        Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
-        Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
-        Route::post('/reset-password', [AuthController::class, 'resetPassword']);
-    });
-
-    // Customer Guest Auth Routes
-    Route::post('/customer/register', [AuthController::class, 'customerRegister']);
-    Route::post('/customer/login', [AuthController::class, 'customerLogin']);
-    Route::post('/customer/forget-password', [AuthController::class, 'customerForgetPassword']);
-    Route::post('/customer/verify-otp', [AuthController::class, 'customerVerifyOtp']);
-    Route::post('/customer/reset-password', [AuthController::class, 'customerResetPassword']);
-
-    // Driver Guest Auth Routes
-    Route::post('/driver/register', [AuthController::class, 'driverRegister']);
-    Route::post('/driver/login', [AuthController::class, 'driverLogin']);
-    Route::post('/driver/forget-password', [AuthController::class, 'driverForgetPassword']);
-    Route::post('/driver/verify-otp', [AuthController::class, 'driverVerifyOtp']);
-    Route::post('/driver/reset-password', [AuthController::class, 'driverResetPassword']);
 });
+
+// Customer Guest Auth Routes
+Route::post('/customer/register', [AuthController::class, 'customerRegister']);
+Route::post('/customer/login', [AuthController::class, 'customerLogin']);
+Route::post('/customer/forget-password', [AuthController::class, 'customerForgetPassword']);
+Route::post('/customer/verify-otp', [AuthController::class, 'customerVerifyOtp']);
+Route::post('/customer/reset-password', [AuthController::class, 'customerResetPassword']);
+
+// Driver Guest Auth Routes
+Route::post('/driver/register', [AuthController::class, 'driverRegister']);
+Route::post('/driver/login', [AuthController::class, 'driverLogin']);
+Route::post('/driver/forget-password', [AuthController::class, 'driverForgetPassword']);
+Route::post('/driver/verify-otp', [AuthController::class, 'driverVerifyOtp']);
+Route::post('/driver/reset-password', [AuthController::class, 'driverResetPassword']);
 
 // --- Customer Authenticated API Routes ---
 
@@ -120,4 +118,5 @@ Route::middleware('api.or.session')->group(function () {
 
     // Web-based Logout
     Route::post('/auth/logout', [AuthController::class, 'logout']);
+    Route::post('/logout', [AuthController::class, 'logout']);
 });
