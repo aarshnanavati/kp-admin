@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\Customer;
 use App\Models\PasswordOtp;
 use App\Mail\SendOtpMail;
+use App\Mail\KitchenAlertMail;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -46,6 +47,13 @@ class AuthController extends Controller
             $user = Auth::user();
             $token = Str::random(60);
             $user->update(['api_token' => $token]);
+
+            try {
+                Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("User Login Notification", "{$user->name} has logged in into KP's Kitchen."));
+            } catch (\Exception $e) {
+                Log::warning("Admin login alert email failed: " . $e->getMessage());
+            }
+
             return response()->json([
                 'success' => true,
                 'token' => $token,
@@ -97,12 +105,18 @@ class AuthController extends Controller
             ]);
         }
 
-        User::create([
+        $user = User::create([
             'name' => trim($request->name),
             'email' => $email,
             'password' => Hash::make($request->password),
             'user_type' => 'admin',
         ]);
+
+        try {
+            Mail::to($user->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Admin Panel!", "Thank you {$user->name} for registering in KP's Kitchen admin team!"));
+        } catch (\Exception $e) {
+            Log::warning("Admin welcome email failed: " . $e->getMessage());
+        }
 
         return response()->json([
             'success' => true,
@@ -319,6 +333,12 @@ class AuthController extends Controller
             'user_type' => 'customer',
         ]);
 
+        try {
+            Mail::to($customer->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen!", "Thank you {$customer->name} for registering in KP's Kitchen. We are excited to serve you delicious meals!"));
+        } catch (\Exception $e) {
+            Log::warning("Customer registration welcome email failed: " . $e->getMessage());
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Registration successful.',
@@ -364,6 +384,45 @@ class AuthController extends Controller
 
         $token = Str::random(60);
         $customer->update(['api_token' => $token]);
+
+        // Cart Shifting Logic: Move guest cart items to logged-in customer account
+        $tempUserId = $request->input('temp_user_id');
+        if ($tempUserId) {
+            $tempCartItems = \App\Models\Cart::where('temp_user_id', $tempUserId)->get();
+            foreach ($tempCartItems as $item) {
+                // Check if customer already has this exact item or tiffin in their permanent cart
+                $existingItem = \App\Models\Cart::where('customer_id', $customer->id)
+                    ->where('tiffin_id', $item->tiffin_id)
+                    ->where('item_id', $item->item_id)
+                    ->first();
+
+                if ($existingItem) {
+                    $existingItem->increment('quantity', $item->quantity);
+                    $item->delete();
+                } else {
+                    $item->update([
+                        'customer_id' => $customer->id,
+                        'temp_user_id' => null
+                    ]);
+                }
+            }
+        }
+
+        // First Login Notification Alert
+        if ($customer->login_count === 0) {
+            \App\Models\Notification::create([
+                'title' => 'First Login Alert',
+                'message' => "Customer {$customer->name} has logged in for the first time!",
+                'read_status' => false
+            ]);
+        }
+        $customer->increment('login_count');
+
+        try {
+            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("User Login Notification", "{$customer->name} has logged in into KP's Kitchen."));
+        } catch (\Exception $e) {
+            Log::warning("Customer login alert email failed: " . $e->getMessage());
+        }
 
         return response()->json([
             'success' => true,
@@ -627,6 +686,12 @@ class AuthController extends Controller
             'user_type' => 'driver',
         ]);
 
+        try {
+            Mail::to($driver->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Team!", "Thank you {$driver->name} for registering in KP's Kitchen. We are excited to have you as part of our driver network!"));
+        } catch (\Exception $e) {
+            Log::warning("Driver registration welcome email failed: " . $e->getMessage());
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Driver registration successful.',
@@ -671,6 +736,12 @@ class AuthController extends Controller
 
         $token = Str::random(60);
         $driver->update(['api_token' => $token]);
+
+        try {
+            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("User Login Notification", "{$driver->name} has logged in into KP's Kitchen."));
+        } catch (\Exception $e) {
+            Log::warning("Driver login alert email failed: " . $e->getMessage());
+        }
 
         return response()->json([
             'success' => true,
@@ -1027,5 +1098,213 @@ class AuthController extends Controller
                 'created_at' => $user->created_at->toIso8601String(),
             ]
         ]);
+    }
+
+    /**
+     * Get cart items.
+     */
+    public function getCart(Request $request)
+    {
+        // Clean up guest carts inactive for more than 5 days
+        \App\Models\Cart::whereNull('customer_id')
+            ->where('updated_at', '<', now()->subDays(5))
+            ->delete();
+
+        $customerId = null;
+        $token = $request->bearerToken();
+        if ($token) {
+            $customer = Customer::where('api_token', $token)->first();
+            if ($customer) {
+                $customerId = $customer->id;
+            }
+        }
+
+        $tempUserId = $request->input('temp_user_id');
+
+        if (!$customerId && !$tempUserId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please provide a Bearer Token or a temp_user_id.'
+            ], 400);
+        }
+
+        $query = \App\Models\Cart::with(['tiffin', 'item']);
+        if ($customerId) {
+            $query->where('customer_id', $customerId);
+        } else {
+            $query->where('temp_user_id', $tempUserId);
+        }
+
+        $cartItems = $query->get()->map(function ($cart) {
+            return [
+                'id' => $cart->id,
+                'quantity' => $cart->quantity,
+                'tiffin' => $cart->tiffin ? [
+                    'id' => $cart->tiffin->id,
+                    'name' => $cart->tiffin->name,
+                    'price' => $cart->tiffin->price,
+                    'image' => $cart->tiffin->image,
+                ] : null,
+                'item' => $cart->item ? [
+                    'id' => $cart->item->id,
+                    'name' => $cart->item->name,
+                    'price' => $cart->item->price,
+                    'image' => $cart->item->image,
+                ] : null,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'cart' => $cartItems
+        ]);
+    }
+
+    /**
+     * Add an item to the cart.
+     */
+    public function addToCart(Request $request)
+    {
+        // Clean up guest carts inactive for more than 5 days
+        \App\Models\Cart::whereNull('customer_id')
+            ->where('updated_at', '<', now()->subDays(5))
+            ->delete();
+
+        $customerId = null;
+        $token = $request->bearerToken();
+        if ($token) {
+            $customer = Customer::where('api_token', $token)->first();
+            if ($customer) {
+                $customerId = $customer->id;
+            }
+        }
+
+        $tempUserId = $request->input('temp_user_id');
+
+        if (!$customerId && !$tempUserId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Authentication Bearer Token or temp_user_id is required.'
+            ], 400);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'tiffin_id' => 'nullable|exists:tiffins,id',
+            'item_id' => 'nullable|exists:items,id',
+            'quantity' => 'nullable|integer|min:1',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $tiffinId = $request->tiffin_id;
+        $itemId = $request->item_id;
+        $quantity = $request->input('quantity', 1);
+
+        if (!$tiffinId && !$itemId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please provide either a tiffin_id or an item_id to add to the cart.'
+            ], 400);
+        }
+
+        $query = \App\Models\Cart::query();
+        if ($customerId) {
+            $query->where('customer_id', $customerId);
+        } else {
+            $query->where('temp_user_id', $tempUserId);
+        }
+        $query->where('tiffin_id', $tiffinId)->where('item_id', $itemId);
+        $cartItem = $query->first();
+
+        if ($cartItem) {
+            $cartItem->increment('quantity', $quantity);
+        } else {
+            $cartItem = \App\Models\Cart::create([
+                'customer_id' => $customerId,
+                'temp_user_id' => $customerId ? null : $tempUserId,
+                'tiffin_id' => $tiffinId,
+                'item_id' => $itemId,
+                'quantity' => $quantity,
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Item added to cart successfully.',
+            'cart_item' => $cartItem
+        ]);
+    }
+
+    /**
+     * Remove or update item in the cart.
+     */
+    public function removeFromCart(Request $request)
+    {
+        $customerId = null;
+        $token = $request->bearerToken();
+        if ($token) {
+            $customer = Customer::where('api_token', $token)->first();
+            if ($customer) {
+                $customerId = $customer->id;
+            }
+        }
+
+        $tempUserId = $request->input('temp_user_id');
+
+        if (!$customerId && !$tempUserId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Authentication Bearer Token or temp_user_id is required.'
+            ], 400);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'cart_item_id' => 'required|exists:carts,id',
+            'quantity' => 'nullable|integer|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $query = \App\Models\Cart::where('id', $request->cart_item_id);
+        if ($customerId) {
+            $query->where('customer_id', $customerId);
+        } else {
+            $query->where('temp_user_id', $tempUserId);
+        }
+        $cartItem = $query->first();
+
+        if (!$cartItem) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cart item not found or does not belong to this user.'
+            ], 404);
+        }
+
+        $quantity = $request->input('quantity', 0);
+
+        if ($quantity == 0) {
+            $cartItem->delete();
+            return response()->json([
+                'success' => true,
+                'message' => 'Item removed from cart successfully.'
+            ]);
+        } else {
+            $cartItem->update(['quantity' => $quantity]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Cart item quantity updated successfully.',
+                'cart_item' => $cartItem
+            ]);
+        }
     }
 }

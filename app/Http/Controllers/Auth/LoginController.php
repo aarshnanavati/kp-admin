@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\SendOtpMail;
+use App\Mail\KitchenAlertMail;
 
 class LoginController extends Controller
 {
@@ -38,6 +39,14 @@ class LoginController extends Controller
 
         if (Auth::attempt(['email' => $email, 'password' => $request->password], $remember)) {
             $request->session()->regenerate();
+            
+            $user = Auth::user();
+            try {
+                Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("User Login Notification", "{$user->name} has logged in into KP's Kitchen."));
+            } catch (\Exception $e) {
+                Log::warning("Web login alert email failed: " . $e->getMessage());
+            }
+
             return redirect()->intended('/')->with('success', 'Welcome back to the KP Kitchen Admin Panel!');
         }
 
@@ -68,11 +77,18 @@ class LoginController extends Controller
             'confirm_password.same' => 'Passwords do not match.',
         ]);
 
-        User::create([
+        $user = User::create([
             'name' => trim($request->name),
             'email' => strtolower(trim($request->email)),
             'password' => Hash::make($request->password),
+            'user_type' => 'admin',
         ]);
+
+        try {
+            Mail::to($user->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Admin Panel!", "Thank you {$user->name} for registering in KP's Kitchen admin team!"));
+        } catch (\Exception $e) {
+            Log::warning("Web admin welcome email failed: " . $e->getMessage());
+        }
 
         return redirect()->route('login')->with('success', 'Admin registration successful. You can now log in.');
     }

@@ -35,16 +35,20 @@ Route::post('/driver/forget-password', [AuthController::class, 'driverForgetPass
 Route::post('/driver/verify-otp', [AuthController::class, 'driverVerifyOtp']);
 Route::post('/driver/reset-password', [AuthController::class, 'driverResetPassword']);
 
-// --- Customer Authenticated API Routes ---
+// --- Customer Guest Catalog & Cart Routes ---
+Route::get('/customer/tiffins', [AdminPanelController::class, 'getTiffins']);
+Route::get('/customer/categories', [AdminPanelController::class, 'getCategories']);
+Route::get('/customer/items', [AdminPanelController::class, 'getItems']);
+Route::get('/customer/cart', [AuthController::class, 'getCart']);
+Route::post('/customer/cart', [AuthController::class, 'addToCart']);
+Route::post('/customer/cart/remove', [AuthController::class, 'removeFromCart']);
 
+// --- Customer Authenticated API Routes ---
 Route::middleware('customer.auth')->group(function () {
     Route::post('/customer/logout', [AuthController::class, 'customerLogout']);
     Route::get('/customer/profile', [AuthController::class, 'customerProfile']);
     
     // Customer Operational Endpoints
-    Route::get('/customer/tiffins', [AdminPanelController::class, 'getTiffins']);
-    Route::get('/customer/categories', [AdminPanelController::class, 'getCategories']);
-    Route::get('/customer/items', [AdminPanelController::class, 'getItems']);
     Route::get('/customer/orders', [AuthController::class, 'customerOrders']);
     Route::post('/customer/orders', [AuthController::class, 'placeCustomerOrder']);
     Route::get('/customer/invoices', [AuthController::class, 'customerInvoices']);
