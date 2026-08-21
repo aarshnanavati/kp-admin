@@ -60,6 +60,8 @@ Route::middleware('customer.auth')->group(function () {
 Route::middleware('driver.auth')->group(function () {
     Route::post('/driver/logout', [AuthController::class, 'driverLogout']);
     Route::get('/driver/profile', [AuthController::class, 'driverProfile']);
+    Route::get('/driver/assigned-orders', [AuthController::class, 'getDriverAssignedOrders']);
+    Route::post('/driver/orders/{id}/status', [AuthController::class, 'updateDriverOrderStatus']);
 });
 
 // --- Admin Dashboard & Operational API Routes (Session & Bearer Token Protected) ---

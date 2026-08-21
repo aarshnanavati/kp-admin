@@ -114,8 +114,9 @@ class AuthController extends Controller
 
         try {
             Mail::to($user->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Admin Panel!", "Thank you {$user->name} for registering in KP's Kitchen admin team!"));
+            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$user->name} have registerd"));
         } catch (\Exception $e) {
-            Log::warning("Admin welcome email failed: " . $e->getMessage());
+            Log::warning("Admin registration email triggers failed: " . $e->getMessage());
         }
 
         return response()->json([
@@ -335,8 +336,9 @@ class AuthController extends Controller
 
         try {
             Mail::to($customer->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen!", "Thank you {$customer->name} for registering in KP's Kitchen. We are excited to serve you delicious meals!"));
+            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$customer->name} have registerd"));
         } catch (\Exception $e) {
-            Log::warning("Customer registration welcome email failed: " . $e->getMessage());
+            Log::warning("Customer registration email triggers failed: " . $e->getMessage());
         }
 
         return response()->json([
@@ -385,10 +387,10 @@ class AuthController extends Controller
         $token = Str::random(60);
         $customer->update(['api_token' => $token]);
 
-        // Cart Shifting Logic: Move guest cart items to logged-in customer account
+        // Cart Shifting Logic: Move items from guest_carts to carts table
         $tempUserId = $request->input('temp_user_id');
         if ($tempUserId) {
-            $tempCartItems = \App\Models\Cart::where('temp_user_id', $tempUserId)->get();
+            $tempCartItems = \App\Models\GuestCart::where('temp_user_id', $tempUserId)->get();
             foreach ($tempCartItems as $item) {
                 // Check if customer already has this exact item or tiffin in their permanent cart
                 $existingItem = \App\Models\Cart::where('customer_id', $customer->id)
@@ -398,13 +400,15 @@ class AuthController extends Controller
 
                 if ($existingItem) {
                     $existingItem->increment('quantity', $item->quantity);
-                    $item->delete();
                 } else {
-                    $item->update([
+                    \App\Models\Cart::create([
                         'customer_id' => $customer->id,
-                        'temp_user_id' => null
+                        'tiffin_id' => $item->tiffin_id,
+                        'item_id' => $item->item_id,
+                        'quantity' => $item->quantity
                     ]);
                 }
+                $item->delete();
             }
         }
 
@@ -688,8 +692,9 @@ class AuthController extends Controller
 
         try {
             Mail::to($driver->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Team!", "Thank you {$driver->name} for registering in KP's Kitchen. We are excited to have you as part of our driver network!"));
+            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$driver->name} have registerd"));
         } catch (\Exception $e) {
-            Log::warning("Driver registration welcome email failed: " . $e->getMessage());
+            Log::warning("Driver registration email triggers failed: " . $e->getMessage());
         }
 
         return response()->json([
@@ -1106,9 +1111,7 @@ class AuthController extends Controller
     public function getCart(Request $request)
     {
         // Clean up guest carts inactive for more than 5 days
-        \App\Models\Cart::whereNull('customer_id')
-            ->where('updated_at', '<', now()->subDays(5))
-            ->delete();
+        \App\Models\GuestCart::where('updated_at', '<', now()->subDays(5))->delete();
 
         $customerId = null;
         $token = $request->bearerToken();
@@ -1128,11 +1131,10 @@ class AuthController extends Controller
             ], 400);
         }
 
-        $query = \App\Models\Cart::with(['tiffin', 'item']);
         if ($customerId) {
-            $query->where('customer_id', $customerId);
+            $query = \App\Models\Cart::with(['tiffin', 'item'])->where('customer_id', $customerId);
         } else {
-            $query->where('temp_user_id', $tempUserId);
+            $query = \App\Models\GuestCart::with(['tiffin', 'item'])->where('temp_user_id', $tempUserId);
         }
 
         $cartItems = $query->get()->map(function ($cart) {
@@ -1166,9 +1168,7 @@ class AuthController extends Controller
     public function addToCart(Request $request)
     {
         // Clean up guest carts inactive for more than 5 days
-        \App\Models\Cart::whereNull('customer_id')
-            ->where('updated_at', '<', now()->subDays(5))
-            ->delete();
+        \App\Models\GuestCart::where('updated_at', '<', now()->subDays(5))->delete();
 
         $customerId = null;
         $token = $request->bearerToken();
@@ -1212,25 +1212,38 @@ class AuthController extends Controller
             ], 400);
         }
 
-        $query = \App\Models\Cart::query();
         if ($customerId) {
-            $query->where('customer_id', $customerId);
-        } else {
-            $query->where('temp_user_id', $tempUserId);
-        }
-        $query->where('tiffin_id', $tiffinId)->where('item_id', $itemId);
-        $cartItem = $query->first();
+            $cartItem = \App\Models\Cart::where('customer_id', $customerId)
+                ->where('tiffin_id', $tiffinId)
+                ->where('item_id', $itemId)
+                ->first();
 
-        if ($cartItem) {
-            $cartItem->increment('quantity', $quantity);
+            if ($cartItem) {
+                $cartItem->increment('quantity', $quantity);
+            } else {
+                $cartItem = \App\Models\Cart::create([
+                    'customer_id' => $customerId,
+                    'tiffin_id' => $tiffinId,
+                    'item_id' => $itemId,
+                    'quantity' => $quantity,
+                ]);
+            }
         } else {
-            $cartItem = \App\Models\Cart::create([
-                'customer_id' => $customerId,
-                'temp_user_id' => $customerId ? null : $tempUserId,
-                'tiffin_id' => $tiffinId,
-                'item_id' => $itemId,
-                'quantity' => $quantity,
-            ]);
+            $cartItem = \App\Models\GuestCart::where('temp_user_id', $tempUserId)
+                ->where('tiffin_id', $tiffinId)
+                ->where('item_id', $itemId)
+                ->first();
+
+            if ($cartItem) {
+                $cartItem->increment('quantity', $quantity);
+            } else {
+                $cartItem = \App\Models\GuestCart::create([
+                    'temp_user_id' => $tempUserId,
+                    'tiffin_id' => $tiffinId,
+                    'item_id' => $itemId,
+                    'quantity' => $quantity,
+                ]);
+            }
         }
 
         return response()->json([
@@ -1263,8 +1276,10 @@ class AuthController extends Controller
             ], 400);
         }
 
+        $table = $customerId ? 'carts' : 'guest_carts';
+
         $validator = Validator::make($request->all(), [
-            'cart_item_id' => 'required|exists:carts,id',
+            'cart_item_id' => 'required|integer|exists:' . $table . ',id',
             'quantity' => 'nullable|integer|min:0',
         ]);
 
@@ -1275,13 +1290,15 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $query = \App\Models\Cart::where('id', $request->cart_item_id);
         if ($customerId) {
-            $query->where('customer_id', $customerId);
+            $cartItem = \App\Models\Cart::where('id', $request->cart_item_id)
+                ->where('customer_id', $customerId)
+                ->first();
         } else {
-            $query->where('temp_user_id', $tempUserId);
+            $cartItem = \App\Models\GuestCart::where('id', $request->cart_item_id)
+                ->where('temp_user_id', $tempUserId)
+                ->first();
         }
-        $cartItem = $query->first();
 
         if (!$cartItem) {
             return response()->json([
@@ -1306,5 +1323,98 @@ class AuthController extends Controller
                 'cart_item' => $cartItem
             ]);
         }
+    }
+
+    /**
+     * Get orders assigned to the authenticated driver.
+     */
+    public function getDriverAssignedOrders(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        if (!$driver) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $orders = \App\Models\Order::where('driver_id', $driver->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'orders' => $orders
+        ]);
+    }
+
+    /**
+     * Update status and upload proof of delivery (POD) for an assigned order.
+     */
+    public function updateDriverOrderStatus(Request $request, $id)
+    {
+        $driver = $request->attributes->get('driver');
+        if (!$driver) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $order = \App\Models\Order::where('id', $id)
+            ->where('driver_id', $driver->id)
+            ->first();
+
+        if (!$order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found or not assigned to this driver.'
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|string|in:Pending,Out for Delivery,Delivered,Failed',
+            'proof_photo' => 'nullable|image|max:5120',
+            'proof_signature' => 'nullable|image|max:5120',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $order->status = $request->status;
+
+        // Handle proof of delivery photo upload
+        if ($request->hasFile('proof_photo')) {
+            $file = $request->file('proof_photo');
+            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/pod'), $fileName);
+            $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
+        }
+
+        // Handle proof of delivery signature upload
+        if ($request->hasFile('proof_signature')) {
+            $file = $request->file('proof_signature');
+            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/pod'), $fileName);
+            $order->proof_of_delivery_signature = 'uploads/pod/' . $fileName;
+        }
+
+        $order->save();
+
+        \App\Models\Notification::create([
+            'title' => 'Order Status Updated',
+            'message' => "Driver {$driver->name} updated order {$order->id} status to {$order->status}.",
+            'read_status' => false
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Order status updated successfully.',
+            'order' => $order
+        ]);
     }
 }

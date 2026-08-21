@@ -25,6 +25,8 @@ class Order extends Model
         'status',
         'date',
         'add_ons',
+        'proof_of_delivery_photo',
+        'proof_of_delivery_signature',
     ];
 
     public function customerRelation()

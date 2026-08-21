@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\Schedule;
 
 // Automatically delete guest carts that are inactive for more than 5 days
 Schedule::call(function () {
-    \App\Models\Cart::whereNull('customer_id')
-        ->where('updated_at', '<', now()->subDays(5))
+    \App\Models\GuestCart::where('updated_at', '<', now()->subDays(5))
         ->delete();
 })->daily();

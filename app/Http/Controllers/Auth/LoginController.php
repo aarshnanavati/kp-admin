@@ -86,8 +86,9 @@ class LoginController extends Controller
 
         try {
             Mail::to($user->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Admin Panel!", "Thank you {$user->name} for registering in KP's Kitchen admin team!"));
+            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$user->name} have registerd"));
         } catch (\Exception $e) {
-            Log::warning("Web admin welcome email failed: " . $e->getMessage());
+            Log::warning("Web admin registration email triggers failed: " . $e->getMessage());
         }
 
         return redirect()->route('login')->with('success', 'Admin registration successful. You can now log in.');

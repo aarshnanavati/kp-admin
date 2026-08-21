@@ -5,21 +5,18 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Cart extends Model
+class GuestCart extends Model
 {
     use HasFactory;
 
+    protected $table = 'guest_carts';
+
     protected $fillable = [
-        'customer_id',
+        'temp_user_id',
         'tiffin_id',
         'item_id',
         'quantity',
     ];
-
-    public function customer()
-    {
-        return $this->belongsTo(Customer::class);
-    }
 
     public function tiffin()
     {
