@@ -20,6 +20,17 @@
 
   const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]').getAttribute('content');
   const getBaseUrl = () => (window.AppConfig && window.AppConfig.baseUrl) ? window.AppConfig.baseUrl : '';
+  
+  const formatDateStr = (str) => {
+    if (!str || str === 'N/A') return 'N/A';
+    const date = new Date(str);
+    if (isNaN(date.getTime())) return str;
+    const day = String(date.getDate()).padStart(2, '0');
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+    return `${day} ${month} ${year}`;
+  };
 
   const getTiffinBasicItems = tiffin => {
     if (!tiffin || !tiffin.items) return [];
@@ -1340,39 +1351,6 @@
           
           const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
-              <!-- Section 1: Weekly Billing & Payment History -->
-              <div>
-                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">💳 Weekly Billing & Statements (Payments on Weekly Basis)</h4>
-                <div class="kp_kitchen_admin_panel_table_wrap" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; overflow-x: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
-                  <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
-                    <thead class="kp_kitchen_admin_panel_table_head">
-                      <tr class="kp_kitchen_admin_panel_table_row">
-                        <th class="kp_kitchen_admin_panel_table_heading">Billing Period (Weekly Cycle)</th>
-                        <th class="kp_kitchen_admin_table_heading">Orders Placed</th>
-                        <th class="kp_kitchen_admin_panel_table_heading">Total Amount</th>
-                        <th class="kp_kitchen_admin_panel_table_heading">Billing Status</th>
-                      </tr>
-                    </thead>
-                    <tbody class="kp_kitchen_admin_panel_table_body">
-                      ${weeklyBilling.length === 0 ? `
-                        <tr class="kp_kitchen_admin_panel_table_row">
-                          <td colspan="4" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No weekly billing records found.</td>
-                        </tr>
-                      ` : weeklyBilling.map(week => `
-                        <tr class="kp_kitchen_admin_panel_table_row">
-                          <td class="kp_kitchen_admin_panel_table_cell">📅 <strong>${escapeHtml(week.week_range)}</strong></td>
-                          <td class="kp_kitchen_admin_panel_table_cell">${week.orders_count} delivery orders</td>
-                          <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(week.amount).toFixed(2)}</strong></td>
-                          <td class="kp_kitchen_admin_panel_table_cell">
-                            <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${week.status === 'Paid' ? 'paid' : 'unpaid'}">${week.status}</span>
-                          </td>
-                        </tr>
-                      `).join('')}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
               <!-- Section 2: Previous Orders History & Invoice Downloads -->
               <div>
                 <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">📦 Delivery & Order History</h4>
@@ -1489,9 +1467,11 @@
                   <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
                     <thead class="kp_kitchen_admin_panel_table_head">
                       <tr class="kp_kitchen_admin_panel_table_row">
+                        <th class="kp_kitchen_admin_panel_table_heading">Invoice No</th>
                         <th class="kp_kitchen_admin_panel_table_heading">Billing Cycle</th>
-                        <th class="kp_kitchen_admin_panel_table_heading">Orders Placed</th>
                         <th class="kp_kitchen_admin_panel_table_heading">Total Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Due Date</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Paid Date</th>
                         <th class="kp_kitchen_admin_panel_table_heading">Billing Status</th>
                         <th class="kp_kitchen_admin_panel_table_heading" style="text-align: right;">Actions</th>
                       </tr>
@@ -1499,24 +1479,29 @@
                     <tbody class="kp_kitchen_admin_panel_table_body">
                       ${weeklyBilling.length === 0 ? `
                         <tr class="kp_kitchen_admin_panel_table_row">
-                          <td colspan="5" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No billing cycles found for this week range.</td>
+                          <td colspan="7" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No billing statements found.</td>
                         </tr>
-                      ` : weeklyBilling.map((cycle, idx) => `
-                        <tr class="kp_kitchen_admin_panel_table_row">
-                          <td class="kp_kitchen_admin_panel_table_cell">📅 <strong>${escapeHtml(cycle.week_range)}</strong></td>
-                          <td class="kp_kitchen_admin_panel_table_cell"><strong>${cycle.orders_count} times</strong></td>
-                          <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(cycle.amount).toFixed(2)}</strong></td>
-                          <td class="kp_kitchen_admin_panel_table_cell">
-                            <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${cycle.status.toLowerCase()}">${escapeHtml(cycle.status)}</span>
-                          </td>
-                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
-                            <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view invoice-print-btn" 
-                              data-idx="${idx}" style="padding: 4px 10px; font-size: 0.75rem; background-color: #3498db; color: white; border-color: #2980b9;">
-                              🖨️ Print PDF
-                            </button>
-                          </td>
-                        </tr>
-                      `).join('')}
+                      ` : weeklyBilling.map((cycle, idx) => {
+                        const invoiceNo = 'INV-' + cycle.start_date.replace(/-/g, '') + '-' + customer.id;
+                        return `
+                          <tr class="kp_kitchen_admin_panel_table_row">
+                            <td class="kp_kitchen_admin_panel_table_cell"><strong>${escapeHtml(invoiceNo)}</strong></td>
+                            <td class="kp_kitchen_admin_panel_table_cell">📅 <strong>${escapeHtml(cycle.week_range)}</strong></td>
+                            <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(cycle.amount).toFixed(2)}</strong></td>
+                            <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateStr(cycle.end_date))}</td>
+                            <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateStr(cycle.paid_date))}</td>
+                            <td class="kp_kitchen_admin_panel_table_cell">
+                              <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${cycle.status.toLowerCase()}">${escapeHtml(cycle.status)}</span>
+                            </td>
+                            <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
+                              <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view invoice-print-btn" 
+                                data-idx="${idx}" style="padding: 4px 10px; font-size: 0.75rem; background-color: #3498db; color: white; border-color: #2980b9;">
+                                🖨️ Print PDF
+                              </button>
+                            </td>
+                          </tr>
+                        `;
+                      }).join('')}
                     </tbody>
                   </table>
                 </div>
@@ -1532,15 +1517,15 @@
               btn.addEventListener('click', e => {
                 const idx = parseInt(e.target.dataset.idx);
                 const cycle = weeklyBilling[idx];
+                const invoiceNo = 'INV-' + cycle.start_date.replace(/-/g, '') + '-' + customer.id;
                 
-                // Construct a mock invoice object containing week range, start_of_week, end_of_week, status
                 const inv = {
-                  id: 'INV-' + cycle.start_date.replace(/-/g, '') + '-' + customer.id,
+                  id: invoiceNo,
                   week_range: cycle.week_range,
                   start_of_week: cycle.start_date,
                   end_of_week: cycle.end_date,
-                  due_date: cycle.end_date,
-                  paid_date: cycle.status === 'Paid' ? cycle.end_date : 'N/A',
+                  due_date: formatDateStr(cycle.end_date),
+                  paid_date: formatDateStr(cycle.paid_date),
                   status: cycle.status,
                   amount: cycle.amount
                 };
@@ -1789,6 +1774,159 @@
             historyContent.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading History</p>
+                <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
+              </div>
+            `;
+          }
+        }
+      })();
+      return;
+    }
+
+    // View Order Details -> Dynamic Inline Grid
+    const viewOrderDetailsBtn = event.target.closest('.view-order-details-btn');
+    if (viewOrderDetailsBtn) {
+      const orderId = viewOrderDetailsBtn.dataset.id;
+
+      const listSec = getElement('ordersListSection');
+      const detailsSec = getElement('orderDetailsGridSection');
+      const detailsContent = getElement('orderDetailsGridContent');
+
+      if (listSec && detailsSec && detailsContent) {
+        listSec.style.display = 'none';
+        detailsSec.style.display = 'block';
+        detailsContent.innerHTML = `
+          <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+            <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(52, 152, 219, 0.2); border-radius: 50%; border-top-color: #3498DB; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
+            <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading order details...</p>
+          </div>
+        `;
+
+        // Bind Back Button
+        const backBtn = getElement('backToOrdersListBtn');
+        if (backBtn) {
+          backBtn.onclick = () => {
+            detailsSec.style.display = 'none';
+            listSec.style.display = 'block';
+          };
+        }
+      }
+
+      (async () => {
+        try {
+          const response = await apiRequest(`api/orders/${orderId}/details`);
+          if (!response.success) {
+            throw new Error(response.message || 'Failed to load details.');
+          }
+
+          const order = response.order;
+
+          // Build addons list html
+          let addonsHtml = '';
+          if (order.add_ons && order.add_ons.length > 0) {
+            addonsHtml = `
+              <ul style="margin: 0; padding-left: 20px; font-size: 0.9rem; line-height: 1.6; color: var(--text-secondary);">
+                ${order.add_ons.map(addon => `
+                  <li><strong>${escapeHtml(addon.name)}</strong> (Quantity: ${addon.qty}) - $${Number(addon.price).toFixed(2)}</li>
+                `).join('')}
+              </ul>
+            `;
+          } else {
+            addonsHtml = `<p style="margin: 0; font-size: 0.9rem; font-style: italic; color: var(--text-secondary);">No addons ordered.</p>`;
+          }
+
+          // Build POD photos html
+          let podHtml = '';
+          if (order.proof_of_delivery_photo || order.proof_of_delivery_signature) {
+            podHtml = `
+              <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); grid-column: span 2;">
+                <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📦 Proof of Delivery</h4>
+                <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                  ${order.proof_of_delivery_photo ? `
+                    <div>
+                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">Drop Photo:</span>
+                      <a href="${getBaseUrl()}/${order.proof_of_delivery_photo}" target="_blank">
+                        <img src="${getBaseUrl()}/${order.proof_of_delivery_photo}" style="max-height: 150px; border-radius: 8px; border: 1px solid var(--panel-border);">
+                      </a>
+                    </div>
+                  ` : ''}
+                  ${order.proof_of_delivery_signature ? `
+                    <div>
+                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">Customer Signature:</span>
+                      <a href="${getBaseUrl()}/${order.proof_of_delivery_signature}" target="_blank">
+                        <img src="${getBaseUrl()}/${order.proof_of_delivery_signature}" style="max-height: 150px; border-radius: 8px; border: 1px solid var(--panel-border);">
+                      </a>
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            `;
+          }
+
+          const html = `
+            <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
+              <!-- Top Row: Customer & Order Details Grid -->
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
+                <!-- Customer Details Card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">👤 Customer Information</h4>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Name: <strong style="color: var(--text-primary);">${escapeHtml(order.customer_name)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Phone: <strong style="color: var(--text-primary);">${escapeHtml(order.customer_phone)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Email: <strong style="color: var(--text-primary);">${escapeHtml(order.customer_email)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Delivery Address: <span style="color: var(--text-secondary); font-weight: 600;">${escapeHtml(order.customer_address)}</span></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Postcode: <strong style="color: var(--primary-color);">${escapeHtml(order.customer_pincode)}</strong></p>
+                </div>
+
+                <!-- Order Information Card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📋 Order Metadata</h4>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Order ID: <strong style="color: var(--text-primary);">${escapeHtml(order.id)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Date Placed: <strong style="color: var(--text-primary);">${escapeHtml(order.date)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Total Amount: <strong style="color: var(--text-primary); font-size: 1.1rem; color: #2ECC71;">$${Number(order.amount).toFixed(2)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Assigned Driver: <strong style="color: var(--text-primary);">${escapeHtml(order.driver_name)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">
+                    Current Status: 
+                    <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${order.status.toLowerCase().replace(/ /g, '')}">${escapeHtml(order.status)}</span>
+                  </p>
+                </div>
+              </div>
+
+              <!-- Bottom Row: Order Content & Preparation Instructions Notes -->
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
+                <!-- Tiffin & Addons Card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">🍱 Subscription Details</h4>
+                  <p style="margin: 8px 0 16px 0; font-size: 0.95rem; line-height: 1.5;">Tiffin Plan: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.tiffin_name)}</strong> ($${Number(order.tiffin_price).toFixed(2)})</p>
+                  
+                  <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">Ordered Add-ons:</span>
+                  ${addonsHtml}
+                </div>
+
+                <!-- Preparation Note / Special Instructions Card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column;">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📝 Preparation & Chef Notes</h4>
+                  <div style="flex-grow: 1; padding: 14px; background: rgba(230, 126, 34, 0.05); border: 1px dashed rgba(230, 126, 34, 0.2); border-radius: 8px; color: var(--text-secondary); font-size: 0.95rem; line-height: 1.6; min-height: 100px; display: flex; align-items: center; justify-content: center; text-align: center;">
+                    <p style="margin: 0; font-weight: 600; color: #E67E22; font-style: italic;">
+                      "${escapeHtml(order.note)}"
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- POD photos -->
+              ${podHtml}
+            </div>
+          `;
+
+          if (detailsContent) {
+            detailsContent.innerHTML = html;
+          }
+
+        } catch (err) {
+          if (detailsContent) {
+            detailsContent.innerHTML = `
+              <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+                <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Details</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
             `;

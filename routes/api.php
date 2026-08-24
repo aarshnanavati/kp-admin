@@ -120,6 +120,7 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/customers', [AdminPanelController::class, 'getCustomers']);
     Route::get('/customers/{id}/details', [AdminPanelController::class, 'getCustomerDetails']);
     Route::get('/drivers/{id}/details', [AdminPanelController::class, 'getDriverDetails']);
+    Route::get('/orders/{id}/details', [AdminPanelController::class, 'getOrderDetails']);
     Route::post('/customers', [AdminPanelController::class, 'manageCustomer']);
 
     // Coupons API

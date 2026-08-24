@@ -35,21 +35,23 @@
     </div>
   </div>
 
-  <article class="kp_kitchen_admin_panel_card">
-    <div class="kp_kitchen_admin_panel_table_wrap">
-      <table class="kp_kitchen_admin_panel_table">
-        <thead class="kp_kitchen_admin_panel_table_head">
-          <tr class="kp_kitchen_admin_panel_table_row">
-            <th class="kp_kitchen_admin_panel_table_heading">Order ID</th>
-            <th class="kp_kitchen_admin_panel_table_heading">Customer</th>
-            <th class="kp_kitchen_admin_panel_table_heading">Tiffin</th>
-            <th class="kp_kitchen_admin_panel_table_heading">Area</th>
-            <th class="kp_kitchen_admin_panel_table_heading">Driver</th>
-            <th class="kp_kitchen_admin_panel_table_heading">Amount</th>
-            <th class="kp_kitchen_admin_panel_table_heading">Status</th>
-          </tr>
-        </thead>
-        <tbody class="kp_kitchen_admin_panel_table_body" id="ordersTableBody">
+  <div id="ordersListSection">
+    <article class="kp_kitchen_admin_panel_card">
+      <div class="kp_kitchen_admin_panel_table_wrap">
+        <table class="kp_kitchen_admin_panel_table">
+          <thead class="kp_kitchen_admin_panel_table_head">
+            <tr class="kp_kitchen_admin_panel_table_row">
+              <th class="kp_kitchen_admin_panel_table_heading">Order ID</th>
+              <th class="kp_kitchen_admin_panel_table_heading">Customer</th>
+              <th class="kp_kitchen_admin_panel_table_heading">Tiffin</th>
+              <th class="kp_kitchen_admin_panel_table_heading">Area</th>
+              <th class="kp_kitchen_admin_panel_table_heading">Driver</th>
+              <th class="kp_kitchen_admin_panel_table_heading">Amount</th>
+              <th class="kp_kitchen_admin_panel_table_heading">Status</th>
+              <th class="kp_kitchen_admin_panel_table_heading" style="text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="kp_kitchen_admin_panel_table_body" id="ordersTableBody">
           @forelse ($orders as $order)
             @php
               $matchingDrivers = $drivers->filter(function($d) use ($order) {
@@ -111,10 +113,21 @@
                   </select>
                 </form>
               </td>
+              <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
+                <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view view-order-details-btn"
+                  style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.2); color: #3498DB; width: 32px; height: 32px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;"
+                  title="Order Details"
+                  data-id="{{ $order->id }}">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8zM1.173 8a13.133 13.133 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5c2.12 0 3.879 1.168 5.168 2.457A13.133 13.133 0 0 1 14.828 8c-.058.087-.122.183-.195.288-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5c-2.12 0-3.879-1.168-5.168-2.457A13.134 13.134 0 0 1 1.172 8z"/>
+                    <path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0z"/>
+                  </svg>
+                </button>
+              </td>
             </tr>
           @empty
             <tr>
-              <td colspan="7" class="kp_kitchen_admin_panel_table_cell">
+              <td colspan="8" class="kp_kitchen_admin_panel_table_cell">
                 <div class="kp_kitchen_admin_panel_empty_state">No orders found matching filters.</div>
               </td>
             </tr>
@@ -123,5 +136,19 @@
       </table>
     </div>
   </article>
+</div>
+
+<!-- Order Details Grid Section (Hidden by Default) -->
+<div id="orderDetailsGridSection" style="display: none;">
+  <div class="kp_kitchen_admin_panel_section_toolbar" style="margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
+    <div>
+      <button id="backToOrdersListBtn" class="kp_kitchen_admin_panel_secondary_button" style="padding: 6px 14px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 8px; background: transparent; border: 1px solid var(--panel-border); color: var(--text-primary); cursor: pointer; border-radius: 6px;">
+        ← Back to Orders
+      </button>
+    </div>
+  </div>
+  
+  <div id="orderDetailsGridContent"></div>
+</div>
 </section>
 @endsection

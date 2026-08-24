@@ -964,10 +964,19 @@ class AdminPanelController extends Controller
                 ->whereBetween('date', [$start, $end])
                 ->sum('amount');
 
+            $latestPayment = $customer->payments()
+                ->where('status', 'Successful')
+                ->whereBetween('date', [$start, $end])
+                ->orderBy('date', 'desc')
+                ->first();
+
+            $week['paid_date'] = $latestPayment ? $latestPayment->date : 'N/A';
+
             if ($weekPaymentsSum >= $week['amount'] && $week['amount'] > 0) {
                 $week['status'] = 'Paid';
             } else {
                 $week['status'] = 'Unpaid';
+                $week['paid_date'] = 'N/A';
             }
         }
 
@@ -1047,6 +1056,33 @@ class AdminPanelController extends Controller
             'active_shipments' => $activeShipments,
             'total_orders' => $orders->count(),
             'orders' => $orders
+        ]);
+    }
+
+    public function getOrderDetails($id)
+    {
+        $order = Order::with('customerRelation', 'tiffinRelation')->findOrFail($id);
+
+        return response()->json([
+            'success' => true,
+            'order' => [
+                'id' => $order->id,
+                'date' => $order->date,
+                'customer_name' => $order->customer,
+                'customer_phone' => $order->customerRelation ? $order->customerRelation->phone : 'N/A',
+                'customer_email' => $order->customerRelation ? $order->customerRelation->email : 'N/A',
+                'customer_address' => $order->customerRelation ? $order->customerRelation->address : 'N/A',
+                'customer_pincode' => $order->customerRelation ? $order->customerRelation->pincode : 'N/A',
+                'tiffin_name' => $order->tiffin,
+                'tiffin_price' => $order->tiffinRelation ? $order->tiffinRelation->price : '0.00',
+                'amount' => $order->amount,
+                'status' => $order->status,
+                'add_ons' => json_decode($order->add_ons, true) ?: [],
+                'note' => $order->note ?: 'No special instructions provided.',
+                'driver_name' => $order->driver ?: 'Unassigned',
+                'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
+                'proof_of_delivery_signature' => $order->proof_of_delivery_signature,
+            ]
         ]);
     }
 

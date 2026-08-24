@@ -507,6 +507,7 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'tiffin_id' => 'required|exists:tiffins,id',
             'add_ons' => 'nullable|array',
+            'note' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -555,6 +556,7 @@ class AuthController extends Controller
             'status' => 'Pending',
             'date' => Carbon::now()->toDateString(),
             'add_ons' => json_encode($addonsData),
+            'note' => $request->input('note'),
         ]);
 
         \App\Models\Notification::create([
