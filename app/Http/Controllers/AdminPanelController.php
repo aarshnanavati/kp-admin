@@ -25,9 +25,22 @@ class AdminPanelController extends Controller
 
     public function dashboard()
     {
-        $driversCount = Driver::where('status', 'Active')->count();
-        $ordersCount = Order::count();
-        $totalRevenue = Payment::where('status', 'Successful')->sum('amount');
+        $todayStr = now()->toDateString();
+
+        // Count active drivers with assigned orders today
+        $driversCount = Driver::where('status', 'Active')
+            ->whereHas('orders', function($query) use ($todayStr) {
+                $query->where('date', $todayStr);
+            })->count();
+
+        // Count orders placed today
+        $ordersCount = Order::where('date', $todayStr)->count();
+
+        // Sum successful payments today
+        $totalRevenue = Payment::where('status', 'Successful')
+            ->where('date', $todayStr)
+            ->sum('amount');
+
         $customersCount = Customer::count();
         $tiffinsCount = Tiffin::count();
         
@@ -642,6 +655,7 @@ class AdminPanelController extends Controller
             'amount' => 'required|numeric|min:0',
             'due_date' => 'required|date',
             'status' => 'required|in:Pending,Paid,Unpaid',
+            'collected_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
         $id = $request->input('id');
@@ -651,6 +665,13 @@ class AdminPanelController extends Controller
             'due_date' => $request->due_date,
             'status' => $request->status,
         ];
+
+        if ($request->hasFile('collected_photo')) {
+            $file = $request->file('collected_photo');
+            $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/collected'), $filename);
+            $data['collected_photo'] = 'uploads/collected/' . $filename;
+        }
 
         if ($id) {
             $invoice = Invoice::findOrFail($id);
@@ -858,6 +879,177 @@ class AdminPanelController extends Controller
         return response()->json(Customer::with(['addresses', 'orders', 'invoices', 'payments'])->get());
     }
 
+    public function getCustomerDetails($id)
+    {
+        $customer = Customer::findOrFail($id);
+
+        // 1. Saved Addresses (Primary + Alternative delivery postcodes)
+        $addresses = [
+            [
+                'type' => 'Primary Address',
+                'address' => $customer->address,
+                'pincode' => $customer->pincode,
+            ]
+        ];
+
+        // Retrieve distinct delivery postcodes from past orders
+        $deliveryPostcodes = $customer->orders()
+            ->whereNotNull('area')
+            ->where('area', '<>', '')
+            ->select('area')
+            ->distinct()
+            ->pluck('area');
+
+        foreach ($deliveryPostcodes as $pc) {
+            if ($pc != $customer->pincode) {
+                $addresses[] = [
+                    'type' => 'Alternative Postcode',
+                    'address' => 'Delivery Postcode Location',
+                    'pincode' => $pc,
+                ];
+            }
+        }
+
+        // 2. Previous Orders History
+        $orders = $customer->orders()->orderBy('date', 'desc')->get()->map(function($order) {
+            $addons = json_decode($order->add_ons, true) ?: [];
+            $addonNames = array_map(function($a) {
+                return $a['name'] . ' (x' . ($a['qty'] ?? 1) . ')';
+            }, $addons);
+
+            return [
+                'id' => $order->id,
+                'date' => $order->date,
+                'tiffin' => $order->tiffin,
+                'addons' => implode(', ', $addonNames) ?: 'None',
+                'amount' => (float)$order->amount,
+                'status' => $order->status,
+                'raw_addons' => $addons
+            ];
+        });
+
+        // 3. Payment / Billing History (Weekly Basis)
+        $weeklyData = [];
+        $allOrders = $customer->orders()->orderBy('date', 'desc')->get();
+
+        foreach ($allOrders as $order) {
+            $dt = \Carbon\Carbon::parse($order->date);
+            $startOfWeek = $dt->startOfWeek()->toDateString();
+            $endOfWeek = $dt->endOfWeek()->toDateString();
+            $weekKey = $startOfWeek . '_' . $endOfWeek;
+
+            if (!isset($weeklyData[$weekKey])) {
+                $weeklyData[$weekKey] = [
+                    'week_range' => \Carbon\Carbon::parse($startOfWeek)->format('d M Y') . ' - ' . \Carbon\Carbon::parse($endOfWeek)->format('d M Y'),
+                    'start_date' => $startOfWeek,
+                    'end_date' => $endOfWeek,
+                    'amount' => 0.00,
+                    'orders_count' => 0,
+                    'status' => 'Pending'
+                ];
+            }
+
+            $weeklyData[$weekKey]['amount'] += (float)$order->amount;
+            $weeklyData[$weekKey]['orders_count']++;
+        }
+
+        $weeklyHistory = array_values($weeklyData);
+        foreach ($weeklyHistory as &$week) {
+            $start = $week['start_date'];
+            $end = $week['end_date'];
+
+            // Sum successful payments for this customer within this week
+            $weekPaymentsSum = $customer->payments()
+                ->where('status', 'Successful')
+                ->whereBetween('date', [$start, $end])
+                ->sum('amount');
+
+            if ($weekPaymentsSum >= $week['amount'] && $week['amount'] > 0) {
+                $week['status'] = 'Paid';
+            } else {
+                $week['status'] = 'Unpaid';
+            }
+        }
+
+        // 4. Invoices History
+        $invoices = \App\Models\Invoice::where('customer_id', $id)->orderBy('created_at', 'desc')->get()->map(function($inv) {
+            $createdCarbon = \Carbon\Carbon::parse($inv->created_at);
+            $startOfWeek = $createdCarbon->startOfWeek()->toDateString();
+            $endOfWeek = $createdCarbon->endOfWeek()->toDateString();
+            
+            return [
+                'id' => $inv->id,
+                'customer_id' => (int)$inv->customer_id,
+                'order_id' => $inv->order_id,
+                'amount' => (float)$inv->amount,
+                'due_date' => $inv->due_date,
+                'paid_date' => $inv->status === 'Paid' ? \Carbon\Carbon::parse($inv->updated_at)->toDateString() : 'N/A',
+                'status' => $inv->status,
+                'created_at' => \Carbon\Carbon::parse($inv->created_at)->toDateString(),
+                'start_of_week' => $startOfWeek,
+                'end_of_week' => $endOfWeek,
+                'week_range' => \Carbon\Carbon::parse($startOfWeek)->format('d M Y') . ' - ' . \Carbon\Carbon::parse($endOfWeek)->format('d M Y'),
+                'collected_photo' => $inv->collected_photo ? asset($inv->collected_photo) : null,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'customer' => [
+                'name' => $customer->name,
+                'phone' => $customer->phone,
+                'email' => $customer->email,
+                'pincode' => $customer->pincode,
+                'address' => $customer->address
+            ],
+            'addresses' => $addresses,
+            'orders' => $orders,
+            'weekly_billing' => $weeklyHistory,
+            'invoices' => $invoices
+        ]);
+    }
+
+    public function getDriverDetails($id)
+    {
+        $driver = Driver::findOrFail($id);
+        
+        $activeShipments = Order::where('driver_id', $driver->id)
+            ->whereNotIn('status', ['Delivered', 'Cancelled'])
+            ->count();
+
+        $orders = $driver->orders()->orderBy('date', 'desc')->get()->map(function($order) {
+            return [
+                'id' => $order->id,
+                'date' => $order->date,
+                'customer' => $order->customer,
+                'tiffin' => $order->tiffin,
+                'status' => $order->status,
+                'proof_of_delivery_photo' => $order->proof_of_delivery_photo
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'phone' => $driver->phone,
+                'email' => $driver->email,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'assigned_zip' => $driver->assigned_zip,
+                'status' => $driver->status,
+                'license_copy_front' => $driver->license_copy_front,
+                'license_copy_back' => $driver->license_copy_back,
+            ],
+            'active_shipments' => $activeShipments,
+            'total_orders' => $orders->count(),
+            'orders' => $orders
+        ]);
+    }
+
     public function getCoupons()
     {
         return response()->json(Coupon::all());
@@ -891,32 +1083,23 @@ class AdminPanelController extends Controller
             $orderCounts[] = $count;
         }
 
-        // Most ordered items in the previous 7 days
+        // Most ordered postcodes in the previous 7 days
         $sevenDaysAgo = Carbon::now()->subDays(7)->toDateString();
-        $recentOrders = Order::where('date', '>=',
-            $sevenDaysAgo)->get();
+        $postcodeCounts = Order::where('date', '>=', $sevenDaysAgo)
+            ->whereNotNull('area')
+            ->where('area', '<>', '')
+            ->select('area', \Illuminate\Support\Facades\DB::raw('count(*) as count'))
+            ->groupBy('area')
+            ->orderBy('count', 'desc')
+            ->take(5)
+            ->get();
 
-        $itemCounts = [];
-        foreach ($recentOrders as $order) {
-            if ($order->tiffin) {
-                $itemCounts[$order->tiffin] = ($itemCounts[$order->tiffin] ?? 0) + 1;
-            }
-            if ($order->add_ons) {
-                $addons = json_decode($order->add_ons, true);
-                if (is_array($addons)) {
-                    foreach ($addons as $addon) {
-                        if (isset($addon['name']) && isset($addon['qty'])) {
-                            $itemCounts[$addon['name']] = ($itemCounts[$addon['name']] ?? 0) + $addon['qty'];
-                        }
-                    }
-                }
-            }
+        $postcodeLabels = [];
+        $postcodeValues = [];
+        foreach ($postcodeCounts as $pc) {
+            $postcodeLabels[] = $pc->area;
+            $postcodeValues[] = $pc->count;
         }
-
-        arsort($itemCounts);
-
-        $itemLabels = array_slice(array_keys($itemCounts), 0, 5);
-        $itemValues = array_slice(array_values($itemCounts), 0, 5);
 
         return response()->json([
             'ordersChart' => [
@@ -924,8 +1107,8 @@ class AdminPanelController extends Controller
                 'data' => $orderCounts,
             ],
             'itemsChart' => [
-                'labels' => $itemLabels,
-                'data' => $itemValues,
+                'labels' => $postcodeLabels,
+                'data' => $postcodeValues,
             ],
         ]);
     }

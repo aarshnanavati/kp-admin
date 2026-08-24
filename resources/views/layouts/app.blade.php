@@ -50,35 +50,6 @@
                     <span class="kp_kitchen_admin_panel_nav_text">Dashboard</span>
                 </a>
 
-                <!-- Menu Management Group -->
-                <div class="kp_kitchen_admin_panel_nav_group">
-                    <button type="button" class="kp_kitchen_admin_panel_nav_group_header">
-                        <span class="kp_kitchen_admin_panel_nav_icon">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                stroke-linejoin="round">
-                                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                            </svg>
-                        </span>
-                        <span class="kp_kitchen_admin_panel_nav_text">Menu Management</span>
-                        <span class="kp_kitchen_admin_panel_nav_arrow">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
-                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                stroke-linejoin="round">
-                                <polyline points="6 9 12 15 18 9" />
-                            </svg>
-                        </span>
-                    </button>
-                    <div class="kp_kitchen_admin_panel_nav_group_items">
-                        <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('categories') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
-                            href="{{ route('categories') }}">Categories</a>
-                        <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('items') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
-                            href="{{ route('items') }}">Menu Items</a>
-                        <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('tiffins') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
-                            href="{{ route('tiffins') }}">Tiffin Plans</a>
-                    </div>
-                </div>
-
                 <!-- Operations Group -->
                 <div class="kp_kitchen_admin_panel_nav_group">
                     <button type="button" class="kp_kitchen_admin_panel_nav_group_header">
@@ -110,6 +81,35 @@
                             href="{{ route('invoices') }}">Invoices</a>
                         <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('payments') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
                             href="{{ route('payments') }}">Payments</a>
+                    </div>
+                </div>
+
+                <!-- Menu Management Group -->
+                <div class="kp_kitchen_admin_panel_nav_group">
+                    <button type="button" class="kp_kitchen_admin_panel_nav_group_header">
+                        <span class="kp_kitchen_admin_panel_nav_icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                            </svg>
+                        </span>
+                        <span class="kp_kitchen_admin_panel_nav_text">Menu Management</span>
+                        <span class="kp_kitchen_admin_panel_nav_arrow">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                        </span>
+                    </button>
+                    <div class="kp_kitchen_admin_panel_nav_group_items">
+                        <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('categories') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
+                            href="{{ route('categories') }}">Categories</a>
+                        <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('items') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
+                            href="{{ route('items') }}">Menu Items</a>
+                        <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('tiffins') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
+                            href="{{ route('tiffins') }}">Tiffin Plans</a>
                     </div>
                 </div>
 
@@ -145,7 +145,7 @@
                     </div>
                 </div>
 
-                <!-- Marketing & Settings Group -->
+                <!-- Marketing and Settings Group -->
                 <div class="kp_kitchen_admin_panel_nav_group">
                     <button type="button" class="kp_kitchen_admin_panel_nav_group_header">
                         <span class="kp_kitchen_admin_panel_nav_icon">
@@ -157,7 +157,7 @@
                                 <line x1="7" y1="7" x2="7.01" y2="7" />
                             </svg>
                         </span>
-                        <span class="kp_kitchen_admin_panel_nav_text">Marketing &amp; Settings</span>
+                        <span class="kp_kitchen_admin_panel_nav_text">Marketing and Settings</span>
                         <span class="kp_kitchen_admin_panel_nav_arrow">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -186,7 +186,8 @@
                 </div>
                 <form method="POST" action="{{ route('logout') }}" style="width: 100%; margin: 0;">
                     @csrf
-                    <button type="submit" class="kp_kitchen_admin_panel_logout_button" style="width: 100%; border: none; cursor: pointer; display: block; text-align: center;">
+                    <button type="submit" class="kp_kitchen_admin_panel_logout_button"
+                        style="width: 100%; border: none; cursor: pointer; display: block; text-align: center;">
                         Logout
                     </button>
                 </form>
@@ -246,17 +247,20 @@
             </header>
             <main class="kp_kitchen_admin_panel_content">
                 @if (session('success'))
-                    <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; color: #2e7d32; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
+                    <div
+                        style="background-color: #e8f5e9; border: 1px solid #c8e6c9; color: #2e7d32; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
                         {{ session('success') }}
                     </div>
                 @endif
                 @if (session('error'))
-                    <div style="background-color: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
+                    <div
+                        style="background-color: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
                         {{ session('error') }}
                     </div>
                 @endif
                 @if ($errors->any())
-                    <div style="background-color: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
+                    <div
+                        style="background-color: #ffebee; border: 1px solid #ffcdd2; color: #c62828; padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 500;">
                         <ul style="margin: 0; padding-left: 20px;">
                             @foreach ($errors->all() as $error)
                                 <li>{{ $error }}</li>
@@ -307,7 +311,7 @@
             email: "{{ Auth::user()->email ?? 'admin@kpkitchen.com' }}"
         };
     </script>
-    <script src="{{ asset('assets/js/app.js') }}"></script>
+    <script src="{{ asset('assets/js/app.js') }}?v={{ time() }}"></script>
 </body>
 
 </html>

@@ -19,6 +19,7 @@ class Invoice extends Model
         'amount',
         'status',
         'due_date',
+        'collected_photo',
     ];
 
     public function customer()

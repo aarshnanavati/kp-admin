@@ -1,7 +1,7 @@
 <?php
 
-use App\Http\Controllers\AuthController;
 use App\Http\Controllers\AdminPanelController;
+use App\Http\Controllers\AuthController;
 use Illuminate\Support\Facades\Route;
 
 // --- Guest API Routes ---
@@ -47,7 +47,7 @@ Route::post('/customer/cart/remove', [AuthController::class, 'removeFromCart']);
 Route::middleware('customer.auth')->group(function () {
     Route::post('/customer/logout', [AuthController::class, 'customerLogout']);
     Route::get('/customer/profile', [AuthController::class, 'customerProfile']);
-    
+
     // Customer Operational Endpoints
     Route::get('/customer/orders', [AuthController::class, 'customerOrders']);
     Route::post('/customer/orders', [AuthController::class, 'placeCustomerOrder']);
@@ -118,6 +118,8 @@ Route::middleware('api.or.session')->group(function () {
 
     // Customers API
     Route::get('/customers', [AdminPanelController::class, 'getCustomers']);
+    Route::get('/customers/{id}/details', [AdminPanelController::class, 'getCustomerDetails']);
+    Route::get('/drivers/{id}/details', [AdminPanelController::class, 'getDriverDetails']);
     Route::post('/customers', [AdminPanelController::class, 'manageCustomer']);
 
     // Coupons API
@@ -135,7 +137,7 @@ Route::middleware('api.or.session')->group(function () {
     // Web-based Logout
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::post('/logout', [AuthController::class, 'logout']);
-    
+
     // Admin Profile API
     Route::get('/admin/profile', [AuthController::class, 'adminProfile']);
 });

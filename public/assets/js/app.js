@@ -594,6 +594,18 @@
           <option ${inv?.status === 'Pending' ? 'selected' : ''}>Pending</option>
         </select>
       </label>
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Collected Tiffin Photo</span>
+        <input name="collected_photo" type="file" class="kp_kitchen_admin_panel_form_input" accept="image/*">
+        ${inv?.collected_photo ? `
+          <div style="margin-top: 10px;">
+            <span style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 5px;">Current Photo:</span>
+            <a href="${inv.collected_photo}" target="_blank">
+              <img src="${inv.collected_photo}" style="max-width: 120px; border-radius: 8px; border: 1px solid var(--panel-border);">
+            </a>
+          </div>
+        ` : ''}
+      </label>
     `;
   };
 
@@ -759,7 +771,7 @@
       return;
     }
 
-    // Edit Driver
+    // Edit Driver -> Inline transition to Grid-by-Grid Form
     const driverBtn = event.target.closest('.edit-driver-btn');
     if (driverBtn) {
       const d = {
@@ -772,26 +784,76 @@
         license_expiry: driverBtn.dataset.license_expiry,
         vehicle_reg_no: driverBtn.dataset.vehicle_reg_no,
         assigned_zip: driverBtn.dataset.assigned_zip,
-        status: driverBtn.dataset.status,
-        license_copy_front: driverBtn.dataset.license_copy_front,
-        license_copy_back: driverBtn.dataset.license_copy_back
+        status: driverBtn.dataset.status
       };
-      openModal('Edit Driver Profile', driverFields(d) + `<input type="hidden" name="id" value="${d.id}">`, 'Save Changes', getBaseUrl() + '/drivers/save', setupDriverFormListeners);
+      
+      const listSec = getElement('driverListSection');
+      const editSec = getElement('driverEditSection');
+      
+      if (listSec && editSec) {
+        listSec.style.display = 'none';
+        editSec.style.display = 'block';
+        
+        // Populate inputs
+        getElement('editDriverId').value = d.id;
+        getElement('editDriverName').value = d.name;
+        getElement('editDriverPhone').value = d.phone;
+        getElement('editDriverEmail').value = d.email === 'null' || !d.email ? '' : d.email;
+        getElement('editDriverVehicle').value = d.vehicle_reg_no === 'null' || !d.vehicle_reg_no ? '' : d.vehicle_reg_no;
+        getElement('editDriverPostcode').value = d.assigned_zip === 'null' || !d.assigned_zip ? '' : d.assigned_zip;
+        getElement('editDriverLicense').value = d.license_no === 'null' || !d.license_no ? '' : d.license_no;
+        getElement('editDriverLicenseExpiry').value = d.license_expiry === 'null' || !d.license_expiry ? '' : d.license_expiry;
+        getElement('editDriverAddress').value = d.address === 'null' || !d.address ? '' : d.address;
+        getElement('editDriverStatus').value = d.status || 'Active';
+        getElement('editDriverPassword').value = '';
+        
+        // Bind back/cancel actions
+        const backToList = () => {
+          editSec.style.display = 'none';
+          listSec.style.display = 'block';
+        };
+        
+        const backBtn = getElement('backToDriverListBtn');
+        if (backBtn) backBtn.onclick = backToList;
+        
+        const cancelBtn = getElement('cancelDriverEditBtn');
+        if (cancelBtn) cancelBtn.onclick = backToList;
+      }
       return;
     }
 
     // Edit Customer
     const customerBtn = event.target.closest('.edit-customer-btn');
     if (customerBtn) {
-      const cust = {
-        id: customerBtn.dataset.id,
-        name: customerBtn.dataset.name,
-        phone: customerBtn.dataset.phone,
-        email: customerBtn.dataset.email,
-        pincode: customerBtn.dataset.pincode,
-        address: customerBtn.dataset.address
-      };
-      openModal('Edit Customer Profile', customerFields(cust) + `<input type="hidden" name="id" value="${cust.id}">`, 'Save Changes', getBaseUrl() + '/customers/save');
+      const listSec = getElement('customerListSection');
+      const editSec = getElement('customerEditGridSection');
+      
+      if (listSec && editSec) {
+        listSec.style.display = 'none';
+        if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
+        if (getElement('customerPaymentGridSection')) getElement('customerPaymentGridSection').style.display = 'none';
+        if (getElement('customerInvoicesGridSection')) getElement('customerInvoicesGridSection').style.display = 'none';
+        
+        // Populate inputs
+        getElement('editCustomerId').value = customerBtn.dataset.id;
+        getElement('editCustomerName').value = customerBtn.dataset.name;
+        getElement('editCustomerPhone').value = customerBtn.dataset.phone;
+        getElement('editCustomerEmail').value = customerBtn.dataset.email;
+        getElement('editCustomerPincode').value = customerBtn.dataset.pincode;
+        getElement('editCustomerAddress').value = customerBtn.dataset.address;
+        
+        editSec.style.display = 'block';
+
+        // Setup back triggers
+        const backBtn = getElement('backToCustomerListFromEditBtn');
+        const cancelBtn = getElement('cancelCustomerEditBtn');
+        const goBack = () => {
+          editSec.style.display = 'none';
+          listSec.style.display = 'block';
+        };
+        if (backBtn) backBtn.onclick = goBack;
+        if (cancelBtn) cancelBtn.onclick = goBack;
+      }
       return;
     }
 
@@ -818,7 +880,8 @@
         customer_id: Number(invoiceBtn.dataset.customer_id),
         amount: invoiceBtn.dataset.amount,
         due_date: invoiceBtn.dataset.due_date,
-        status: invoiceBtn.dataset.status
+        status: invoiceBtn.dataset.status,
+        collected_photo: invoiceBtn.dataset.collected_photo
       };
       openModal('Edit Invoice Details', invoiceFields(inv) + `<input type="hidden" name="id" value="${inv.id}">`, 'Save Changes', getBaseUrl() + '/invoices/save');
       return;
@@ -863,205 +926,875 @@
       return;
     }
 
-    // View Customer Details Modal
-    const viewCustomerBtn = event.target.closest('.view-customer-details-btn');
-    if (viewCustomerBtn) {
-      const name = viewCustomerBtn.dataset.name;
-      const phone = viewCustomerBtn.dataset.phone;
-      const email = viewCustomerBtn.dataset.email;
-      const pincode = viewCustomerBtn.dataset.pincode;
-      const address = viewCustomerBtn.dataset.address;
-      const totalOrders = viewCustomerBtn.dataset.total_orders;
-      const totalSpend = Number(viewCustomerBtn.dataset.total_spend || 0);
-      const recentOrders = JSON.parse(viewCustomerBtn.dataset.orders || '[]');
+    // Print Invoice helper
+    function printOrderInvoice(order, customer) {
+      const printWindow = window.open('', '_blank');
+      
+      let addonsHtml = '';
+      if (order.raw_addons && order.raw_addons.length > 0) {
+        addonsHtml = `
+          <tr class="heading">
+            <td colspan="2" style="background: #f7f9fa; border-bottom: 1px solid #ddd; font-weight: bold; padding: 6px 10px; font-size: 0.85rem; text-align: left; text-transform: uppercase; color: #555;">Add-on Items</td>
+          </tr>
+          ${order.raw_addons.map(addon => `
+            <tr class="item">
+              <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: left;">${escapeHtml(addon.name)}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${Number(addon.price).toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        `;
+      }
 
-      const html = `
-        <div style="font-family: var(--font-family); color: var(--text-primary);">
-          <!-- Top Overview Grid -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
-            <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px;">
-              <h4 style="margin: 0 0 12px 0; color: var(--primary-color); font-size: 0.95rem;">Contact & Profile</h4>
-              <p style="margin: 6px 0; font-size: 0.85rem;">👤 Name: <strong>${escapeHtml(name)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem;">📞 Phone: <strong>${escapeHtml(phone)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem;">✉️ Email: <strong>${escapeHtml(email)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem;">📮 Postcode: <strong>${escapeHtml(pincode)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem; line-height: 1.4;">📍 Address: ${escapeHtml(address || 'No address registered')}</p>
-            </div>
-            <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; justify-content: center; gap: 12px;">
-              <div>
-                <span style="font-size: 0.8rem; color: var(--text-secondary); display: block;">Total Orders</span>
-                <strong style="font-size: 1.8rem; color: var(--primary-color); font-family: var(--font-title);">${totalOrders}</strong>
-              </div>
-              <div>
-                <span style="font-size: 0.8rem; color: var(--text-secondary); display: block;">Total Money Spent</span>
-                <strong style="font-size: 1.8rem; color: #2ECC71; font-family: var(--font-title);">$${totalSpend.toFixed(2)}</strong>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Recent Orders Table -->
-          <h4 style="margin: 0 0 12px 0; color: var(--primary-color); font-size: 0.95rem;">Recent Orders (Last 5)</h4>
-          <div class="kp_kitchen_admin_panel_table_wrap" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; overflow-x: auto;">
-            <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
-              <thead class="kp_kitchen_admin_panel_table_head">
-                <tr class="kp_kitchen_admin_panel_table_row">
-                  <th class="kp_kitchen_admin_panel_table_heading">Order ID</th>
-                  <th class="kp_kitchen_admin_panel_table_heading">Tiffin Plan</th>
-                  <th class="kp_kitchen_admin_panel_table_heading">Amount</th>
-                  <th class="kp_kitchen_admin_panel_table_heading">Status</th>
-                </tr>
-              </thead>
-              <tbody class="kp_kitchen_admin_panel_table_body">
-                ${recentOrders.length === 0 ? `
-                  <tr class="kp_kitchen_admin_panel_table_row">
-                    <td colspan="4" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6;">No orders found for this customer.</td>
-                  </tr>
-                ` : recentOrders.map(order => `
-                  <tr class="kp_kitchen_admin_panel_table_row">
-                    <td class="kp_kitchen_admin_panel_table_cell">
-                      <strong class="kp_kitchen_admin_panel_table_primary">${escapeHtml(order.id)}</strong>
-                      <span class="kp_kitchen_admin_panel_table_secondary">${escapeHtml(order.date)}</span>
-                    </td>
-                    <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.tiffin)}</td>
-                    <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(order.amount).toFixed(2)}</strong></td>
-                    <td class="kp_kitchen_admin_panel_table_cell">
-                      <span class="${statusClass(order.status)}">${escapeHtml(order.status)}</span>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Invoice - ${order.id}</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; padding: 20px; background-color: #fafafa; }
+            .invoice-box { max-width: 800px; margin: auto; padding: 40px; border: 1px solid #eee; box-shadow: 0 4px 12px rgba(0, 0, 0, .05); font-size: 14px; line-height: 22px; background-color: #fff; border-radius: 8px; }
+            .invoice-box table { width: 100%; line-height: inherit; text-align: left; border-collapse: collapse; }
+            .invoice-box table td { padding: 8px; vertical-align: top; }
+            .invoice-box table tr td:nth-child(2) { text-align: right; }
+            .invoice-box table tr.top table td { padding-bottom: 30px; }
+            .invoice-box table tr.top table td.title { font-size: 28px; line-height: 32px; color: #FF6B6B; font-weight: bold; letter-spacing: 0.5px; }
+            .invoice-box table tr.information table td { padding-bottom: 30px; }
+            .invoice-box table tr.heading td { background: #FF6B6B; color: #fff; font-weight: bold; padding: 10px; font-size: 0.9rem; text-transform: uppercase; }
+            .invoice-box table tr.item td { border-bottom: 1px solid #eee; }
+            .invoice-box table tr.total td:nth-child(2) { border-top: 2px solid #FF6B6B; font-weight: bold; font-size: 18px; color: #FF6B6B; padding-top: 15px; }
+            @media print {
+              body { padding: 0; background-color: #fff; }
+              .invoice-box { border: none; box-shadow: none; padding: 0; max-width: 100%; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="invoice-box">
+            <table>
+              <tr class="top">
+                <td colspan="2">
+                  <table>
+                    <tr>
+                      <td class="title">KP'S KITCHEN</td>
+                      <td style="text-align: right; font-size: 0.9rem; color: #777;">
+                        Invoice ID: <strong>${escapeHtml(order.id)}</strong><br>
+                        Invoice Date: ${escapeHtml(order.date)}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <tr class="information">
+                <td colspan="2">
+                  <table>
+                    <tr>
+                      <td style="color: #666; font-size: 0.85rem;">
+                        <strong>KP's Kitchen Pty Ltd.</strong><br>
+                        120 Collins Street<br>
+                        Melbourne, VIC 3000
+                      </td>
+                      <td style="text-align: right; color: #666; font-size: 0.85rem;">
+                        <strong>Bill To:</strong><br>
+                        ${escapeHtml(customer.name)}<br>
+                        ${escapeHtml(customer.phone)}<br>
+                        ${escapeHtml(customer.email)}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <tr class="heading">
+                <td style="text-align: left;">Ordered Service</td>
+                <td style="text-align: right;">Price</td>
+              </tr>
+              <tr class="item">
+                <td style="text-align: left; padding: 12px 10px;">
+                  <strong>${escapeHtml(order.tiffin)}</strong><br>
+                  <span style="font-size: 0.75rem; color: #777;">Daily Subscription Plan Combo</span>
+                </td>
+                <td style="text-align: right; padding: 12px 10px; font-weight: 600;">
+                  $${(Number(order.amount) - (order.raw_addons ? order.raw_addons.reduce((sum, a) => sum + Number(a.price), 0) : 0)).toFixed(2)}
+                </td>
+              </tr>
+              ${addonsHtml}
+              <tr class="total">
+                <td></td>
+                <td style="text-align: right;">Total Amount Due: $${Number(order.amount).toFixed(2)}</td>
+              </tr>
             </table>
           </div>
-          
-          <div style="display: flex; justify-content: flex-end; margin-top: 24px;">
-            <button type="button" class="kp_kitchen_admin_panel_secondary_button" id="closeDetailsModalBtn">Close</button>
-          </div>
-        </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() { window.close(); };
+            }
+          </script>
+        </body>
+        </html>
       `;
 
-      openDetailsModal(`Customer Profile`, html);
-      getElement('closeDetailsModalBtn').addEventListener('click', closeDetailsModal);
+      printWindow.document.open();
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+    }
+
+    function printWeeklyInvoice(inv, orders, customer) {
+      const weekOrders = orders.filter(o => {
+        return o.date >= inv.start_of_week && o.date <= inv.end_of_week;
+      });
+
+      // Fallback if no orders mapped inside the week range
+      if (weekOrders.length === 0) {
+        const singleOrder = orders.find(o => String(o.id) === String(inv.order_id));
+        if (singleOrder) {
+          weekOrders.push(singleOrder);
+        } else {
+          weekOrders.push({
+            id: inv.order_id || 'N/A',
+            date: inv.created_at || 'N/A',
+            tiffin: 'Tiffin Plan Service',
+            addons: 'None',
+            amount: inv.amount,
+            raw_addons: []
+          });
+        }
+      }
+
+      const printWindow = window.open('', '_blank');
+      const totalAmount = weekOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+
+      let ordersHtml = '';
+      weekOrders.forEach((order, index) => {
+        let addonsListHtml = '';
+        if (order.raw_addons && order.raw_addons.length > 0) {
+          addonsListHtml = `
+            <div style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #ddd; font-size: 0.8rem; color: #666;">
+              <strong>Add-ons:</strong> ${order.raw_addons.map(a => `${escapeHtml(a.name)} (x${a.qty || 1}) - $${Number(a.price).toFixed(2)}`).join(', ')}
+            </div>
+          `;
+        }
+
+        ordersHtml += `
+          <tr class="item ${index === weekOrders.length - 1 ? 'last' : ''}">
+            <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: middle;">
+              <strong style="color: #333;">Order #${escapeHtml(order.id)}</strong> <span style="font-size: 0.8rem; color: #888; margin-left: 8px;">(${escapeHtml(order.date)})</span>
+              <div style="font-size: 0.85rem; color: #555; margin-top: 4px;"><strong>Tiffin:</strong> ${escapeHtml(order.tiffin)}</div>
+              ${addonsListHtml}
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; vertical-align: middle; font-weight: 600;">
+              $${Number(order.amount).toFixed(2)}
+            </td>
+          </tr>
+        `;
+      });
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Weekly Invoice - ${inv.id}</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; padding: 20px; background-color: #fafafa; }
+            .invoice-box { max-width: 800px; margin: auto; padding: 40px; border: 1px solid #eee; box-shadow: 0 4px 12px rgba(0, 0, 0, .05); font-size: 14px; line-height: 22px; background-color: #fff; border-radius: 8px; }
+            .invoice-box table { width: 100%; line-height: inherit; text-align: left; border-collapse: collapse; }
+            .invoice-box table tr td:nth-child(2) { text-align: right; }
+            .invoice-box table tr.top table td { padding-bottom: 30px; }
+            .invoice-box table tr.information table td { padding-bottom: 40px; }
+            .invoice-box table tr.heading td { background: #f8f9fa; border-bottom: 2px solid #ddd; font-weight: bold; padding: 12px; font-size: 0.85rem; text-transform: uppercase; color: #555; }
+            .invoice-box table tr.details td { padding-bottom: 20px; }
+            .invoice-box table tr.item td { border-bottom: 1px solid #eee; }
+            .invoice-box table tr.item.last td { border-bottom: none; }
+            .invoice-box table tr.total td:nth-child(2) { border-top: 2px solid #eee; font-weight: bold; font-size: 1.1rem; color: #FF6B6B; padding-top: 15px; }
+            .status-badge { display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; text-transform: uppercase; }
+            .status-paid { background-color: #e8f8f0; color: #2ecc71; }
+            .status-unpaid { background-color: #fde8e8; color: #e74c3c; }
+            .status-pending { background-color: #fef5e7; color: #f39c12; }
+          </style>
+        </head>
+        <body>
+          <div class="invoice-box">
+            <table>
+              <tr class="top">
+                <td colspan="2">
+                  <table>
+                    <tr>
+                      <td style="font-size: 28px; line-height: 35px; font-weight: bold; color: #FF6B6B;">
+                        KP'S KITCHEN
+                      </td>
+                      <td style="text-align: right; font-size: 0.9rem; line-height: 1.5;">
+                        <strong>Invoice ID:</strong> ${escapeHtml(inv.id)}<br>
+                        <strong>Billing Period:</strong> ${escapeHtml(inv.week_range)}<br>
+                        <strong>Due Date:</strong> ${escapeHtml(inv.due_date)}<br>
+                        <strong>Payment Date:</strong> ${escapeHtml(inv.paid_date)}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              
+              <tr class="information">
+                <td colspan="2">
+                  <table>
+                    <tr>
+                      <td style="color: #666; font-size: 0.85rem;">
+                        <strong>KP's Kitchen Ltd.</strong><br>
+                        100 Melbourne Way<br>
+                        Melbourne VIC 3000
+                      </td>
+                      <td style="text-align: right; color: #666; font-size: 0.85rem;">
+                        <strong>Customer Name:</strong> ${escapeHtml(customer.name)}<br>
+                        <strong>Phone:</strong> ${escapeHtml(customer.phone)}<br>
+                        <strong>Email:</strong> ${escapeHtml(customer.email)}<br>
+                        <strong>Address:</strong> ${escapeHtml(customer.address)}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              
+              <tr class="heading">
+                <td style="text-align: left;">Weekly Orders Summary</td>
+                <td style="text-align: right;">Price</td>
+              </tr>
+              
+              ${ordersHtml}
+              
+              <tr class="total">
+                <td style="padding-top: 15px; text-align: left; vertical-align: middle;">
+                  <strong>Payment Status:</strong>
+                  <span class="status-badge status-${inv.status.toLowerCase()}">${escapeHtml(inv.status)}</span>
+                </td>
+                <td style="text-align: right; vertical-align: middle;">
+                  Weekly Total: $${totalAmount.toFixed(2)}
+                </td>
+              </tr>
+            </table>
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() { window.close(); };
+            }
+          <\/script>
+        </body>
+        </html>
+      `;
+
+      printWindow.document.open();
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+    }
+
+    // View Customer Details -> Dynamic Inline Grid
+    const viewCustomerBtn = event.target.closest('.view-customer-details-btn');
+    if (viewCustomerBtn) {
+      const customerId = viewCustomerBtn.dataset.id;
+      
+      const listSec = getElement('customerListSection');
+      const gridSec = getElement('customerDetailedGridSection');
+      const gridContent = getElement('customerDetailsGridContent');
+      
+      if (listSec && gridSec && gridContent) {
+        listSec.style.display = 'none';
+        gridSec.style.display = 'block';
+        gridContent.innerHTML = `
+          <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+            <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(255,107,107,0.2); border-radius: 50%; border-top-color: var(--primary-color); animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
+            <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading customer profile details & billing cycles...</p>
+          </div>
+        `;
+        
+        // Setup Back Button
+        const backBtn = getElement('backToCustomerListBtn');
+        if (backBtn) {
+          backBtn.onclick = () => {
+            gridSec.style.display = 'none';
+            listSec.style.display = 'block';
+          };
+        }
+      }
+      
+      (async () => {
+        try {
+          const response = await apiRequest(`api/customers/${customerId}/details`);
+          if (!response.success) {
+            throw new Error(response.message || 'Failed to load details.');
+          }
+          
+          const customer = response.customer;
+          const addresses = response.addresses;
+          const orders = response.orders;
+          const weeklyBilling = response.weekly_billing;
+          
+          const totalOrdersCount = orders.length;
+          const totalSpentAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+          
+          const html = `
+            <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
+              <!-- Top Profile & Statistics Cards Grid -->
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
+                <!-- Profile Card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">👤 Contact & Profile</h4>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Name: <strong style="color: var(--text-primary);">${escapeHtml(customer.name)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Phone: <strong style="color: var(--text-primary);">${escapeHtml(customer.phone)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Email: <strong style="color: var(--text-primary);">${escapeHtml(customer.email)}</strong></p>
+                </div>
+                
+                <!-- Billing Account Stats Card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column; justify-content: center; gap: 16px;">
+                  <h4 style="margin: 0 0 4px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📊 Account Activity</h4>
+                  <div style="display: flex; justify-content: space-around; text-align: center; padding-top: 10px;">
+                    <div>
+                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 6px;">Total Orders</span>
+                      <strong style="font-size: 1.8rem; color: var(--primary-color); font-family: var(--font-title);">${totalOrdersCount}</strong>
+                    </div>
+                    <div style="border-left: 1px solid var(--panel-border); height: 50px;"></div>
+                    <div>
+                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 6px;">Total Spend</span>
+                      <strong style="font-size: 1.8rem; color: #2ECC71; font-family: var(--font-title);">$${totalSpentAmount.toFixed(2)}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Section 1: Saved Addresses -->
+              <div>
+                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">📍 Saved Delivery Addresses</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 20px;">
+                  ${addresses.map(addr => `
+                    <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                      <span style="position: absolute; top: 14px; right: 14px; font-size: 0.75rem; padding: 3px 10px; border-radius: 20px; background-color: ${addr.type === 'Primary Address' ? 'rgba(46,204,113,0.1)' : 'rgba(52,152,219,0.1)'}; color: ${addr.type === 'Primary Address' ? '#2ECC71' : '#3498DB'}; font-weight: 600;">${addr.type}</span>
+                      <p style="margin: 0 0 8px 0; font-size: 0.9rem; font-weight: 600; padding-right: 120px; color: var(--text-primary);">Postcode: ${escapeHtml(addr.pincode)}</p>
+                      <p style="margin: 0; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">${escapeHtml(addr.address)}</p>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          `;
+          
+          if (gridContent) {
+            gridContent.innerHTML = html;
+          }
+          
+        } catch (err) {
+          if (gridContent) {
+            gridContent.innerHTML = `
+              <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+                <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Profile</p>
+                <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
+              </div>
+            `;
+          }
+        }
+      })();
       return;
     }
 
-    // View Driver Details Modal
+    // View Customer Payment History -> Dynamic Inline Grid
+    const viewCustomerPaymentBtn = event.target.closest('.view-customer-payment-btn');
+    if (viewCustomerPaymentBtn) {
+      const customerId = viewCustomerPaymentBtn.dataset.id;
+      
+      const listSec = getElement('customerListSection');
+      const paymentSec = getElement('customerPaymentGridSection');
+      const paymentContent = getElement('customerPaymentGridContent');
+      
+      if (listSec && paymentSec && paymentContent) {
+        listSec.style.display = 'none';
+        if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
+        paymentSec.style.display = 'block';
+        paymentContent.innerHTML = `
+          <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+            <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(46,204,113,0.2); border-radius: 50%; border-top-color: #2ECC71; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
+            <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading customer payment history & statements...</p>
+          </div>
+        `;
+        
+        // Setup Back Button
+        const backBtn = getElement('backToCustomerListFromPaymentBtn');
+        if (backBtn) {
+          backBtn.onclick = () => {
+            paymentSec.style.display = 'none';
+            listSec.style.display = 'block';
+          };
+        }
+      }
+      
+      (async () => {
+        try {
+          const response = await apiRequest(`api/customers/${customerId}/details`);
+          if (!response.success) {
+            throw new Error(response.message || 'Failed to load details.');
+          }
+          
+          const customer = response.customer;
+          const orders = response.orders;
+          const weeklyBilling = response.weekly_billing;
+          
+          const totalOrdersCount = orders.length;
+          const totalSpentAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+          
+          const html = `
+            <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
+              <!-- Section 1: Weekly Billing & Payment History -->
+              <div>
+                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">💳 Weekly Billing & Statements (Payments on Weekly Basis)</h4>
+                <div class="kp_kitchen_admin_panel_table_wrap" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; overflow-x: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
+                    <thead class="kp_kitchen_admin_panel_table_head">
+                      <tr class="kp_kitchen_admin_panel_table_row">
+                        <th class="kp_kitchen_admin_panel_table_heading">Billing Period (Weekly Cycle)</th>
+                        <th class="kp_kitchen_admin_table_heading">Orders Placed</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Total Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Billing Status</th>
+                      </tr>
+                    </thead>
+                    <tbody class="kp_kitchen_admin_panel_table_body">
+                      ${weeklyBilling.length === 0 ? `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td colspan="4" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No weekly billing records found.</td>
+                        </tr>
+                      ` : weeklyBilling.map(week => `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td class="kp_kitchen_admin_panel_table_cell">📅 <strong>${escapeHtml(week.week_range)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell">${week.orders_count} delivery orders</td>
+                          <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(week.amount).toFixed(2)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${week.status === 'Paid' ? 'paid' : 'unpaid'}">${week.status}</span>
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Section 2: Previous Orders History & Invoice Downloads -->
+              <div>
+                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">📦 Delivery & Order History</h4>
+                <div class="kp_kitchen_admin_panel_table_wrap" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; overflow-x: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
+                    <thead class="kp_kitchen_admin_panel_table_head">
+                      <tr class="kp_kitchen_admin_panel_table_row">
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 20%;">Order Info</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 25%;">Tiffin Plan</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 25%;">Add-ons ordered</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%;">Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%; text-align: right;">Invoices</th>
+                      </tr>
+                    </thead>
+                    <tbody class="kp_kitchen_admin_panel_table_body">
+                      ${orders.length === 0 ? `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td colspan="5" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No past orders found.</td>
+                        </tr>
+                      ` : orders.map((order, idx) => `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            <strong class="kp_kitchen_admin_panel_table_primary">${escapeHtml(order.id)}</strong>
+                            <span class="kp_kitchen_admin_panel_table_secondary">${escapeHtml(order.date)}</span>
+                          </td>
+                          <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.tiffin)}</td>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(order.addons)}</td>
+                          <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(order.amount).toFixed(2)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
+                            <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view print-invoice-btn" data-idx="${idx}" style="padding: 4px 10px; font-size: 0.75rem;">🖨️ Print Receipt</button>
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          `;
+          
+          if (paymentContent) {
+            paymentContent.innerHTML = html;
+            
+            document.querySelectorAll('#customerPaymentGridSection .print-invoice-btn').forEach(btn => {
+              btn.addEventListener('click', e => {
+                const idx = parseInt(e.target.dataset.idx);
+                const selectedOrder = orders[idx];
+                printOrderInvoice(selectedOrder, customer);
+              });
+            });
+          }
+          
+        } catch (err) {
+          if (paymentContent) {
+            paymentContent.innerHTML = `
+              <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+                <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Profile</p>
+                <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
+              </div>
+            `;
+          }
+        }
+      })();
+      return;
+    }
+
+    // View Customer Invoices -> Dynamic Inline Grid
+    const viewCustomerInvoicesBtn = event.target.closest('.view-customer-invoices-btn');
+    if (viewCustomerInvoicesBtn) {
+      const customerId = viewCustomerInvoicesBtn.dataset.id;
+      
+      const listSec = getElement('customerListSection');
+      const invoicesSec = getElement('customerInvoicesGridSection');
+      const invoicesContent = getElement('customerInvoicesGridContent');
+      
+      if (listSec && invoicesSec && invoicesContent) {
+        listSec.style.display = 'none';
+        if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
+        if (getElement('customerPaymentGridSection')) getElement('customerPaymentGridSection').style.display = 'none';
+        invoicesSec.style.display = 'block';
+        invoicesContent.innerHTML = `
+          <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+            <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(230,126,34,0.2); border-radius: 50%; border-top-color: #E67E22; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
+            <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading customer invoice records...</p>
+          </div>
+        `;
+        
+        // Setup Back Button
+        const backBtn = getElement('backToCustomerListFromInvoicesBtn');
+        if (backBtn) {
+          backBtn.onclick = () => {
+            invoicesSec.style.display = 'none';
+            listSec.style.display = 'block';
+          };
+        }
+      }
+      
+      (async () => {
+        try {
+          const response = await apiRequest(`api/customers/${customerId}/details`);
+          if (!response.success) {
+            throw new Error(response.message || 'Failed to load details.');
+          }
+          
+          const customer = response.customer;
+          const orders = response.orders;
+          const weeklyBilling = response.weekly_billing || [];
+          
+          const html = `
+            <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
+              <div>
+                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">🧾 Customer Weekly Invoices & Statements</h4>
+                <div class="kp_kitchen_admin_panel_table_wrap" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; overflow-x: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
+                    <thead class="kp_kitchen_admin_panel_table_head">
+                      <tr class="kp_kitchen_admin_panel_table_row">
+                        <th class="kp_kitchen_admin_panel_table_heading">Billing Cycle</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Orders Placed</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Total Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Billing Status</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="text-align: right;">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody class="kp_kitchen_admin_panel_table_body">
+                      ${weeklyBilling.length === 0 ? `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td colspan="5" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No billing cycles found for this week range.</td>
+                        </tr>
+                      ` : weeklyBilling.map((cycle, idx) => `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td class="kp_kitchen_admin_panel_table_cell">📅 <strong>${escapeHtml(cycle.week_range)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell"><strong>${cycle.orders_count} times</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(cycle.amount).toFixed(2)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${cycle.status.toLowerCase()}">${escapeHtml(cycle.status)}</span>
+                          </td>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
+                            <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view invoice-print-btn" 
+                              data-idx="${idx}" style="padding: 4px 10px; font-size: 0.75rem; background-color: #3498db; color: white; border-color: #2980b9;">
+                              🖨️ Print PDF
+                            </button>
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          `;
+          
+          if (invoicesContent) {
+            invoicesContent.innerHTML = html;
+            
+            // 3. Print Action
+            document.querySelectorAll('#customerInvoicesGridSection .invoice-print-btn').forEach(btn => {
+              btn.addEventListener('click', e => {
+                const idx = parseInt(e.target.dataset.idx);
+                const cycle = weeklyBilling[idx];
+                
+                // Construct a mock invoice object containing week range, start_of_week, end_of_week, status
+                const inv = {
+                  id: 'INV-' + cycle.start_date.replace(/-/g, '') + '-' + customer.id,
+                  week_range: cycle.week_range,
+                  start_of_week: cycle.start_date,
+                  end_of_week: cycle.end_date,
+                  due_date: cycle.end_date,
+                  paid_date: cycle.status === 'Paid' ? cycle.end_date : 'N/A',
+                  status: cycle.status,
+                  amount: cycle.amount
+                };
+                
+                printWeeklyInvoice(inv, orders, customer);
+              });
+            });
+          }
+          
+        } catch (err) {
+          if (invoicesContent) {
+            invoicesContent.innerHTML = `
+              <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+                <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Invoices</p>
+                <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
+              </div>
+            `;
+          }
+        }
+      })();
+      return;
+    }
+
+    // View Driver Details -> Dynamic Inline Grid
     const viewDriverBtn = event.target.closest('.view-driver-details-btn');
     if (viewDriverBtn) {
-      const name = viewDriverBtn.dataset.name;
-      const phone = viewDriverBtn.dataset.phone;
-      const email = viewDriverBtn.dataset.email;
-      const address = viewDriverBtn.dataset.address;
-      const licenseNo = viewDriverBtn.dataset.license_no;
-      const licenseExpiry = viewDriverBtn.dataset.license_expiry;
-      const vehicleReg = viewDriverBtn.dataset.vehicle_reg_no;
-      const assignedZip = viewDriverBtn.dataset.assigned_zip;
-      const status = viewDriverBtn.dataset.status;
-      const licenseFront = viewDriverBtn.dataset.license_copy_front;
-      const licenseBack = viewDriverBtn.dataset.license_copy_back;
-      const activeShipments = viewDriverBtn.dataset.active_shipments;
-      const totalOrders = viewDriverBtn.dataset.total_orders;
-      const recentOrders = JSON.parse(viewDriverBtn.dataset.orders || '[]');
+      const driverId = viewDriverBtn.dataset.id;
 
-      const frontImgHtml = licenseFront 
-        ? `<img src="${getBaseUrl()}/${licenseFront}" style="width:100%; height:120px; object-fit:cover; border-radius:8px;" alt="Front">`
-        : `<div style="height:120px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document</div>`;
+      const listSec = getElement('driverListSection');
+      const detailsSec = getElement('driverDetailsSection');
+      const detailsContent = getElement('driverDetailsContent');
 
-      const backImgHtml = licenseBack 
-        ? `<img src="${getBaseUrl()}/${licenseBack}" style="width:100%; height:120px; object-fit:cover; border-radius:8px;" alt="Back">`
-        : `<div style="height:120px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document</div>`;
+      if (listSec && detailsSec && detailsContent) {
+        listSec.style.display = 'none';
+        if (getElement('driverEditSection')) getElement('driverEditSection').style.display = 'none';
+        if (getElement('driverHistorySection')) getElement('driverHistorySection').style.display = 'none';
+        detailsSec.style.display = 'block';
+        detailsContent.innerHTML = `
+          <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+            <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(52, 152, 219, 0.2); border-radius: 50%; border-top-color: #3498DB; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
+            <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading driver profile details...</p>
+          </div>
+        `;
 
-      const html = `
-        <div style="font-family: var(--font-family); color: var(--text-primary);">
-          <!-- Top Grid (Contact, Documents, Performance) -->
-          <div style="display: grid; grid-template-columns: 1.2fr 1.2fr 1fr; gap: 20px; margin-bottom: 24px;">
-            
-            <!-- Contact info -->
-            <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px;">
-              <h4 style="margin: 0 0 12px 0; color: var(--primary-color); font-size: 0.95rem;">Contact & Profile</h4>
-              <p style="margin: 6px 0; font-size: 0.85rem;">👤 Name: <strong>${escapeHtml(name)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem;">📞 Phone: <strong>${escapeHtml(phone)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem;">✉️ Email: <strong>${escapeHtml(email)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem;">📮 Zip: <strong>${escapeHtml(assignedZip)}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem; line-height: 1.4;">📍 Address: ${escapeHtml(address || 'No address registered')}</p>
-            </div>
-            
-            <!-- Vehicle & Documents -->
-            <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px;">
-              <h4 style="margin: 0 0 12px 0; color: var(--primary-color); font-size: 0.95rem;">Documentation</h4>
-              <p style="margin: 6px 0; font-size: 0.85rem;">🚗 Vehicle Reg: <strong>${escapeHtml(vehicleReg || 'N/A')}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem;">🛡️ License: <strong>${escapeHtml(licenseNo || 'N/A')}</strong></p>
-              <p style="margin: 6px 0; font-size: 0.85rem; margin-bottom: 12px;">📅 Expiry: <strong>${escapeHtml(licenseExpiry || 'N/A')}</strong></p>
-              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                <div>
-                  <span style="font-size:0.7rem; color:var(--text-secondary); display:block; text-align:center; margin-bottom:4px;">License Front</span>
-                  ${frontImgHtml}
+        // Bind Back Button
+        const backBtn = getElement('backToDriverListFromDetailsBtn');
+        if (backBtn) {
+          backBtn.onclick = () => {
+            detailsSec.style.display = 'none';
+            listSec.style.display = 'block';
+          };
+        }
+      }
+
+      (async () => {
+        try {
+          const response = await apiRequest(`api/drivers/${driverId}/details`);
+          if (!response.success) {
+            throw new Error(response.message || 'Failed to load details.');
+          }
+
+          const driver = response.driver;
+          const activeShipments = response.active_shipments;
+          const totalOrders = response.total_orders;
+
+          const frontImgHtml = driver.license_copy_front 
+            ? `<img src="${getBaseUrl()}/${driver.license_copy_front}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Front">`
+            : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
+
+          const backImgHtml = driver.license_copy_back 
+            ? `<img src="${getBaseUrl()}/${driver.license_copy_back}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Back">`
+            : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
+
+          const html = `
+            <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
+              <!-- Top Profiles & Performance stats Grid -->
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
+                <!-- Profile card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">👤 Contact & Profile</h4>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Name: <strong style="color: var(--text-primary);">${escapeHtml(driver.name)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Phone: <strong style="color: var(--text-primary);">${escapeHtml(driver.phone)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Email: <strong style="color: var(--text-primary);">${escapeHtml(driver.email || 'No email registered')}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Address: <span style="color: var(--text-secondary);">${escapeHtml(driver.address || 'No address registered')}</span></p>
                 </div>
-                <div>
-                  <span style="font-size:0.7rem; color:var(--text-secondary); display:block; text-align:center; margin-bottom:4px;">License Back</span>
-                  ${backImgHtml}
+
+                <!-- Documentation / Vehicle Info -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">🛡️ License & Vehicle Details</h4>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Vehicle Registration: <strong style="color: var(--text-primary);">${escapeHtml(driver.vehicle_reg_no || 'N/A')}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">License Number: <strong style="color: var(--text-primary);">${escapeHtml(driver.license_no || 'N/A')}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">License Expiry: <strong style="color: var(--text-primary);">${escapeHtml(driver.license_expiry || 'N/A')}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Assigned Area Postcode: <strong style="color: var(--primary-color);">${escapeHtml(driver.assigned_zip || 'N/A')}</strong></p>
+                </div>
+
+                <!-- Stats & Performance Card -->
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column; justify-content: center; gap: 16px; min-height: 200px;">
+                  <h4 style="margin: 0 0 4px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📊 Activity Stats</h4>
+                  <div style="display: flex; justify-content: space-around; text-align: center; padding-top: 8px;">
+                    <div>
+                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 6px;">Active Deliveries</span>
+                      <strong style="font-size: 1.8rem; color: #3498DB; font-family: var(--font-title);">${activeShipments}</strong>
+                    </div>
+                    <div style="border-left: 1px solid var(--panel-border); height: 50px;"></div>
+                    <div>
+                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 6px;">Assigned Orders</span>
+                      <strong style="font-size: 1.8rem; color: var(--primary-color); font-family: var(--font-title);">${totalOrders}</strong>
+                    </div>
+                  </div>
+                  <div style="text-align: center; padding-top: 8px;">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary); margin-right: 8px;">Status:</span>
+                    <span style="display:inline-block; font-size: 0.8rem; font-weight: 700; padding: 4px 12px; border-radius: 20px; ${driver.status === 'Active' ? 'background-color:rgba(46,204,113,0.1); color:#2ECC71;' : 'background-color:rgba(231,76,60,0.1); color:#E74C3C;'}">${driver.status}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Documents previews section -->
+              <div>
+                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">📁 Uploaded Identity Documents</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+                  <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 10px; font-weight: 600; text-align: center;">License Copy (Front)</span>
+                    ${frontImgHtml}
+                  </div>
+                  <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 10px; font-weight: 600; text-align: center;">License Copy (Back)</span>
+                    ${backImgHtml}
+                  </div>
                 </div>
               </div>
             </div>
-            
-            <!-- Stats -->
-            <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; justify-content: center; gap: 16px;">
-              <div>
-                <span style="font-size: 0.8rem; color: var(--text-secondary); display: block;">Active Shipments</span>
-                <strong style="font-size: 1.8rem; color: #3498DB; font-family: var(--font-title);">${activeShipments}</strong>
+          `;
+
+          if (detailsContent) {
+            detailsContent.innerHTML = html;
+          }
+
+        } catch (err) {
+          if (detailsContent) {
+            detailsContent.innerHTML = `
+              <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+                <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Profile</p>
+                <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
+            `;
+          }
+        }
+      })();
+      return;
+    }
+
+    // View Driver History -> Dynamic Inline Grid
+    const viewDriverHistoryBtn = event.target.closest('.view-driver-history-btn');
+    if (viewDriverHistoryBtn) {
+      const driverId = viewDriverHistoryBtn.dataset.id;
+
+      const listSec = getElement('driverListSection');
+      const historySec = getElement('driverHistorySection');
+      const historyContent = getElement('driverHistoryContent');
+
+      if (listSec && historySec && historyContent) {
+        listSec.style.display = 'none';
+        if (getElement('driverEditSection')) getElement('driverEditSection').style.display = 'none';
+        if (getElement('driverDetailsSection')) getElement('driverDetailsSection').style.display = 'none';
+        historySec.style.display = 'block';
+        historyContent.innerHTML = `
+          <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+            <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(230,126,34,0.2); border-radius: 50%; border-top-color: #E67E22; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
+            <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading delivery history...</p>
+          </div>
+        `;
+
+        // Bind Back Button
+        const backBtn = getElement('backToDriverListFromHistoryBtn');
+        if (backBtn) {
+          backBtn.onclick = () => {
+            historySec.style.display = 'none';
+            listSec.style.display = 'block';
+          };
+        }
+      }
+
+      (async () => {
+        try {
+          const response = await apiRequest(`api/drivers/${driverId}/details`);
+          if (!response.success) {
+            throw new Error(response.message || 'Failed to load details.');
+          }
+
+          const orders = response.orders || [];
+
+          const html = `
+            <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
+              <!-- Deliveries Table Grid -->
               <div>
-                <span style="font-size: 0.8rem; color: var(--text-secondary); display: block;">Total Assigned Orders</span>
-                <strong style="font-size: 1.8rem; color: var(--primary-color); font-family: var(--font-title);">${totalOrders}</strong>
-              </div>
-              <div>
-                <span style="font-size: 0.8rem; color: var(--text-secondary); display: block;">Status</span>
-                <span style="display:inline-block; font-size: 0.75rem; font-weight: 700; padding: 4px 8px; border-radius: 6px; ${status === 'Active' ? 'background-color:rgba(46,204,113,0.1); color:#2ECC71;' : 'background-color:rgba(231,76,60,0.1); color:#E74C3C;'}">${status}</span>
+                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">🚚 Assigned Deliveries & Full History</h4>
+                <div class="kp_kitchen_admin_panel_table_wrap" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; overflow-x: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                  <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
+                    <thead class="kp_kitchen_admin_panel_table_head">
+                      <tr class="kp_kitchen_admin_panel_table_row">
+                        <th class="kp_kitchen_admin_panel_table_heading">Order ID & Date</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Customer</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Tiffin Plan</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Dropped Image</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Delivery Status</th>
+                      </tr>
+                    </thead>
+                    <tbody class="kp_kitchen_admin_panel_table_body">
+                      ${orders.length === 0 ? `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td colspan="5" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No deliveries assigned to this driver yet.</td>
+                        </tr>
+                      ` : orders.map(order => `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            <strong class="kp_kitchen_admin_panel_table_primary">${escapeHtml(order.id)}</strong>
+                            <span class="kp_kitchen_admin_panel_table_secondary">${escapeHtml(order.date)}</span>
+                          </td>
+                          <td class="kp_kitchen_admin_panel_table_cell"><strong>${escapeHtml(order.customer)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.tiffin)}</td>
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            ${order.proof_of_delivery_photo ? `
+                              <a href="${getBaseUrl()}/${order.proof_of_delivery_photo}" target="_blank">
+                                <img src="${getBaseUrl()}/${order.proof_of_delivery_photo}" style="max-height: 40px; border-radius: 4px; border: 1px solid var(--panel-border);">
+                              </a>
+                            ` : `<span style="font-size: 0.8rem; color: var(--text-secondary); opacity: 0.7;">No Photo</span>`}
+                          </td>
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            <span class="${statusClass(order.status)}">${escapeHtml(order.status)}</span>
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
-          
-          <!-- Recent Orders Table -->
-          <h4 style="margin: 0 0 12px 0; color: var(--primary-color); font-size: 0.95rem;">Recent Deliveries (Last 5)</h4>
-          <div class="kp_kitchen_admin_panel_table_wrap" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; overflow-x: auto;">
-            <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
-              <thead class="kp_kitchen_admin_panel_table_head">
-                <tr class="kp_kitchen_admin_panel_table_row">
-                  <th class="kp_kitchen_admin_panel_table_heading">Order ID</th>
-                  <th class="kp_kitchen_admin_panel_table_heading">Customer</th>
-                  <th class="kp_kitchen_admin_panel_table_heading">Tiffin Plan</th>
-                  <th class="kp_kitchen_admin_panel_table_heading">Status</th>
-                </tr>
-              </thead>
-              <tbody class="kp_kitchen_admin_panel_table_body">
-                ${recentOrders.length === 0 ? `
-                  <tr class="kp_kitchen_admin_panel_table_row">
-                    <td colspan="4" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6;">No orders assigned to this driver.</td>
-                  </tr>
-                ` : recentOrders.map(order => `
-                  <tr class="kp_kitchen_admin_panel_table_row">
-                    <td class="kp_kitchen_admin_panel_table_cell">
-                      <strong class="kp_kitchen_admin_panel_table_primary">${escapeHtml(order.id)}</strong>
-                      <span class="kp_kitchen_admin_panel_table_secondary">${escapeHtml(order.date)}</span>
-                    </td>
-                    <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.customer)}</td>
-                    <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.tiffin)}</td>
-                    <td class="kp_kitchen_admin_panel_table_cell">
-                      <span class="${statusClass(order.status)}">${escapeHtml(order.status)}</span>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-          
-          <div style="display: flex; justify-content: flex-end; margin-top: 24px;">
-            <button type="button" class="kp_kitchen_admin_panel_secondary_button" id="closeDriverDetailsModalBtn">Close</button>
-          </div>
-        </div>
-      `;
+          `;
 
-      openDetailsModal(`Driver Profile`, html);
-      getElement('closeDriverDetailsModalBtn').addEventListener('click', closeDetailsModal);
+          if (historyContent) {
+            historyContent.innerHTML = html;
+          }
+
+        } catch (err) {
+          if (historyContent) {
+            historyContent.innerHTML = `
+              <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
+                <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading History</p>
+                <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
+              </div>
+            `;
+          }
+        }
+      })();
       return;
     }
 
@@ -1116,6 +1849,57 @@
         window.location.href = url.toString();
       }
     });
+  }
+
+  // --- Client-side Customer Search ---
+  const customerSearchInput = getElement('customerSearchInput');
+  const clearSearchBtn = getElement('clearCustomerSearchBtn');
+  
+  if (customerSearchInput) {
+    customerSearchInput.addEventListener('input', () => {
+      const filterText = customerSearchInput.value.toLowerCase().trim();
+      const rows = document.querySelectorAll('#customersTableBody .kp_kitchen_admin_panel_table_row');
+      
+      let visibleCount = 0;
+      rows.forEach(row => {
+        const nameCell = row.cells[0]?.textContent.toLowerCase() || '';
+        const phoneCell = row.cells[1]?.textContent.toLowerCase() || '';
+        const emailCell = row.cells[2]?.textContent.toLowerCase() || '';
+        
+        if (nameCell.includes(filterText) || phoneCell.includes(filterText) || emailCell.includes(filterText)) {
+          row.style.display = '';
+          visibleCount++;
+        } else {
+          row.style.display = 'none';
+        }
+      });
+      
+      if (clearSearchBtn) {
+        clearSearchBtn.style.display = filterText.length > 0 ? 'inline-flex' : 'none';
+      }
+      
+      let noResultsRow = document.getElementById('customerNoResultsRow');
+      if (visibleCount === 0 && rows.length > 0) {
+        if (!noResultsRow) {
+          noResultsRow = document.createElement('tr');
+          noResultsRow.id = 'customerNoResultsRow';
+          noResultsRow.innerHTML = `<td colspan="6" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No customers found matching "${escapeHtml(customerSearchInput.value)}".</td>`;
+          document.getElementById('customersTableBody').appendChild(noResultsRow);
+        } else {
+          noResultsRow.style.display = '';
+          noResultsRow.querySelector('td').textContent = `No customers found matching "${customerSearchInput.value}".`;
+        }
+      } else if (noResultsRow) {
+        noResultsRow.style.display = 'none';
+      }
+    });
+    
+    if (clearSearchBtn) {
+      clearSearchBtn.addEventListener('click', () => {
+        customerSearchInput.value = '';
+        customerSearchInput.dispatchEvent(new Event('input'));
+      });
+    }
   }
 
   // --- Initialise ---

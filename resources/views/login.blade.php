@@ -186,20 +186,7 @@
                 </button>
 
 
-                <!-- Register -->
-                @if (Route::has('register'))
 
-                    <p class="kp_kitchen_admin_panel_auth_switch">
-
-                        New admin?
-
-                        <a class="kp_kitchen_admin_panel_auth_link" href="{{ route('register') }}">
-                            Create an account
-                        </a>
-
-                    </p>
-
-                @endif
 
             </form>
 

@@ -1390,6 +1390,24 @@ class AuthController extends Controller
         // Handle proof of delivery photo upload
         if ($request->hasFile('proof_photo')) {
             $file = $request->file('proof_photo');
+            $uploadedHash = md5_file($file->getRealPath());
+
+            // Check against existing orders' pod photos
+            $existingOrders = \App\Models\Order::whereNotNull('proof_of_delivery_photo')->get();
+            foreach ($existingOrders as $existingOrder) {
+                if ($existingOrder->id !== $order->id) {
+                    $existingFilePath = public_path($existingOrder->proof_of_delivery_photo);
+                    if (file_exists($existingFilePath)) {
+                        if (md5_file($existingFilePath) === $uploadedHash) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Please take a new photo. You cannot upload the same image for multiple deliveries.'
+                            ], 422);
+                        }
+                    }
+                }
+            }
+
             $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $file->getClientOriginalExtension();
             $file->move(public_path('uploads/pod'), $fileName);
             $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;

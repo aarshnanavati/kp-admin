@@ -60,7 +60,8 @@
                     data-customer_id="{{ $invoice->customer_id }}"
                     data-amount="{{ $invoice->amount }}"
                     data-due_date="{{ $invoice->due_date }}"
-                    data-status="{{ $invoice->status }}">
+                    data-status="{{ $invoice->status }}"
+                    data-collected_photo="{{ $invoice->collected_photo ? asset($invoice->collected_photo) : '' }}">
                     Edit
                   </button>
                   <form method="POST" action="{{ route('invoices.delete', $invoice->id) }}" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this invoice?');">

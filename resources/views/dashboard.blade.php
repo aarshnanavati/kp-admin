@@ -7,20 +7,6 @@
 
 @section('content')
 <section class="kp_kitchen_admin_panel_page kp_kitchen_admin_panel_page_active" id="dashboardPage">
-  <!-- Welcome Banner -->
-  <div class="kp_kitchen_admin_panel_welcome_banner">
-    <div class="kp_kitchen_admin_panel_welcome_content">
-      <span class="kp_kitchen_admin_panel_welcome_tag">Today’s overview</span>
-      <h2 class="kp_kitchen_admin_panel_welcome_title">
-        Keep your kitchen and deliveries running smoothly.
-      </h2>
-      <p class="kp_kitchen_admin_panel_welcome_text">
-        Review daily orders, dispatch drivers, track analytics, and manage customer tiffin plans.
-      </p>
-    </div>
-    <a class="kp_kitchen_admin_panel_secondary_button" href="{{ route('orders') }}">Dispatch Center</a>
-  </div>
-
   <!-- Key Metrics Stats Grid -->
   <div class="kp_kitchen_admin_panel_stats_grid">
     <article class="kp_kitchen_admin_panel_stat_card">
@@ -30,7 +16,7 @@
       <div class="kp_kitchen_admin_panel_stat_content">
         <span class="kp_kitchen_admin_panel_stat_label">Total Orders</span>
         <strong class="kp_kitchen_admin_panel_stat_value" id="statOrders">{{ $ordersCount }}</strong>
-        <span class="kp_kitchen_admin_panel_stat_hint">All-time bookings</span>
+        <span class="kp_kitchen_admin_panel_stat_hint">Today's bookings</span>
       </div>
     </article>
     <article class="kp_kitchen_admin_panel_stat_card">
@@ -40,7 +26,7 @@
       <div class="kp_kitchen_admin_panel_stat_content">
         <span class="kp_kitchen_admin_panel_stat_label">Active Drivers</span>
         <strong class="kp_kitchen_admin_panel_stat_value" id="statDrivers">{{ $driversCount }}</strong>
-        <span class="kp_kitchen_admin_panel_stat_hint">Onduty in postcodes</span>
+        <span class="kp_kitchen_admin_panel_stat_hint">Assigned today</span>
       </div>
     </article>
     <article class="kp_kitchen_admin_panel_stat_card">
@@ -60,7 +46,7 @@
       <div class="kp_kitchen_admin_panel_stat_content">
         <span class="kp_kitchen_admin_panel_stat_label">Revenue</span>
         <strong class="kp_kitchen_admin_panel_stat_value" id="statRevenue">${{ number_format($totalRevenue, 2) }}</strong>
-        <span class="kp_kitchen_admin_panel_stat_hint">Total AUD collected</span>
+        <span class="kp_kitchen_admin_panel_stat_hint">Collected today</span>
       </div>
     </article>
   </div>
@@ -81,8 +67,8 @@
     <article class="kp_kitchen_admin_panel_card">
       <div class="kp_kitchen_admin_panel_card_header">
         <div>
-          <h3 class="kp_kitchen_admin_panel_card_title">Top Ordered Items (Past 7 Days)</h3>
-          <p class="kp_kitchen_admin_panel_card_subtitle">Most frequently purchased items and plan bundles</p>
+          <h3 class="kp_kitchen_admin_panel_card_title">Top Ordered Postcodes</h3>
+          <p class="kp_kitchen_admin_panel_card_subtitle">Most popular delivery areas in the past 7 days</p>
         </div>
       </div>
       <div class="kp_kitchen_admin_panel_chart_container">
@@ -91,76 +77,6 @@
     </article>
   </div>
 
-  <!-- Dashboard Secondary Data Row -->
-  <div class="kp_kitchen_admin_panel_dashboard_grid">
-    <!-- Recent Orders Card -->
-    <article class="kp_kitchen_admin_panel_card">
-      <div class="kp_kitchen_admin_panel_card_header">
-        <div>
-          <h3 class="kp_kitchen_admin_panel_card_title">Recent Orders</h3>
-          <p class="kp_kitchen_admin_panel_card_subtitle">Latest orders received from customer portals</p>
-        </div>
-        <a class="kp_kitchen_admin_panel_text_button" href="{{ route('orders') }}">View all</a>
-      </div>
-      <div class="kp_kitchen_admin_panel_table_wrap">
-        <table class="kp_kitchen_admin_panel_table">
-          <thead class="kp_kitchen_admin_panel_table_head">
-            <tr class="kp_kitchen_admin_panel_table_row">
-              <th class="kp_kitchen_admin_panel_table_heading">Order</th>
-              <th class="kp_kitchen_admin_panel_table_heading">Customer</th>
-              <th class="kp_kitchen_admin_panel_table_heading">Amount</th>
-              <th class="kp_kitchen_admin_panel_table_heading">Status</th>
-            </tr>
-          </thead>
-          <tbody class="kp_kitchen_admin_panel_table_body" id="dashboardOrdersBody">
-            @forelse ($recentOrders as $order)
-              <tr class="kp_kitchen_admin_panel_table_row">
-                <td class="kp_kitchen_admin_panel_table_cell">
-                  <strong class="kp_kitchen_admin_panel_table_primary">{{ $order->id }}</strong>
-                  <span class="kp_kitchen_admin_panel_table_secondary">{{ $order->date }}</span>
-                </td>
-                <td class="kp_kitchen_admin_panel_table_cell">
-                  <strong>{{ $order->customer }}</strong>
-                </td>
-                <td class="kp_kitchen_admin_panel_table_cell"><strong>${{ number_format($order->amount, 2) }}</strong></td>
-                <td class="kp_kitchen_admin_panel_table_cell">
-                  <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_{{ strtolower(str_replace(' ', '_', $order->status)) }}">{{ $order->status }}</span>
-                </td>
-              </tr>
-            @empty
-              <tr>
-                <td colspan="4" class="kp_kitchen_admin_panel_table_cell">
-                  <div class="kp_kitchen_admin_panel_empty_state">No orders received yet.</div>
-                </td>
-              </tr>
-            @endforelse
-          </tbody>
-        </table>
-      </div>
-    </article>
 
-    <!-- Delivery Summary Progress list -->
-    <article class="kp_kitchen_admin_panel_card">
-      <div class="kp_kitchen_admin_panel_card_header">
-        <div>
-          <h3 class="kp_kitchen_admin_panel_card_title">Delivery Summary</h3>
-          <p class="kp_kitchen_admin_panel_card_subtitle">Current active order fulfillment progress</p>
-        </div>
-      </div>
-      <div class="kp_kitchen_admin_panel_progress_list" id="deliverySummary">
-        @foreach ($deliverySummary as $item)
-          <div class="kp_kitchen_admin_panel_progress_item">
-            <div class="kp_kitchen_admin_panel_progress_header">
-              <span class="kp_kitchen_admin_panel_progress_label">{{ $item['status'] }}</span>
-              <strong class="kp_kitchen_admin_panel_progress_value">{{ $item['count'] }}</strong>
-            </div>
-            <div class="kp_kitchen_admin_panel_progress_track">
-              <span class="kp_kitchen_admin_panel_progress_fill" style="width: {{ $item['percent'] }}%"></span>
-            </div>
-          </div>
-        @endforeach
-      </div>
-    </article>
-  </div>
 </section>
 @endsection
