@@ -20,7 +20,26 @@ class Customer extends Authenticatable
         'api_token',
         'user_type',
         'login_count',
+        'profile_image',
+        'status',
     ];
+
+    protected $appends = [
+        'first_name',
+        'last_name',
+    ];
+
+    public function getFirstNameAttribute()
+    {
+        $parts = explode(' ', $this->name, 2);
+        return $parts[0] ?? '';
+    }
+
+    public function getLastNameAttribute()
+    {
+        $parts = explode(' ', $this->name, 2);
+        return $parts[1] ?? '';
+    }
 
     protected $hidden = [
         'password',

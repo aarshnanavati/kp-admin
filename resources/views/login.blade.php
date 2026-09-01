@@ -28,27 +28,10 @@
     <main class="kp_kitchen_admin_panel_auth_shell">
 
         <!-- Left / Visual Section -->
-        <section class="kp_kitchen_admin_panel_auth_visual">
+        <section class="kp_kitchen_admin_panel_auth_visual" style="justify-content: center; align-items: center;">
 
-            <div class="kp_kitchen_admin_panel_auth_brand">
-                KP Kitchen
-            </div>
-
-            <div class="kp_kitchen_admin_panel_auth_visual_content">
-
-                <span class="kp_kitchen_admin_panel_auth_badge">
-                    Tiffin Management System
-                </span>
-
-                <h1 class="kp_kitchen_admin_panel_auth_title">
-                    Manage every meal, driver and delivery from one place.
-                </h1>
-
-                <p class="kp_kitchen_admin_panel_auth_text">
-                    A clean and responsive admin panel for your tiffin ordering
-                    and delivery operation.
-                </p>
-
+            <div class="kp_kitchen_admin_panel_auth_brand" style="text-align: center; z-index: 1;">
+                <img src="{{ asset('public/assets/images/logo.png') }}" alt="KP's Kitchen Logo" style="max-width: 280px; height: auto;">
             </div>
 
         </section>
@@ -65,18 +48,18 @@
 
                 <!-- Form Heading -->
                 <div class="kp_kitchen_admin_panel_auth_form_heading">
-
+{{-- 
                     <span class="kp_kitchen_admin_panel_auth_eyebrow">
                         Welcome back
-                    </span>
+                    </span> --}}
 
                     <h2 class="kp_kitchen_admin_panel_auth_form_title">
-                        Admin Login
+                        Login
                     </h2>
-
+                    {{--
                     <p class="kp_kitchen_admin_panel_auth_form_text">
                         Enter your credentials to access the dashboard.
-                    </p>
+                    </p> --}}
 
                 </div>
 

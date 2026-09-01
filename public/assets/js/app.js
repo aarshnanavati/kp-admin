@@ -1,251 +1,251 @@
 (function () {
-  const getElement = id => document.getElementById(id);
-  
-  // App State Data (used for modal dropdown values)
-  let drivers = [];
-  let tiffins = [];
-  let orders = [];
-  let payments = [];
-  let notifications = [];
-  let categories = [];
-  let items = [];
-  let customers = [];
-  let coupons = [];
-  let invoices = [];
-  let users = [];
+    const getElement = id => document.getElementById(id);
 
-  // Chart instances
-  let ordersChartInstance = null;
-  let itemsChartInstance = null;
+    // App State Data (used for modal dropdown values)
+    let drivers = [];
+    let tiffins = [];
+    let orders = [];
+    let payments = [];
+    let notifications = [];
+    let categories = [];
+    let items = [];
+    let customers = [];
+    let coupons = [];
+    let invoices = [];
+    let users = [];
 
-  const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-  const getBaseUrl = () => (window.AppConfig && window.AppConfig.baseUrl) ? window.AppConfig.baseUrl : '';
-  
-  const formatDateStr = (str) => {
-    if (!str || str === 'N/A') return 'N/A';
-    const date = new Date(str);
-    if (isNaN(date.getTime())) return str;
-    const day = String(date.getDate()).padStart(2, '0');
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const month = months[date.getMonth()];
-    const year = date.getFullYear();
-    return `${day} ${month} ${year}`;
-  };
+    // Chart instances
+    let ordersChartInstance = null;
+    let itemsChartInstance = null;
 
-  const getTiffinBasicItems = tiffin => {
-    if (!tiffin || !tiffin.items) return [];
-    if (Array.isArray(tiffin.items)) {
-      return tiffin.items.map(val => {
-        if (!isNaN(val)) {
-          const mi = items.find(item => item.id === Number(val));
-          return mi ? mi.name : '';
-        }
-        return val;
-      }).filter(Boolean);
-    }
-    if (tiffin.items.basic && Array.isArray(tiffin.items.basic)) {
-      return tiffin.items.basic;
-    }
-    return [];
-  };
+    const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    const getBaseUrl = () => (window.AppConfig && window.AppConfig.baseUrl) ? window.AppConfig.baseUrl : '';
 
-  const getTiffinAddonIds = tiffin => {
-    if (!tiffin || !tiffin.items) return [];
-    if (Array.isArray(tiffin.items)) return [];
-    if (tiffin.items.addons && Array.isArray(tiffin.items.addons)) {
-      return tiffin.items.addons.map(id => Number(id));
-    }
-    return [];
-  };
-
-  // Generic secure API request handler
-  const apiRequest = async (url, method = 'GET', body = null) => {
-    const cleanUrl = url.startsWith('/') ? url : '/' + url;
-    const absoluteUrl = getBaseUrl() + cleanUrl;
-    const options = {
-      method,
-      headers: {
-        'Accept': 'application/json',
-        'X-CSRF-TOKEN': getCsrfToken()
-      }
+    const formatDateStr = (str) => {
+        if (!str || str === 'N/A') return 'N/A';
+        const date = new Date(str);
+        if (isNaN(date.getTime())) return str;
+        const day = String(date.getDate()).padStart(2, '0');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+        return `${day} ${month} ${year}`;
     };
-    if (body) {
-      options.headers['Content-Type'] = 'application/json';
-      options.body = JSON.stringify(body);
-    }
-    const response = await fetch(absoluteUrl, options);
-    if (!response.ok) {
-      const errData = await response.json();
-      throw new Error(errData.message || 'API request failed.');
-    }
-    return response.json();
-  };
 
-  async function loadStateData() {
-    try {
-      const data = await apiRequest('api/data');
-      drivers = data.drivers || [];
-      tiffins = data.tiffins || [];
-      orders = data.orders || [];
-      payments = data.payments || [];
-      notifications = data.notifications || [];
-      categories = data.categories || [];
-      items = data.items || [];
-      customers = data.customers || [];
-      coupons = data.coupons || [];
-      invoices = data.invoices || [];
-      users = data.users || [];
-      
-      updateBadges();
-      renderCharts();
-    } catch (e) {
-      console.error("Error loading state data from API:", e);
-    }
-  }
+    const getTiffinBasicItems = tiffin => {
+        if (!tiffin || !tiffin.items) return [];
+        if (Array.isArray(tiffin.items)) {
+            return tiffin.items.map(val => {
+                if (!isNaN(val)) {
+                    const mi = items.find(item => item.id === Number(val));
+                    return mi ? mi.name : '';
+                }
+                return val;
+            }).filter(Boolean);
+        }
+        if (tiffin.items.basic && Array.isArray(tiffin.items.basic)) {
+            return tiffin.items.basic;
+        }
+        return [];
+    };
 
-  const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
-  const formatCurrency = value => `$${Number(value).toFixed(2)}`;
+    const getTiffinAddonIds = tiffin => {
+        if (!tiffin || !tiffin.items) return [];
+        if (Array.isArray(tiffin.items)) return [];
+        if (tiffin.items.addons && Array.isArray(tiffin.items.addons)) {
+            return tiffin.items.addons.map(id => Number(id));
+        }
+        return [];
+    };
 
-  // Populate search input from URL on load
-  const initSearchQuery = () => {
-    const params = new URLSearchParams(window.location.search);
-    const searchVal = params.get('search') || '';
-    if (searchVal && getElement('globalSearch')) {
-      getElement('globalSearch').value = searchVal;
-    }
-  };
+    // Generic secure API request handler
+    const apiRequest = async (url, method = 'GET', body = null) => {
+        const cleanUrl = url.startsWith('/') ? url : '/' + url;
+        const absoluteUrl = getBaseUrl() + cleanUrl;
+        const options = {
+            method,
+            headers: {
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': getCsrfToken()
+            }
+        };
+        if (body) {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = JSON.stringify(body);
+        }
+        const response = await fetch(absoluteUrl, options);
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.message || 'API request failed.');
+        }
+        return response.json();
+    };
 
-  // Color themes
-  const applyTheme = theme => {
-    document.documentElement.setAttribute('data-kp-theme', theme);
-    localStorage.setItem('kpKitchenTheme', theme);
-    const button = getElement('themeToggle');
-    if (button) {
-      button.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    async function loadStateData() {
+        try {
+            const data = await apiRequest('api/data');
+            drivers = data.drivers || [];
+            tiffins = data.tiffins || [];
+            orders = data.orders || [];
+            payments = data.payments || [];
+            notifications = data.notifications || [];
+            categories = data.categories || [];
+            items = data.items || [];
+            customers = data.customers || [];
+            coupons = data.coupons || [];
+            invoices = data.invoices || [];
+            users = data.users || [];
+
+            updateBadges();
+            renderCharts();
+        } catch (e) {
+            console.error("Error loading state data from API:", e);
+        }
     }
-    renderCharts();
-  };
-  
-  applyTheme(localStorage.getItem('kpKitchenTheme') || 'light');
-  if (getElement('themeToggle')) {
-    getElement('themeToggle').addEventListener('click', () => {
-      applyTheme(document.documentElement.getAttribute('data-kp-theme') === 'dark' ? 'light' : 'dark');
+
+    const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+    const formatCurrency = value => `$${Number(value).toFixed(2)}`;
+
+    // Populate search input from URL on load
+    const initSearchQuery = () => {
+        const params = new URLSearchParams(window.location.search);
+        const searchVal = params.get('search') || '';
+        if (searchVal && getElement('globalSearch')) {
+            getElement('globalSearch').value = searchVal;
+        }
+    };
+
+    // Color themes
+    const applyTheme = theme => {
+        document.documentElement.setAttribute('data-kp-theme', theme);
+        localStorage.setItem('kpKitchenTheme', theme);
+        const button = getElement('themeToggle');
+        if (button) {
+            button.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+        }
+        renderCharts();
+    };
+
+    applyTheme(localStorage.getItem('kpKitchenTheme') || 'light');
+    if (getElement('themeToggle')) {
+        getElement('themeToggle').addEventListener('click', () => {
+            applyTheme(document.documentElement.getAttribute('data-kp-theme') === 'dark' ? 'light' : 'dark');
+        });
+    }
+
+    // Sidebar toggle for smaller screens
+    const sidebar = getElement('sidebar');
+    const overlay = getElement('sidebarOverlay');
+    const closeSidebar = () => {
+        sidebar.classList.remove('kp_kitchen_admin_panel_sidebar_open');
+        overlay.classList.remove('kp_kitchen_admin_panel_sidebar_overlay_visible');
+    };
+
+    if (getElement('sidebarToggle')) getElement('sidebarToggle').addEventListener('click', () => {
+        sidebar.classList.add('kp_kitchen_admin_panel_sidebar_open');
+        overlay.classList.add('kp_kitchen_admin_panel_sidebar_overlay_visible');
     });
-  }
+    if (getElement('sidebarClose')) getElement('sidebarClose').addEventListener('click', closeSidebar);
+    if (overlay) overlay.addEventListener('click', closeSidebar);
 
-  // Sidebar toggle for smaller screens
-  const sidebar = getElement('sidebar');
-  const overlay = getElement('sidebarOverlay');
-  const closeSidebar = () => { 
-    sidebar.classList.remove('kp_kitchen_admin_panel_sidebar_open'); 
-    overlay.classList.remove('kp_kitchen_admin_panel_sidebar_overlay_visible'); 
-  };
-  
-  if (getElement('sidebarToggle')) getElement('sidebarToggle').addEventListener('click', () => { 
-    sidebar.classList.add('kp_kitchen_admin_panel_sidebar_open'); 
-    overlay.classList.add('kp_kitchen_admin_panel_sidebar_overlay_visible'); 
-  });
-  if (getElement('sidebarClose')) getElement('sidebarClose').addEventListener('click', closeSidebar);
-  if (overlay) overlay.addEventListener('click', closeSidebar);
-
-  function showToast(message) {
-    const toast = getElement('toast');
-    if (!toast) return;
-    toast.textContent = message;
-    toast.classList.add('kp_kitchen_admin_panel_toast_visible');
-    setTimeout(() => toast.classList.remove('kp_kitchen_admin_panel_toast_visible'), 2400);
-  }
-
-  function updateBadges() {
-    const unread = notifications.filter(item => !item.read).length;
-    const pending = orders.filter(item => item.status === 'Pending').length;
-    if (getElement('notificationBadge')) getElement('notificationBadge').textContent = unread;
-    if (getElement('headerNotificationCount')) getElement('headerNotificationCount').textContent = unread;
-    if (getElement('orderBadge')) getElement('orderBadge').textContent = pending;
-  }
-
-  // Draw Dashboard charts
-  async function renderCharts() {
-    if (!getElement('ordersChartCanvas') || !getElement('itemsChartCanvas')) return;
-    
-    try {
-      const response = await apiRequest('api/dashboard-charts');
-      const isDark = document.documentElement.getAttribute('data-kp-theme') === 'dark';
-      const textColor = isDark ? '#94A3B8' : '#64748B';
-      const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
-
-      if (ordersChartInstance) ordersChartInstance.destroy();
-      if (itemsChartInstance) itemsChartInstance.destroy();
-
-      // Orders Line Chart
-      const ordersCtx = getElement('ordersChartCanvas').getContext('2d');
-      ordersChartInstance = new Chart(ordersCtx, {
-        type: 'line',
-        data: {
-          labels: response.ordersChart.labels,
-          datasets: [{
-            label: 'Daily Orders',
-            data: response.ordersChart.data,
-            borderColor: '#FF6B6B',
-            backgroundColor: 'rgba(255,107,107,0.1)',
-            fill: true,
-            tension: 0.4
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { grid: { color: gridColor }, ticks: { color: textColor } },
-            y: { grid: { color: gridColor }, ticks: { color: textColor, stepSize: 1 } }
-          }
-        }
-      });
-
-      // Top Items Bar Chart
-      const itemsCtx = getElement('itemsChartCanvas').getContext('2d');
-      itemsChartInstance = new Chart(itemsCtx, {
-        type: 'bar',
-        data: {
-          labels: response.itemsChart.labels,
-          datasets: [{
-            label: 'Orders',
-            data: response.itemsChart.data,
-            backgroundColor: ['#FF6B6B', '#4ECDC4', '#FFE66D', '#1A535C', '#A8DADC'],
-            borderRadius: 6
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { grid: { color: gridColor }, ticks: { color: textColor } },
-            y: { grid: { color: gridColor }, ticks: { color: textColor } }
-          }
-        }
-      });
-    } catch (e) {
-      console.error("Error drawing charts:", e);
+    function showToast(message) {
+        const toast = getElement('toast');
+        if (!toast) return;
+        toast.textContent = message;
+        toast.classList.add('kp_kitchen_admin_panel_toast_visible');
+        setTimeout(() => toast.classList.remove('kp_kitchen_admin_panel_toast_visible'), 2400);
     }
-  }
 
-  // --- Modal Dialog controllers ---
-  const modal = getElement('modal');
-  const modalForm = getElement('modalForm');
-  
-  function closeModal() { 
-    modal.classList.remove('kp_kitchen_admin_panel_modal_visible'); 
-    modalForm.innerHTML = ''; 
-  }
-  
-  function openModal(title, fields, submitText, actionUrl, afterOpen) {
-    getElement('modalTitle').textContent = title;
-    modalForm.action = actionUrl;
-    modalForm.method = 'POST';
-    modalForm.enctype = 'multipart/form-data';
-    modalForm.innerHTML = `
+    function updateBadges() {
+        const unread = notifications.filter(item => !item.read).length;
+        const pending = orders.filter(item => item.status === 'Pending').length;
+        if (getElement('notificationBadge')) getElement('notificationBadge').textContent = unread;
+        if (getElement('headerNotificationCount')) getElement('headerNotificationCount').textContent = unread;
+        if (getElement('orderBadge')) getElement('orderBadge').textContent = pending;
+    }
+
+    // Draw Dashboard charts
+    async function renderCharts() {
+        if (!getElement('ordersChartCanvas') || !getElement('itemsChartCanvas')) return;
+
+        try {
+            const response = await apiRequest('api/dashboard-charts');
+            const isDark = document.documentElement.getAttribute('data-kp-theme') === 'dark';
+            const textColor = isDark ? '#94A3B8' : '#64748B';
+            const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+
+            if (ordersChartInstance) ordersChartInstance.destroy();
+            if (itemsChartInstance) itemsChartInstance.destroy();
+
+            // Orders Line Chart
+            const ordersCtx = getElement('ordersChartCanvas').getContext('2d');
+            ordersChartInstance = new Chart(ordersCtx, {
+                type: 'line',
+                data: {
+                    labels: response.ordersChart.labels,
+                    datasets: [{
+                        label: 'Daily Orders',
+                        data: response.ordersChart.data,
+                        borderColor: '#FF6B6B',
+                        backgroundColor: 'rgba(255,107,107,0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { color: gridColor }, ticks: { color: textColor } },
+                        y: { grid: { color: gridColor }, ticks: { color: textColor, stepSize: 1 } }
+                    }
+                }
+            });
+
+            // Top Items Bar Chart
+            const itemsCtx = getElement('itemsChartCanvas').getContext('2d');
+            itemsChartInstance = new Chart(itemsCtx, {
+                type: 'bar',
+                data: {
+                    labels: response.itemsChart.labels,
+                    datasets: [{
+                        label: 'Orders',
+                        data: response.itemsChart.data,
+                        backgroundColor: ['#FF6B6B', '#4ECDC4', '#FFE66D', '#1A535C', '#A8DADC'],
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { color: gridColor }, ticks: { color: textColor } },
+                        y: { grid: { color: gridColor }, ticks: { color: textColor } }
+                    }
+                }
+            });
+        } catch (e) {
+            console.error("Error drawing charts:", e);
+        }
+    }
+
+    // --- Modal Dialog controllers ---
+    const modal = getElement('modal');
+    const modalForm = getElement('modalForm');
+
+    function closeModal() {
+        modal.classList.remove('kp_kitchen_admin_panel_modal_visible');
+        modalForm.innerHTML = '';
+    }
+
+    function openModal(title, fields, submitText, actionUrl, afterOpen) {
+        getElement('modalTitle').textContent = title;
+        modalForm.action = actionUrl;
+        modalForm.method = 'POST';
+        modalForm.enctype = 'multipart/form-data';
+        modalForm.innerHTML = `
       <input type="hidden" name="_token" value="${getCsrfToken()}">
       ${fields}
       <div class="kp_kitchen_admin_panel_modal_actions">
@@ -253,40 +253,54 @@
         <button type="submit" class="kp_kitchen_admin_panel_primary_button">${submitText}</button>
       </div>
     `;
-    modal.classList.add('kp_kitchen_admin_panel_modal_visible');
-    getElement('modalCancel').addEventListener('click', closeModal);
-    modalForm.onsubmit = null; // native HTML submission
-    if (afterOpen) afterOpen();
-  }
+        modal.classList.add('kp_kitchen_admin_panel_modal_visible');
+        getElement('modalCancel').addEventListener('click', closeModal);
+        modalForm.onsubmit = function(e) {
+            const streetInput = modalForm.querySelector('input[name="add_customer_street"]');
+            if (streetInput) {
+                const suburbInput = modalForm.querySelector('input[name="add_customer_suburb"]');
+                const pincodeInput = modalForm.querySelector('input[name="pincode"]');
+                const addressHiddenInput = modalForm.querySelector('input[name="address"]');
+                if (addressHiddenInput && suburbInput && pincodeInput) {
+                    const street = streetInput.value.trim();
+                    const suburb = suburbInput.value.trim();
+                    const pincode = pincodeInput.value.trim();
+                    addressHiddenInput.value = `${street}, ${suburb}, ${pincode}`;
+                }
+            }
+            return true;
+        };
+        if (afterOpen) afterOpen();
+    }
 
-  // --- Details Modal Dialog controllers ---
-  const detailsModal = getElement('detailsModal');
-  const detailsModalContent = getElement('detailsModalContent');
+    // --- Details Modal Dialog controllers ---
+    const detailsModal = getElement('detailsModal');
+    const detailsModalContent = getElement('detailsModalContent');
 
-  function closeDetailsModal() { 
-    detailsModal.classList.remove('kp_kitchen_admin_panel_modal_visible'); 
-    detailsModalContent.innerHTML = ''; 
-  }
-  
-  function openDetailsModal(title, html) {
-    getElement('detailsModalTitle').textContent = title;
-    detailsModalContent.innerHTML = html;
-    detailsModal.classList.add('kp_kitchen_admin_panel_modal_visible');
-    getElement('detailsModalClose').addEventListener('click', closeDetailsModal);
-  }
+    function closeDetailsModal() {
+        detailsModal.classList.remove('kp_kitchen_admin_panel_modal_visible');
+        detailsModalContent.innerHTML = '';
+    }
 
-  function statusClass(status) {
-    const s = String(status).toLowerCase();
-    if (s === 'pending') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_pending';
-    if (s === 'cooking' || s === 'processing') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_cooking';
-    if (s === 'delivered') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_delivered';
-    if (s === 'dispatched' || s === 'out_for_delivery') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_dispatched';
-    if (s === 'cancelled' || s === 'failed') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_failed';
-    return 'kp_kitchen_admin_panel_status';
-  }
+    function openDetailsModal(title, html) {
+        getElement('detailsModalTitle').textContent = title;
+        detailsModalContent.innerHTML = html;
+        detailsModal.classList.add('kp_kitchen_admin_panel_modal_visible');
+        getElement('detailsModalClose').addEventListener('click', closeDetailsModal);
+    }
 
-  // --- Modal Fields builders ---
-  const categoryFields = c => `
+    function statusClass(status) {
+        const s = String(status).toLowerCase();
+        if (s === 'pending') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_pending';
+        if (s === 'cooking' || s === 'processing') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_cooking';
+        if (s === 'delivered') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_delivered';
+        if (s === 'dispatched' || s === 'out_for_delivery') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_dispatched';
+        if (s === 'cancelled' || s === 'failed') return 'kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_failed';
+        return 'kp_kitchen_admin_panel_status';
+    }
+
+    // --- Modal Fields builders ---
+    const categoryFields = c => `
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">Category Name</span>
       <input name="name" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.name || '')}" required placeholder="e.g. Rice, Sides, Breads">
@@ -297,9 +311,9 @@
     </label>
   `;
 
-  const itemFields = item => {
-    const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === item?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
-    return `
+    const itemFields = item => {
+        const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === item?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+        return `
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Item Image</span>
         <input id="itemImageInput" name="image_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
@@ -335,35 +349,35 @@
         </select>
       </label>
     `;
-  };
+    };
 
-  const tiffinFields = tiffin => {
-    const basicItems = getTiffinBasicItems(tiffin);
-    const addonIds = getTiffinAddonIds(tiffin);
+    const tiffinFields = tiffin => {
+        const basicItems = getTiffinBasicItems(tiffin);
+        const addonIds = getTiffinAddonIds(tiffin);
 
-    const renderCheckboxGroup = (itemsToRender) => {
-      if (itemsToRender.length === 0) {
-        return `<div style="opacity:0.6; font-size:0.8rem; padding: 4px 0; color: var(--text-secondary);">None</div>`;
-      }
-      const grouped = {};
-      categories.forEach(cat => {
-        grouped[cat.name] = itemsToRender.filter(i => i.category_id === cat.id);
-      });
+        const renderCheckboxGroup = (itemsToRender) => {
+            if (itemsToRender.length === 0) {
+                return `<div style="opacity:0.6; font-size:0.8rem; padding: 4px 0; color: var(--text-secondary);">None</div>`;
+            }
+            const grouped = {};
+            categories.forEach(cat => {
+                grouped[cat.name] = itemsToRender.filter(i => i.category_id === cat.id);
+            });
 
-      return Object.entries(grouped)
-        .map(([catName, catItems]) => {
-          if (catItems.length === 0) return '';
-          const checkboxes = catItems.map(item => {
-            const isChecked = addonIds.includes(item.id) ? 'checked' : '';
-            return `
+            return Object.entries(grouped)
+                .map(([catName, catItems]) => {
+                    if (catItems.length === 0) return '';
+                    const checkboxes = catItems.map(item => {
+                        const isChecked = addonIds.includes(item.id) ? 'checked' : '';
+                        return `
               <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; margin-bottom: 6px;">
                 <input type="checkbox" name="tiffin_addons[]" value="${item.id}" data-price="${item.price}" ${isChecked} style="width: auto; margin: 0;">
                 <span>${escapeHtml(item.name)} <span style="font-size:0.75rem; font-weight:600; color: var(--text-secondary);">(+$${Number(item.price).toFixed(2)})</span></span>
               </label>
             `;
-          }).join('');
+                    }).join('');
 
-          return `
+                    return `
             <div style="margin-bottom: 12px;">
               <strong style="display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--primary-color); margin-bottom: 4px; border-bottom: 1px solid var(--panel-border); padding-bottom: 2px;">${escapeHtml(catName)}</strong>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px;">
@@ -371,18 +385,18 @@
               </div>
             </div>
           `;
-        }).filter(Boolean).join('');
-    };
+                }).filter(Boolean).join('');
+        };
 
-    const addOnHtml = renderCheckboxGroup(items.filter(item => item.status === 'Active'));
-    const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === tiffin?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
-    
-    return `
+        const addOnHtml = renderCheckboxGroup(items.filter(item => item.status === 'Active'));
+        const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === tiffin?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+
+        return `
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Tiffin Plan Image</span>
         <input id="tiffinImageInput" name="image_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
         <input id="tiffinImageData" name="image" type="hidden" value="${escapeHtml(tiffin?.image || '')}">
-        <div id="tiffinImagePreview" class="kp_kitchen_admin_panel_image_preview">${tiffin?.image ? `<img src="${escapeHtml(tiffin.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
+        <div id="tiffinImagePreview" class="kp_kitchen_admin_panel_image_preview">${tiffin?.image ? `<img src="${getBaseUrl()}/${escapeHtml(tiffin.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
       </label>
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Tiffin Plan Name</span>
@@ -412,16 +426,16 @@
         </div>
         <div id="basicMenuItemsInputsContainer" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
           ${(() => {
-            const defaultPlaceholders = ["enter the subzi", "enter the rice", "enter the breads", "enter the dal"];
-            const count = Math.max(4, basicItems.length);
-            let html = '';
-            for (let i = 0; i < count; i++) {
-              const val = basicItems[i] || '';
-              const ph = defaultPlaceholders[i] || "enter new item";
-              html += `<input type="text" name="basic_menu_items[]" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(val)}" placeholder="${ph}" style="margin-bottom:0;">`;
-            }
-            return html;
-          })()}
+                const defaultPlaceholders = ["enter the subzi", "enter the rice", "enter the breads", "enter the dal"];
+                const count = Math.max(4, basicItems.length);
+                let html = '';
+                for (let i = 0; i < count; i++) {
+                    const val = basicItems[i] || '';
+                    const ph = defaultPlaceholders[i] || "enter new item";
+                    html += `<input type="text" name="basic_menu_items[]" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(val)}" placeholder="${ph}" style="margin-bottom:0;">`;
+                }
+                return html;
+            })()}
         </div>
       </div>
       <div class="kp_kitchen_admin_panel_form_group">
@@ -446,9 +460,9 @@
         </select>
       </label>
     `;
-  };
+    };
 
-  const driverFields = d => `
+    const driverFields = d => `
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">Driver Full Name</span>
       <input name="name" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.name || '')}" required placeholder="Jack Thompson">
@@ -500,7 +514,7 @@
         </select>
       </label>
     </div>
-    
+
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">License Copy (Front side)</span>
       <input id="driverLicenseFrontInput" name="license_copy_front_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
@@ -515,7 +529,7 @@
     </label>
   `;
 
-  const customerFields = c => `
+    const customerFields = c => `
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">Customer Name</span>
       <input name="name" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.name || '')}" required placeholder="Sarah Collins">
@@ -532,21 +546,26 @@
     </div>
     <div class="kp_kitchen_admin_panel_form_grid">
       <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Default Delivery Postcode</span>
-        <input name="pincode" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.pincode || '')}" required placeholder="3000">
-      </label>
-      <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Password ${c ? '(leave blank to keep current)' : ''}</span>
         <input name="password" type="password" class="kp_kitchen_admin_panel_form_input" placeholder="********" ${c ? '' : 'required'}>
       </label>
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Default Delivery Postcode</span>
+        <input name="pincode" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.pincode || '')}" required placeholder="3000">
+      </label>
     </div>
     <label class="kp_kitchen_admin_panel_form_group">
-      <span class="kp_kitchen_admin_panel_form_label">Default Address</span>
-      <input name="address" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.address || '')}" placeholder="12 Spring St, Melbourne VIC">
+      <span class="kp_kitchen_admin_panel_form_label">Street Address</span>
+      <input name="add_customer_street" class="kp_kitchen_admin_panel_form_input" required placeholder="e.g. 12 Spring St">
     </label>
+    <label class="kp_kitchen_admin_panel_form_group">
+      <span class="kp_kitchen_admin_panel_form_label">Town/Suburbs</span>
+      <input name="add_customer_suburb" class="kp_kitchen_admin_panel_form_input" required placeholder="e.g. Melbourne">
+    </label>
+    <input name="address" type="hidden">
   `;
 
-  const couponFields = c => `
+    const couponFields = c => `
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">Promo Code</span>
       <input name="code" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.code || '')}" required placeholder="e.g. WELCOME10, WINTER20">
@@ -577,9 +596,9 @@
     </label>
   `;
 
-  const invoiceFields = inv => {
-    const custOptions = customers.map(c => `<option value="${c.id}" ${c.id === inv?.customer_id ? 'selected' : ''}>${escapeHtml(c.name)} (#CUST${c.id})</option>`).join('');
-    return `
+    const invoiceFields = inv => {
+        const custOptions = customers.map(c => `<option value="${c.id}" ${c.id === inv?.customer_id ? 'selected' : ''}>${escapeHtml(c.name)} (#CUST${c.id})</option>`).join('');
+        return `
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Select Customer</span>
         <select name="customer_id" class="kp_kitchen_admin_panel_form_select" required>
@@ -618,9 +637,9 @@
         ` : ''}
       </label>
     `;
-  };
+    };
 
-  const userFields = u => `
+    const userFields = u => `
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">Admin Username</span>
       <input name="name" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(u?.name || '')}" required placeholder="Kitchen Manager">
@@ -635,288 +654,319 @@
     </label>
   `;
 
-  // --- Dynamic Form Preview & Total price Calculation Listeners ---
-  function setupImagePreview(inputId, hiddenId, previewId) {
-    const input = getElement(inputId);
-    if (!input) return;
-    input.addEventListener('change', () => {
-      const file = input.files[0]; if (!file) return;
-      if (file.size > 2 * 1024 * 1024) { input.value = ''; showToast('Please select an image smaller than 2 MB.'); return; }
-      const reader = new FileReader();
-      reader.onload = () => { 
-        getElement(hiddenId).value = reader.result; 
-        getElement(previewId).innerHTML = `<img src="${reader.result}" alt="Preview">`; 
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  function setupItemImagePreview() { setupImagePreview('itemImageInput', 'itemImageData', 'itemImagePreview'); }
-  function setupTiffinImagePreview() { setupImagePreview('tiffinImageInput', 'tiffinImageData', 'tiffinImagePreview'); }
-  
-  function setupTiffinFormListeners() {
-    setupTiffinImagePreview();
-    const form = getElement('modalForm');
-    if (!form) return;
-
-    // Dynamically append basic menu item inputs
-    const addBtn = getElement('addBasicMenuItemBtn');
-    const inputsContainer = getElement('basicMenuItemsInputsContainer');
-    if (addBtn && inputsContainer) {
-      addBtn.addEventListener('click', () => {
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.name = 'basic_menu_items[]';
-        input.className = 'kp_kitchen_admin_panel_form_input';
-        input.placeholder = 'enter new item';
-        input.style.marginBottom = '0';
-        inputsContainer.appendChild(input);
-      });
+    // --- Dynamic Form Preview & Total price Calculation Listeners ---
+    function setupImagePreview(inputId, hiddenId, previewId) {
+        const input = getElement(inputId);
+        if (!input) return;
+        input.addEventListener('change', () => {
+            const file = input.files[0]; if (!file) return;
+            if (file.size > 2 * 1024 * 1024) { input.value = ''; showToast('Please select an image smaller than 2 MB.'); return; }
+            const reader = new FileReader();
+            reader.onload = () => {
+                getElement(hiddenId).value = reader.result;
+                getElement(previewId).innerHTML = `<img src="${reader.result}" alt="Preview">`;
+            };
+            reader.readAsDataURL(file);
+        });
     }
 
-    const basePriceInput = form.querySelector('input[name="price"]');
-    const checkboxes = form.querySelectorAll('input[name="tiffin_addons[]"]');
-    const totalDisplay = getElement('tiffinModalTotalPrice');
-    const updateCalculatedTotal = () => {
-      if (!totalDisplay) return;
-      const basePrice = Number(basePriceInput?.value || 0);
-      let selectedSum = 0;
-      checkboxes.forEach(cb => {
-        if (cb.checked) {
-          selectedSum += Number(cb.dataset.price || 0);
+    function setupItemImagePreview() { setupImagePreview('itemImageInput', 'itemImageData', 'itemImagePreview'); }
+    function setupTiffinImagePreview() { setupImagePreview('tiffinImageInput', 'tiffinImageData', 'tiffinImagePreview'); }
+
+    function setupTiffinFormListeners() {
+        setupTiffinImagePreview();
+        const form = getElement('modalForm');
+        if (!form) return;
+
+        // Dynamically append basic menu item inputs
+        const addBtn = getElement('addBasicMenuItemBtn');
+        const inputsContainer = getElement('basicMenuItemsInputsContainer');
+        if (addBtn && inputsContainer) {
+            addBtn.addEventListener('click', () => {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.name = 'basic_menu_items[]';
+                input.className = 'kp_kitchen_admin_panel_form_input';
+                input.placeholder = 'enter new item';
+                input.style.marginBottom = '0';
+                inputsContainer.appendChild(input);
+            });
         }
-      });
-      totalDisplay.textContent = `$${(basePrice + selectedSum).toFixed(2)}`;
-    };
-    if (basePriceInput) basePriceInput.addEventListener('input', updateCalculatedTotal);
-    checkboxes.forEach(cb => cb.addEventListener('change', updateCalculatedTotal));
-    updateCalculatedTotal();
-  }
-  
-  function setupDriverFormListeners() {
-    setupImagePreview('driverLicenseFrontInput', 'driverLicenseFrontData', 'driverLicenseFrontPreview');
-    setupImagePreview('driverLicenseBackInput', 'driverLicenseBackData', 'driverLicenseBackPreview');
-  }
 
-  // --- Add Button Trigger Bindings ---
-  if (getElement('addCategoryButton')) {
-    getElement('addCategoryButton').addEventListener('click', () => {
-      openModal('Add Menu Category', categoryFields(), 'Add Category', getBaseUrl() + '/categories/save');
-    });
-  }
-  if (getElement('addItemButton')) {
-    getElement('addItemButton').addEventListener('click', () => {
-      openModal('Add Menu Item', itemFields(), 'Create Item', getBaseUrl() + '/items/save', setupItemImagePreview);
-    });
-  }
-  if (getElement('addTiffinButton')) {
-    getElement('addTiffinButton').addEventListener('click', () => {
-      openModal('Add Tiffin Plan', tiffinFields(), 'Create Plan', getBaseUrl() + '/tiffins/save', setupTiffinFormListeners);
-    });
-  }
-  if (getElement('addDriverButton')) {
-    getElement('addDriverButton').addEventListener('click', () => {
-      openModal('Add Driver', driverFields(), 'Register Driver', getBaseUrl() + '/drivers/save', setupDriverFormListeners);
-    });
-  }
-  if (getElement('addCustomerButton')) {
-    getElement('addCustomerButton').addEventListener('click', () => {
-      openModal('Add Customer', customerFields(), 'Create Account', getBaseUrl() + '/customers/save');
-    });
-  }
-  if (getElement('addCouponButton')) {
-    getElement('addCouponButton').addEventListener('click', () => {
-      openModal('Add Coupon', couponFields(), 'Create Coupon', getBaseUrl() + '/coupons/save');
-    });
-  }
-  if (getElement('addUserButton')) {
-    getElement('addUserButton').addEventListener('click', () => {
-      openModal('Add Administrator', userFields(), 'Create Admin', getBaseUrl() + '/users/save');
-    });
-  }
-
-  // --- Edit Button Event Delegation Bindings ---
-  document.addEventListener('click', event => {
-    // Edit Category
-    const categoryBtn = event.target.closest('.edit-category-btn');
-    if (categoryBtn) {
-      const c = {
-        id: categoryBtn.dataset.id,
-        name: categoryBtn.dataset.name,
-        description: categoryBtn.dataset.description
-      };
-      openModal('Edit Category Details', categoryFields(c) + `<input type="hidden" name="id" value="${c.id}">`, 'Save Changes', getBaseUrl() + '/categories/save');
-      return;
-    }
-
-    // Edit Menu Item
-    const itemBtn = event.target.closest('.edit-item-btn');
-    if (itemBtn) {
-      const item = {
-        id: itemBtn.dataset.id,
-        name: itemBtn.dataset.name,
-        price: itemBtn.dataset.price,
-        category_id: Number(itemBtn.dataset.category_id),
-        description: itemBtn.dataset.description,
-        status: itemBtn.dataset.status,
-        image: itemBtn.dataset.image
-      };
-      openModal('Edit Menu Item', itemFields(item) + `<input type="hidden" name="id" value="${item.id}">`, 'Save Changes', getBaseUrl() + '/items/save', setupItemImagePreview);
-      return;
-    }
-
-    // Edit Tiffin Plan
-    const tiffinBtn = event.target.closest('.edit-tiffin-btn');
-    if (tiffinBtn) {
-      const tiffin = {
-        id: tiffinBtn.dataset.id,
-        name: tiffinBtn.dataset.name,
-        price: tiffinBtn.dataset.price,
-        category_id: tiffinBtn.dataset.category_id ? Number(tiffinBtn.dataset.category_id) : null,
-        prep_time: Number(tiffinBtn.dataset.prep_time),
-        status: tiffinBtn.dataset.status,
-        description: tiffinBtn.dataset.description,
-        items: JSON.parse(tiffinBtn.dataset.items || '[]')
-      };
-      openModal('Edit Tiffin Plan', tiffinFields(tiffin) + `<input type="hidden" name="id" value="${tiffin.id}">`, 'Save Changes', getBaseUrl() + '/tiffins/save', setupTiffinFormListeners);
-      return;
-    }
-
-    // Edit Driver -> Inline transition to Grid-by-Grid Form
-    const driverBtn = event.target.closest('.edit-driver-btn');
-    if (driverBtn) {
-      const d = {
-        id: driverBtn.dataset.id,
-        name: driverBtn.dataset.name,
-        phone: driverBtn.dataset.phone,
-        email: driverBtn.dataset.email,
-        address: driverBtn.dataset.address,
-        license_no: driverBtn.dataset.license_no,
-        license_expiry: driverBtn.dataset.license_expiry,
-        vehicle_reg_no: driverBtn.dataset.vehicle_reg_no,
-        assigned_zip: driverBtn.dataset.assigned_zip,
-        status: driverBtn.dataset.status
-      };
-      
-      const listSec = getElement('driverListSection');
-      const editSec = getElement('driverEditSection');
-      
-      if (listSec && editSec) {
-        listSec.style.display = 'none';
-        editSec.style.display = 'block';
-        
-        // Populate inputs
-        getElement('editDriverId').value = d.id;
-        getElement('editDriverName').value = d.name;
-        getElement('editDriverPhone').value = d.phone;
-        getElement('editDriverEmail').value = d.email === 'null' || !d.email ? '' : d.email;
-        getElement('editDriverVehicle').value = d.vehicle_reg_no === 'null' || !d.vehicle_reg_no ? '' : d.vehicle_reg_no;
-        getElement('editDriverPostcode').value = d.assigned_zip === 'null' || !d.assigned_zip ? '' : d.assigned_zip;
-        getElement('editDriverLicense').value = d.license_no === 'null' || !d.license_no ? '' : d.license_no;
-        getElement('editDriverLicenseExpiry').value = d.license_expiry === 'null' || !d.license_expiry ? '' : d.license_expiry;
-        getElement('editDriverAddress').value = d.address === 'null' || !d.address ? '' : d.address;
-        getElement('editDriverStatus').value = d.status || 'Active';
-        getElement('editDriverPassword').value = '';
-        
-        // Bind back/cancel actions
-        const backToList = () => {
-          editSec.style.display = 'none';
-          listSec.style.display = 'block';
+        const basePriceInput = form.querySelector('input[name="price"]');
+        const checkboxes = form.querySelectorAll('input[name="tiffin_addons[]"]');
+        const totalDisplay = getElement('tiffinModalTotalPrice');
+        const updateCalculatedTotal = () => {
+            if (!totalDisplay) return;
+            const basePrice = Number(basePriceInput?.value || 0);
+            let selectedSum = 0;
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    selectedSum += Number(cb.dataset.price || 0);
+                }
+            });
+            totalDisplay.textContent = `$${(basePrice + selectedSum).toFixed(2)}`;
         };
-        
-        const backBtn = getElement('backToDriverListBtn');
-        if (backBtn) backBtn.onclick = backToList;
-        
-        const cancelBtn = getElement('cancelDriverEditBtn');
-        if (cancelBtn) cancelBtn.onclick = backToList;
-      }
-      return;
+        if (basePriceInput) basePriceInput.addEventListener('input', updateCalculatedTotal);
+        checkboxes.forEach(cb => cb.addEventListener('change', updateCalculatedTotal));
+        updateCalculatedTotal();
     }
 
-    // Edit Customer
-    const customerBtn = event.target.closest('.edit-customer-btn');
-    if (customerBtn) {
-      const listSec = getElement('customerListSection');
-      const editSec = getElement('customerEditGridSection');
-      
-      if (listSec && editSec) {
-        listSec.style.display = 'none';
-        if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
-        if (getElement('customerPaymentGridSection')) getElement('customerPaymentGridSection').style.display = 'none';
-        if (getElement('customerInvoicesGridSection')) getElement('customerInvoicesGridSection').style.display = 'none';
-        
-        // Populate inputs
-        getElement('editCustomerId').value = customerBtn.dataset.id;
-        getElement('editCustomerName').value = customerBtn.dataset.name;
-        getElement('editCustomerPhone').value = customerBtn.dataset.phone;
-        getElement('editCustomerEmail').value = customerBtn.dataset.email;
-        getElement('editCustomerPincode').value = customerBtn.dataset.pincode;
-        getElement('editCustomerAddress').value = customerBtn.dataset.address;
-        
-        editSec.style.display = 'block';
-
-        // Setup back triggers
-        const backBtn = getElement('backToCustomerListFromEditBtn');
-        const cancelBtn = getElement('cancelCustomerEditBtn');
-        const goBack = () => {
-          editSec.style.display = 'none';
-          listSec.style.display = 'block';
-        };
-        if (backBtn) backBtn.onclick = goBack;
-        if (cancelBtn) cancelBtn.onclick = goBack;
-      }
-      return;
+    function setupDriverFormListeners() {
+        setupImagePreview('driverLicenseFrontInput', 'driverLicenseFrontData', 'driverLicenseFrontPreview');
+        setupImagePreview('driverLicenseBackInput', 'driverLicenseBackData', 'driverLicenseBackPreview');
     }
 
-    // Edit Coupon
-    const couponBtn = event.target.closest('.edit-coupon-btn');
-    if (couponBtn) {
-      const coupon = {
-        id: couponBtn.dataset.id,
-        code: couponBtn.dataset.code,
-        type: couponBtn.dataset.type,
-        value: couponBtn.dataset.value,
-        expiry_date: couponBtn.dataset.expiry_date,
-        status: couponBtn.dataset.status
-      };
-      openModal('Edit Coupon Details', couponFields(coupon) + `<input type="hidden" name="id" value="${coupon.id}">`, 'Save Changes', getBaseUrl() + '/coupons/save');
-      return;
+    // --- Add Button Trigger Bindings ---
+    if (getElement('addCategoryButton')) {
+        getElement('addCategoryButton').addEventListener('click', () => {
+            openModal('Add Menu Category', categoryFields(), 'Add Category', getBaseUrl() + '/categories/save');
+        });
+    }
+    if (getElement('addItemButton')) {
+        getElement('addItemButton').addEventListener('click', () => {
+            openModal('Add Menu Item', itemFields(), 'Create Item', getBaseUrl() + '/items/save', setupItemImagePreview);
+        });
+    }
+    if (getElement('addTiffinButton')) {
+        getElement('addTiffinButton').addEventListener('click', () => {
+            openModal('Add Tiffin Plan', tiffinFields(), 'Create Plan', getBaseUrl() + '/tiffins/save', setupTiffinFormListeners);
+        });
+    }
+    if (getElement('addDriverButton')) {
+        getElement('addDriverButton').addEventListener('click', () => {
+            openModal('Add Driver', driverFields(), 'Register Driver', getBaseUrl() + '/drivers/save', setupDriverFormListeners);
+        });
+    }
+    if (getElement('addCustomerButton')) {
+        getElement('addCustomerButton').addEventListener('click', () => {
+            openModal('Add Customer', customerFields(), 'Create Account', getBaseUrl() + '/customers/save');
+        });
+    }
+    if (getElement('addCouponButton')) {
+        getElement('addCouponButton').addEventListener('click', () => {
+            openModal('Add Coupon', couponFields(), 'Create Coupon', getBaseUrl() + '/coupons/save');
+        });
+    }
+    if (getElement('addUserButton')) {
+        getElement('addUserButton').addEventListener('click', () => {
+            openModal('Add Administrator', userFields(), 'Create Admin', getBaseUrl() + '/users/save');
+        });
     }
 
-    // Edit Invoice
-    const invoiceBtn = event.target.closest('.edit-invoice-btn');
-    if (invoiceBtn) {
-      const inv = {
-        id: invoiceBtn.dataset.id,
-        customer_id: Number(invoiceBtn.dataset.customer_id),
-        amount: invoiceBtn.dataset.amount,
-        due_date: invoiceBtn.dataset.due_date,
-        status: invoiceBtn.dataset.status,
-        collected_photo: invoiceBtn.dataset.collected_photo
-      };
-      openModal('Edit Invoice Details', invoiceFields(inv) + `<input type="hidden" name="id" value="${inv.id}">`, 'Save Changes', getBaseUrl() + '/invoices/save');
-      return;
-    }
+    // --- Edit Button Event Delegation Bindings ---
+    document.addEventListener('click', event => {
+        // Edit Category
+        const categoryBtn = event.target.closest('.edit-category-btn');
+        if (categoryBtn) {
+            const c = {
+                id: categoryBtn.dataset.id,
+                name: categoryBtn.dataset.name,
+                description: categoryBtn.dataset.description
+            };
+            openModal('Edit Category Details', categoryFields(c) + `<input type="hidden" name="id" value="${c.id}">`, 'Save Changes', getBaseUrl() + '/categories/save');
+            return;
+        }
 
-    // Edit Administrator User
-    const userBtn = event.target.closest('.edit-user-btn');
-    if (userBtn) {
-      const u = {
-        id: userBtn.dataset.id,
-        name: userBtn.dataset.name,
-        email: userBtn.dataset.email
-      };
-      openModal('Edit Admin Credentials', userFields(u) + `<input type="hidden" name="id" value="${u.id}">`, 'Save Changes', getBaseUrl() + '/users/save');
-      return;
-    }
+        // Edit Menu Item
+        const itemBtn = event.target.closest('.edit-item-btn');
+        if (itemBtn) {
+            const item = {
+                id: itemBtn.dataset.id,
+                name: itemBtn.dataset.name,
+                price: itemBtn.dataset.price,
+                category_id: Number(itemBtn.dataset.category_id),
+                description: itemBtn.dataset.description,
+                status: itemBtn.dataset.status,
+                image: itemBtn.dataset.image
+            };
+            openModal('Edit Menu Item', itemFields(item) + `<input type="hidden" name="id" value="${item.id}">`, 'Save Changes', getBaseUrl() + '/items/save', setupItemImagePreview);
+            return;
+        }
 
-    // View Items in Category (Read-only Modal)
-    const viewItemsBtn = event.target.closest('.view-items-btn');
-    if (viewItemsBtn) {
-      const name = viewItemsBtn.dataset.name;
-      const categoryItems = JSON.parse(viewItemsBtn.dataset.items || '[]');
-      
-      const fields = `
+        // Edit Tiffin Plan
+        const tiffinBtn = event.target.closest('.edit-tiffin-btn');
+        if (tiffinBtn) {
+            const tiffin = {
+                id: tiffinBtn.dataset.id,
+                name: tiffinBtn.dataset.name,
+                price: tiffinBtn.dataset.price,
+                category_id: tiffinBtn.dataset.category_id ? Number(tiffinBtn.dataset.category_id) : null,
+                prep_time: Number(tiffinBtn.dataset.prep_time),
+                status: tiffinBtn.dataset.status,
+                description: tiffinBtn.dataset.description,
+                image: tiffinBtn.dataset.image,
+                items: JSON.parse(tiffinBtn.dataset.items || '[]')
+            };
+            openModal('Edit Tiffin Plan', tiffinFields(tiffin) + `<input type="hidden" name="id" value="${tiffin.id}">`, 'Save Changes', getBaseUrl() + '/tiffins/save', setupTiffinFormListeners);
+            return;
+        }
+
+        // Edit Driver -> Inline transition to Grid-by-Grid Form
+        const driverBtn = event.target.closest('.edit-driver-btn');
+        if (driverBtn) {
+            const d = {
+                id: driverBtn.dataset.id,
+                name: driverBtn.dataset.name,
+                phone: driverBtn.dataset.phone,
+                email: driverBtn.dataset.email,
+                address: driverBtn.dataset.address,
+                license_no: driverBtn.dataset.license_no,
+                license_expiry: driverBtn.dataset.license_expiry,
+                vehicle_reg_no: driverBtn.dataset.vehicle_reg_no,
+                assigned_zip: driverBtn.dataset.assigned_zip,
+                status: driverBtn.dataset.status
+            };
+
+            const listSec = getElement('driverListSection');
+            const editSec = getElement('driverEditSection');
+
+            if (listSec && editSec) {
+                listSec.style.display = 'none';
+                editSec.style.display = 'block';
+
+                // Populate inputs
+                getElement('editDriverId').value = d.id;
+                
+                // Split Name
+                const fullName = d.name || '';
+                const nameParts = fullName.trim().split(/\s+/);
+                const firstName = nameParts[0] || '';
+                const lastName = nameParts.slice(1).join(' ') || '';
+                if (getElement('editDriverFirstName')) {
+                    getElement('editDriverFirstName').value = firstName;
+                    getElement('editDriverLastName').value = lastName;
+                }
+                getElement('editDriverName').value = fullName;
+                getElement('editDriverPhone').value = d.phone;
+                getElement('editDriverEmail').value = d.email === 'null' || !d.email ? '' : d.email;
+                getElement('editDriverVehicle').value = d.vehicle_reg_no === 'null' || !d.vehicle_reg_no ? '' : d.vehicle_reg_no;
+                getElement('editDriverPostcode').value = d.assigned_zip === 'null' || !d.assigned_zip ? '' : d.assigned_zip;
+                getElement('editDriverLicense').value = d.license_no === 'null' || !d.license_no ? '' : d.license_no;
+                getElement('editDriverLicenseExpiry').value = d.license_expiry === 'null' || !d.license_expiry ? '' : d.license_expiry;
+                getElement('editDriverAddress').value = d.address === 'null' || !d.address ? '' : d.address;
+                getElement('editDriverStatus').value = d.status || 'Active';
+                getElement('editDriverPassword').value = '';
+
+                // Bind back/cancel actions
+                const backToList = () => {
+                    editSec.style.display = 'none';
+                    listSec.style.display = 'block';
+                };
+
+                const backBtn = getElement('backToDriverListBtn');
+                if (backBtn) backBtn.onclick = backToList;
+
+                const cancelBtn = getElement('cancelDriverEditBtn');
+                if (cancelBtn) cancelBtn.onclick = backToList;
+            }
+            return;
+        }
+
+        // Edit Customer
+        const customerBtn = event.target.closest('.edit-customer-btn');
+        if (customerBtn) {
+            const listSec = getElement('customerListSection');
+            const editSec = getElement('customerEditGridSection');
+
+            if (listSec && editSec) {
+                listSec.style.display = 'none';
+                if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
+                if (getElement('customerPaymentGridSection')) getElement('customerPaymentGridSection').style.display = 'none';
+                if (getElement('customerInvoicesGridSection')) getElement('customerInvoicesGridSection').style.display = 'none';
+
+                // Populate inputs
+                getElement('editCustomerId').value = customerBtn.dataset.id;
+
+                // Split Name
+                const fullName = customerBtn.dataset.name || '';
+                const nameParts = fullName.trim().split(/\s+/);
+                const firstName = nameParts[0] || '';
+                const lastName = nameParts.slice(1).join(' ') || '';
+                getElement('editCustomerFirstName').value = firstName;
+                getElement('editCustomerLastName').value = lastName;
+                getElement('editCustomerName').value = fullName;
+
+                getElement('editCustomerPhone').value = customerBtn.dataset.phone;
+                getElement('editCustomerEmail').value = customerBtn.dataset.email;
+                getElement('editCustomerPincode').value = customerBtn.dataset.pincode;
+                if (getElement('editCustomerStatus')) {
+                    getElement('editCustomerStatus').value = customerBtn.dataset.status || 'Active';
+                }
+
+                // Split Address (format: street, town/suburbs, postcode)
+                const rawAddress = customerBtn.dataset.address || '';
+                const addressParts = rawAddress.split(',').map(p => p.trim());
+                const street = addressParts[0] || '';
+                const suburb = addressParts[1] || '';
+                getElement('editCustomerStreet').value = street;
+                getElement('editCustomerSuburb').value = suburb;
+                getElement('editCustomerAddress').value = rawAddress;
+
+                editSec.style.display = 'block';
+
+                // Setup back triggers
+                const backBtn = getElement('backToCustomerListFromEditBtn');
+                const cancelBtn = getElement('cancelCustomerEditBtn');
+                const goBack = () => {
+                    editSec.style.display = 'none';
+                    listSec.style.display = 'block';
+                };
+                if (backBtn) backBtn.onclick = goBack;
+                if (cancelBtn) cancelBtn.onclick = goBack;
+            }
+            return;
+        }
+
+        // Edit Coupon
+        const couponBtn = event.target.closest('.edit-coupon-btn');
+        if (couponBtn) {
+            const coupon = {
+                id: couponBtn.dataset.id,
+                code: couponBtn.dataset.code,
+                type: couponBtn.dataset.type,
+                value: couponBtn.dataset.value,
+                expiry_date: couponBtn.dataset.expiry_date,
+                status: couponBtn.dataset.status
+            };
+            openModal('Edit Coupon Details', couponFields(coupon) + `<input type="hidden" name="id" value="${coupon.id}">`, 'Save Changes', getBaseUrl() + '/coupons/save');
+            return;
+        }
+
+        // Edit Invoice
+        const invoiceBtn = event.target.closest('.edit-invoice-btn');
+        if (invoiceBtn) {
+            const inv = {
+                id: invoiceBtn.dataset.id,
+                customer_id: Number(invoiceBtn.dataset.customer_id),
+                amount: invoiceBtn.dataset.amount,
+                due_date: invoiceBtn.dataset.due_date,
+                status: invoiceBtn.dataset.status,
+                collected_photo: invoiceBtn.dataset.collected_photo
+            };
+            openModal('Edit Invoice Details', invoiceFields(inv) + `<input type="hidden" name="id" value="${inv.id}">`, 'Save Changes', getBaseUrl() + '/invoices/save');
+            return;
+        }
+
+        // Edit Administrator User
+        const userBtn = event.target.closest('.edit-user-btn');
+        if (userBtn) {
+            const u = {
+                id: userBtn.dataset.id,
+                name: userBtn.dataset.name,
+                email: userBtn.dataset.email
+            };
+            openModal('Edit Admin Credentials', userFields(u) + `<input type="hidden" name="id" value="${u.id}">`, 'Save Changes', getBaseUrl() + '/users/save');
+            return;
+        }
+
+        // View Items in Category (Read-only Modal)
+        const viewItemsBtn = event.target.closest('.view-items-btn');
+        if (viewItemsBtn) {
+            const name = viewItemsBtn.dataset.name;
+            const categoryItems = JSON.parse(viewItemsBtn.dataset.items || '[]');
+
+            const fields = `
         <div style="font-size:0.9rem; max-height: 350px; overflow-y: auto;">
           <h4 style="margin: 0 0 12px 0; color: var(--primary-color);">Items under "${escapeHtml(name)}"</h4>
           ${categoryItems.length === 0 ? '<p style="opacity: 0.6;">No items found in this category.</p>' : categoryItems.map(item => `
@@ -927,23 +977,33 @@
           `).join('')}
         </div>
       `;
-      
-      openModal('Category Items', fields, 'Close', '#');
-      modalForm.action = '#';
-      modalForm.onsubmit = e => {
-        e.preventDefault();
-        closeModal();
-      };
-      return;
-    }
 
-    // Print Invoice helper
-    function printOrderInvoice(order, customer) {
-      const printWindow = window.open('', '_blank');
-      
-      let addonsHtml = '';
-      if (order.raw_addons && order.raw_addons.length > 0) {
-        addonsHtml = `
+            openModal('Category Items', fields, 'Close', '#');
+            modalForm.action = '#';
+            modalForm.onsubmit = e => {
+                e.preventDefault();
+                closeModal();
+            };
+            return;
+        }
+
+        // Helper to format date to dd-mm-yyyy
+        function formatDateDMY(dateStr) {
+            if (!dateStr || dateStr === 'N/A') return dateStr;
+            const parts = dateStr.split('-');
+            if (parts.length === 3) {
+                return `${parts[2]}-${parts[1]}-${parts[0]}`;
+            }
+            return dateStr;
+        }
+
+        // Print Invoice helper
+        function printOrderInvoice(order, customer) {
+            const printWindow = window.open('', '_blank');
+
+            let addonsHtml = '';
+            if (order.raw_addons && order.raw_addons.length > 0) {
+                addonsHtml = `
           <tr class="heading">
             <td colspan="2" style="background: #f7f9fa; border-bottom: 1px solid #ddd; font-weight: bold; padding: 6px 10px; font-size: 0.85rem; text-align: left; text-transform: uppercase; color: #555;">Add-on Items</td>
           </tr>
@@ -954,9 +1014,9 @@
             </tr>
           `).join('')}
         `;
-      }
+            }
 
-      const htmlContent = `
+            const htmlContent = `
         <!DOCTYPE html>
         <html>
         <head>
@@ -987,10 +1047,10 @@
                 <td colspan="2">
                   <table>
                     <tr>
-                      <td class="title">KP'S KITCHEN</td>
+                      <td class="title"><img src="${getBaseUrl()}/public/assets/images/logo.png" alt="KP's Kitchen" style="max-height: 80px; width: auto; display: block;"></td>
                       <td style="text-align: right; font-size: 0.9rem; color: #777;">
                         Invoice ID: <strong>${escapeHtml(order.id)}</strong><br>
-                        Invoice Date: ${escapeHtml(order.date)}
+                        Invoice Date: ${escapeHtml(formatDateDMY(order.date))}
                       </td>
                     </tr>
                   </table>
@@ -1002,8 +1062,8 @@
                     <tr>
                       <td style="color: #666; font-size: 0.85rem;">
                         <strong>KP's Kitchen Pty Ltd.</strong><br>
-                        120 Collins Street<br>
-                        Melbourne, VIC 3000
+                        120 King William Street<br>
+                        Adelaide, SA 5000
                       </td>
                       <td style="text-align: right; color: #666; font-size: 0.85rem;">
                         <strong>Bill To:</strong><br>
@@ -1045,51 +1105,51 @@
         </html>
       `;
 
-      printWindow.document.open();
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-    }
-
-    function printWeeklyInvoice(inv, orders, customer) {
-      const weekOrders = orders.filter(o => {
-        return o.date >= inv.start_of_week && o.date <= inv.end_of_week;
-      });
-
-      // Fallback if no orders mapped inside the week range
-      if (weekOrders.length === 0) {
-        const singleOrder = orders.find(o => String(o.id) === String(inv.order_id));
-        if (singleOrder) {
-          weekOrders.push(singleOrder);
-        } else {
-          weekOrders.push({
-            id: inv.order_id || 'N/A',
-            date: inv.created_at || 'N/A',
-            tiffin: 'Tiffin Plan Service',
-            addons: 'None',
-            amount: inv.amount,
-            raw_addons: []
-          });
+            printWindow.document.open();
+            printWindow.document.write(htmlContent);
+            printWindow.document.close();
         }
-      }
 
-      const printWindow = window.open('', '_blank');
-      const totalAmount = weekOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+        function printWeeklyInvoice(inv, orders, customer) {
+            const weekOrders = orders.filter(o => {
+                return o.date >= inv.start_of_week && o.date <= inv.end_of_week;
+            });
 
-      let ordersHtml = '';
-      weekOrders.forEach((order, index) => {
-        let addonsListHtml = '';
-        if (order.raw_addons && order.raw_addons.length > 0) {
-          addonsListHtml = `
+            // Fallback if no orders mapped inside the week range
+            if (weekOrders.length === 0) {
+                const singleOrder = orders.find(o => String(o.id) === String(inv.order_id));
+                if (singleOrder) {
+                    weekOrders.push(singleOrder);
+                } else {
+                    weekOrders.push({
+                        id: inv.order_id || 'N/A',
+                        date: inv.created_at || 'N/A',
+                        tiffin: 'Tiffin Plan Service',
+                        addons: 'None',
+                        amount: inv.amount,
+                        raw_addons: []
+                    });
+                }
+            }
+
+            const printWindow = window.open('', '_blank');
+            const totalAmount = weekOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+
+            let ordersHtml = '';
+            weekOrders.forEach((order, index) => {
+                let addonsListHtml = '';
+                if (order.raw_addons && order.raw_addons.length > 0) {
+                    addonsListHtml = `
             <div style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #ddd; font-size: 0.8rem; color: #666;">
               <strong>Add-ons:</strong> ${order.raw_addons.map(a => `${escapeHtml(a.name)} (x${a.qty || 1}) - $${Number(a.price).toFixed(2)}`).join(', ')}
             </div>
           `;
-        }
+                }
 
-        ordersHtml += `
+                ordersHtml += `
           <tr class="item ${index === weekOrders.length - 1 ? 'last' : ''}">
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: middle;">
-              <strong style="color: #333;">Order #${escapeHtml(order.id)}</strong> <span style="font-size: 0.8rem; color: #888; margin-left: 8px;">(${escapeHtml(order.date)})</span>
+              <strong style="color: #333;">Order #${escapeHtml(order.id)}</strong> <span style="font-size: 0.8rem; color: #888; margin-left: 8px;">(${escapeHtml(formatDateDMY(order.date))})</span>
               <div style="font-size: 0.85rem; color: #555; margin-top: 4px;"><strong>Tiffin:</strong> ${escapeHtml(order.tiffin)}</div>
               ${addonsListHtml}
             </td>
@@ -1098,9 +1158,9 @@
             </td>
           </tr>
         `;
-      });
+            });
 
-      const htmlContent = `
+            const htmlContent = `
         <!DOCTYPE html>
         <html>
         <head>
@@ -1119,9 +1179,9 @@
             .invoice-box table tr.item.last td { border-bottom: none; }
             .invoice-box table tr.total td:nth-child(2) { border-top: 2px solid #eee; font-weight: bold; font-size: 1.1rem; color: #FF6B6B; padding-top: 15px; }
             .status-badge { display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; text-transform: uppercase; }
-            .status-paid { background-color: #e8f8f0; color: #2ecc71; }
-            .status-unpaid { background-color: #fde8e8; color: #e74c3c; }
-            .status-pending { background-color: #fef5e7; color: #f39c12; }
+            .status-badge status-paid { background-color: #e8f8f0; color: #2ecc71; }
+            .status-badge status-unpaid { background-color: #fde8e8; color: #e74c3c; }
+            .status-badge status-pending { background-color: #fef5e7; color: #f39c12; }
           </style>
         </head>
         <body>
@@ -1131,28 +1191,28 @@
                 <td colspan="2">
                   <table>
                     <tr>
-                      <td style="font-size: 28px; line-height: 35px; font-weight: bold; color: #FF6B6B;">
-                        KP'S KITCHEN
+                      <td style="font-size: 28px; line-height: 35px;">
+                        <img src="${getBaseUrl()}/public/assets/images/logo.png" alt="KP's Kitchen" style="max-height: 80px; width: auto; display: block;">
                       </td>
                       <td style="text-align: right; font-size: 0.9rem; line-height: 1.5;">
                         <strong>Invoice ID:</strong> ${escapeHtml(inv.id)}<br>
-                        <strong>Billing Period:</strong> ${escapeHtml(inv.week_range)}<br>
-                        <strong>Due Date:</strong> ${escapeHtml(inv.due_date)}<br>
-                        <strong>Payment Date:</strong> ${escapeHtml(inv.paid_date)}
+                        <strong>Billing Period:</strong> ${escapeHtml(formatDateDMY(inv.start_of_week))} - ${escapeHtml(formatDateDMY(inv.end_of_week))}<br>
+                        <strong>Due Date:</strong> ${escapeHtml(formatDateDMY(inv.due_date))}<br>
+                        <strong>Payment Date:</strong> ${escapeHtml(formatDateDMY(inv.paid_date))}
                       </td>
                     </tr>
                   </table>
                 </td>
               </tr>
-              
+
               <tr class="information">
                 <td colspan="2">
                   <table>
                     <tr>
                       <td style="color: #666; font-size: 0.85rem;">
                         <strong>KP's Kitchen Ltd.</strong><br>
-                        100 Melbourne Way<br>
-                        Melbourne VIC 3000
+                        120 King William Street<br>
+                        Adelaide, SA 5000
                       </td>
                       <td style="text-align: right; color: #666; font-size: 0.85rem;">
                         <strong>Customer Name:</strong> ${escapeHtml(customer.name)}<br>
@@ -1164,14 +1224,14 @@
                   </table>
                 </td>
               </tr>
-              
+
               <tr class="heading">
                 <td style="text-align: left;">Weekly Orders Summary</td>
                 <td style="text-align: right;">Price</td>
               </tr>
-              
+
               ${ordersHtml}
-              
+
               <tr class="total">
                 <td style="padding-top: 15px; text-align: left; vertical-align: middle;">
                   <strong>Payment Status:</strong>
@@ -1193,56 +1253,56 @@
         </html>
       `;
 
-      printWindow.document.open();
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-    }
+            printWindow.document.open();
+            printWindow.document.write(htmlContent);
+            printWindow.document.close();
+        }
 
-    // View Customer Details -> Dynamic Inline Grid
-    const viewCustomerBtn = event.target.closest('.view-customer-details-btn');
-    if (viewCustomerBtn) {
-      const customerId = viewCustomerBtn.dataset.id;
-      
-      const listSec = getElement('customerListSection');
-      const gridSec = getElement('customerDetailedGridSection');
-      const gridContent = getElement('customerDetailsGridContent');
-      
-      if (listSec && gridSec && gridContent) {
-        listSec.style.display = 'none';
-        gridSec.style.display = 'block';
-        gridContent.innerHTML = `
+        // View Customer Details -> Dynamic Inline Grid
+        const viewCustomerBtn = event.target.closest('.view-customer-details-btn');
+        if (viewCustomerBtn) {
+            const customerId = viewCustomerBtn.dataset.id;
+
+            const listSec = getElement('customerListSection');
+            const gridSec = getElement('customerDetailedGridSection');
+            const gridContent = getElement('customerDetailsGridContent');
+
+            if (listSec && gridSec && gridContent) {
+                listSec.style.display = 'none';
+                gridSec.style.display = 'block';
+                gridContent.innerHTML = `
           <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
             <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(255,107,107,0.2); border-radius: 50%; border-top-color: var(--primary-color); animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
             <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading customer profile details & billing cycles...</p>
           </div>
         `;
-        
-        // Setup Back Button
-        const backBtn = getElement('backToCustomerListBtn');
-        if (backBtn) {
-          backBtn.onclick = () => {
-            gridSec.style.display = 'none';
-            listSec.style.display = 'block';
-          };
-        }
-      }
-      
-      (async () => {
-        try {
-          const response = await apiRequest(`api/customers/${customerId}/details`);
-          if (!response.success) {
-            throw new Error(response.message || 'Failed to load details.');
-          }
-          
-          const customer = response.customer;
-          const addresses = response.addresses;
-          const orders = response.orders;
-          const weeklyBilling = response.weekly_billing;
-          
-          const totalOrdersCount = orders.length;
-          const totalSpentAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
-          
-          const html = `
+
+                // Setup Back Button
+                const backBtn = getElement('backToCustomerListBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        gridSec.style.display = 'none';
+                        listSec.style.display = 'block';
+                    };
+                }
+            }
+
+            (async () => {
+                try {
+                    const response = await apiRequest(`api/customers/${customerId}/details`);
+                    if (!response.success) {
+                        throw new Error(response.message || 'Failed to load details.');
+                    }
+
+                    const customer = response.customer;
+                    const addresses = response.addresses;
+                    const orders = response.orders;
+                    const weeklyBilling = response.weekly_billing;
+
+                    const totalOrdersCount = orders.length;
+                    const totalSpentAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+
+                    const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
               <!-- Top Profile & Statistics Cards Grid -->
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
@@ -1253,7 +1313,7 @@
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Phone: <strong style="color: var(--text-primary);">${escapeHtml(customer.phone)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Email: <strong style="color: var(--text-primary);">${escapeHtml(customer.email)}</strong></p>
                 </div>
-                
+
                 <!-- Billing Account Stats Card -->
                 <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column; justify-content: center; gap: 16px;">
                   <h4 style="margin: 0 0 4px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📊 Account Activity</h4>
@@ -1286,70 +1346,73 @@
               </div>
             </div>
           `;
-          
-          if (gridContent) {
-            gridContent.innerHTML = html;
-          }
-          
-        } catch (err) {
-          if (gridContent) {
-            gridContent.innerHTML = `
+
+                    if (gridContent) {
+                        gridContent.innerHTML = html;
+                    }
+
+                } catch (err) {
+                    if (gridContent) {
+                        gridContent.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Profile</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
             `;
-          }
+                    }
+                }
+            })();
+            return;
         }
-      })();
-      return;
-    }
 
-    // View Customer Payment History -> Dynamic Inline Grid
-    const viewCustomerPaymentBtn = event.target.closest('.view-customer-payment-btn');
-    if (viewCustomerPaymentBtn) {
-      const customerId = viewCustomerPaymentBtn.dataset.id;
-      
-      const listSec = getElement('customerListSection');
-      const paymentSec = getElement('customerPaymentGridSection');
-      const paymentContent = getElement('customerPaymentGridContent');
-      
-      if (listSec && paymentSec && paymentContent) {
-        listSec.style.display = 'none';
-        if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
-        paymentSec.style.display = 'block';
-        paymentContent.innerHTML = `
+        // View Customer Payment History -> Dynamic Inline Grid
+        const viewCustomerPaymentBtn = event.target.closest('.view-customer-payment-btn');
+        if (viewCustomerPaymentBtn) {
+            const customerId = viewCustomerPaymentBtn.dataset.id;
+
+            const listSec = getElement('customerListSection');
+            const paymentSec = getElement('customerPaymentGridSection');
+            const paymentContent = getElement('customerPaymentGridContent');
+
+            if (listSec && paymentSec && paymentContent) {
+                listSec.style.display = 'none';
+                if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
+                if (getElement('historySearchInput')) {
+                    getElement('historySearchInput').value = '';
+                }
+                paymentSec.style.display = 'block';
+                paymentContent.innerHTML = `
           <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
             <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(46,204,113,0.2); border-radius: 50%; border-top-color: #2ECC71; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
             <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading customer payment history & statements...</p>
           </div>
         `;
-        
-        // Setup Back Button
-        const backBtn = getElement('backToCustomerListFromPaymentBtn');
-        if (backBtn) {
-          backBtn.onclick = () => {
-            paymentSec.style.display = 'none';
-            listSec.style.display = 'block';
-          };
-        }
-      }
-      
-      (async () => {
-        try {
-          const response = await apiRequest(`api/customers/${customerId}/details`);
-          if (!response.success) {
-            throw new Error(response.message || 'Failed to load details.');
-          }
-          
-          const customer = response.customer;
-          const orders = response.orders;
-          const weeklyBilling = response.weekly_billing;
-          
-          const totalOrdersCount = orders.length;
-          const totalSpentAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
-          
-          const html = `
+
+                // Setup Back Button
+                const backBtn = getElement('backToCustomerListFromPaymentBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        paymentSec.style.display = 'none';
+                        listSec.style.display = 'block';
+                    };
+                }
+            }
+
+            (async () => {
+                try {
+                    const response = await apiRequest(`api/customers/${customerId}/details`);
+                    if (!response.success) {
+                        throw new Error(response.message || 'Failed to load details.');
+                    }
+
+                    const customer = response.customer;
+                    const orders = response.orders;
+                    const weeklyBilling = response.weekly_billing;
+
+                    const totalOrdersCount = orders.length;
+                    const totalSpentAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+
+                    const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
               <!-- Section 2: Previous Orders History & Invoice Downloads -->
               <div>
@@ -1358,25 +1421,28 @@
                   <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
                     <thead class="kp_kitchen_admin_panel_table_head">
                       <tr class="kp_kitchen_admin_panel_table_row">
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 20%;">Order Info</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 25%;">Tiffin Plan</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 25%;">Add-ons ordered</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%;">Amount</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%; text-align: right;">Invoices</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%;">Order ID</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%;">Date</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 20%;">Tiffin Plan</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%;">Quantity</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 20%;">Add-ons ordered</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%;">Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%; text-align: right;">Invoices</th>
                       </tr>
                     </thead>
                     <tbody class="kp_kitchen_admin_panel_table_body">
                       ${orders.length === 0 ? `
                         <tr class="kp_kitchen_admin_panel_table_row">
-                          <td colspan="5" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No past orders found.</td>
+                          <td colspan="7" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No past orders found.</td>
                         </tr>
                       ` : orders.map((order, idx) => `
                         <tr class="kp_kitchen_admin_panel_table_row">
                           <td class="kp_kitchen_admin_panel_table_cell">
                             <strong class="kp_kitchen_admin_panel_table_primary">${escapeHtml(order.id)}</strong>
-                            <span class="kp_kitchen_admin_panel_table_secondary">${escapeHtml(order.date)}</span>
                           </td>
+                          <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateDMY(order.date))}</td>
                           <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.tiffin)}</td>
+                          <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.quantity || 1)}</td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(order.addons)}</td>
                           <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(order.amount).toFixed(2)}</strong></td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
@@ -1390,76 +1456,76 @@
               </div>
             </div>
           `;
-          
-          if (paymentContent) {
-            paymentContent.innerHTML = html;
-            
-            document.querySelectorAll('#customerPaymentGridSection .print-invoice-btn').forEach(btn => {
-              btn.addEventListener('click', e => {
-                const idx = parseInt(e.target.dataset.idx);
-                const selectedOrder = orders[idx];
-                printOrderInvoice(selectedOrder, customer);
-              });
-            });
-          }
-          
-        } catch (err) {
-          if (paymentContent) {
-            paymentContent.innerHTML = `
+
+                    if (paymentContent) {
+                        paymentContent.innerHTML = html;
+
+                        document.querySelectorAll('#customerPaymentGridSection .print-invoice-btn').forEach(btn => {
+                            btn.addEventListener('click', e => {
+                                const idx = parseInt(e.target.dataset.idx);
+                                const selectedOrder = orders[idx];
+                                printOrderInvoice(selectedOrder, customer);
+                            });
+                        });
+                    }
+
+                } catch (err) {
+                    if (paymentContent) {
+                        paymentContent.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Profile</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
             `;
-          }
+                    }
+                }
+            })();
+            return;
         }
-      })();
-      return;
-    }
 
-    // View Customer Invoices -> Dynamic Inline Grid
-    const viewCustomerInvoicesBtn = event.target.closest('.view-customer-invoices-btn');
-    if (viewCustomerInvoicesBtn) {
-      const customerId = viewCustomerInvoicesBtn.dataset.id;
-      
-      const listSec = getElement('customerListSection');
-      const invoicesSec = getElement('customerInvoicesGridSection');
-      const invoicesContent = getElement('customerInvoicesGridContent');
-      
-      if (listSec && invoicesSec && invoicesContent) {
-        listSec.style.display = 'none';
-        if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
-        if (getElement('customerPaymentGridSection')) getElement('customerPaymentGridSection').style.display = 'none';
-        invoicesSec.style.display = 'block';
-        invoicesContent.innerHTML = `
+        // View Customer Invoices -> Dynamic Inline Grid
+        const viewCustomerInvoicesBtn = event.target.closest('.view-customer-invoices-btn');
+        if (viewCustomerInvoicesBtn) {
+            const customerId = viewCustomerInvoicesBtn.dataset.id;
+
+            const listSec = getElement('customerListSection');
+            const invoicesSec = getElement('customerInvoicesGridSection');
+            const invoicesContent = getElement('customerInvoicesGridContent');
+
+            if (listSec && invoicesSec && invoicesContent) {
+                listSec.style.display = 'none';
+                if (getElement('customerDetailedGridSection')) getElement('customerDetailedGridSection').style.display = 'none';
+                if (getElement('customerPaymentGridSection')) getElement('customerPaymentGridSection').style.display = 'none';
+                invoicesSec.style.display = 'block';
+                invoicesContent.innerHTML = `
           <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
             <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(230,126,34,0.2); border-radius: 50%; border-top-color: #E67E22; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
             <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading customer invoice records...</p>
           </div>
         `;
-        
-        // Setup Back Button
-        const backBtn = getElement('backToCustomerListFromInvoicesBtn');
-        if (backBtn) {
-          backBtn.onclick = () => {
-            invoicesSec.style.display = 'none';
-            listSec.style.display = 'block';
-          };
-        }
-      }
-      
-      (async () => {
-        try {
-          const response = await apiRequest(`api/customers/${customerId}/details`);
-          if (!response.success) {
-            throw new Error(response.message || 'Failed to load details.');
-          }
-          
-          const customer = response.customer;
-          const orders = response.orders;
-          const weeklyBilling = response.weekly_billing || [];
-          
-          const html = `
+
+                // Setup Back Button
+                const backBtn = getElement('backToCustomerListFromInvoicesBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        invoicesSec.style.display = 'none';
+                        listSec.style.display = 'block';
+                    };
+                }
+            }
+
+            (async () => {
+                try {
+                    const response = await apiRequest(`api/customers/${customerId}/details`);
+                    if (!response.success) {
+                        throw new Error(response.message || 'Failed to load details.');
+                    }
+
+                    const customer = response.customer;
+                    const orders = response.orders;
+                    const weeklyBilling = response.weekly_billing || [];
+
+                    const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
               <div>
                 <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">🧾 Customer Weekly Invoices & Statements</h4>
@@ -1486,120 +1552,120 @@
                         return `
                           <tr class="kp_kitchen_admin_panel_table_row">
                             <td class="kp_kitchen_admin_panel_table_cell"><strong>${escapeHtml(invoiceNo)}</strong></td>
-                            <td class="kp_kitchen_admin_panel_table_cell">📅 <strong>${escapeHtml(cycle.week_range)}</strong></td>
+                            <td class="kp_kitchen_admin_panel_table_cell">📅 <strong>${escapeHtml(formatDateDMY(cycle.start_date))} - ${escapeHtml(formatDateDMY(cycle.end_date))}</strong></td>
                             <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(cycle.amount).toFixed(2)}</strong></td>
-                            <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateStr(cycle.end_date))}</td>
-                            <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateStr(cycle.paid_date))}</td>
+                            <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateDMY(cycle.end_date))}</td>
+                            <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateDMY(cycle.paid_date))}</td>
                             <td class="kp_kitchen_admin_panel_table_cell">
                               <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${cycle.status.toLowerCase()}">${escapeHtml(cycle.status)}</span>
                             </td>
                             <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
-                              <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view invoice-print-btn" 
+                              <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view invoice-print-btn"
                                 data-idx="${idx}" style="padding: 4px 10px; font-size: 0.75rem; background-color: #3498db; color: white; border-color: #2980b9;">
                                 🖨️ Print PDF
                               </button>
                             </td>
                           </tr>
                         `;
-                      }).join('')}
+                    }).join('')}
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
           `;
-          
-          if (invoicesContent) {
-            invoicesContent.innerHTML = html;
-            
-            // 3. Print Action
-            document.querySelectorAll('#customerInvoicesGridSection .invoice-print-btn').forEach(btn => {
-              btn.addEventListener('click', e => {
-                const idx = parseInt(e.target.dataset.idx);
-                const cycle = weeklyBilling[idx];
-                const invoiceNo = 'INV-' + cycle.start_date.replace(/-/g, '') + '-' + customer.id;
-                
-                const inv = {
-                  id: invoiceNo,
-                  week_range: cycle.week_range,
-                  start_of_week: cycle.start_date,
-                  end_of_week: cycle.end_date,
-                  due_date: formatDateStr(cycle.end_date),
-                  paid_date: formatDateStr(cycle.paid_date),
-                  status: cycle.status,
-                  amount: cycle.amount
-                };
-                
-                printWeeklyInvoice(inv, orders, customer);
-              });
-            });
-          }
-          
-        } catch (err) {
-          if (invoicesContent) {
-            invoicesContent.innerHTML = `
+
+                    if (invoicesContent) {
+                        invoicesContent.innerHTML = html;
+
+                        // 3. Print Action
+                        document.querySelectorAll('#customerInvoicesGridSection .invoice-print-btn').forEach(btn => {
+                            btn.addEventListener('click', e => {
+                                const idx = parseInt(e.target.dataset.idx);
+                                const cycle = weeklyBilling[idx];
+                                const invoiceNo = 'INV-' + cycle.start_date.replace(/-/g, '') + '-' + customer.id;
+
+                                const inv = {
+                                    id: invoiceNo,
+                                    week_range: cycle.week_range,
+                                    start_of_week: cycle.start_date,
+                                    end_of_week: cycle.end_date,
+                                    due_date: formatDateStr(cycle.end_date),
+                                    paid_date: formatDateStr(cycle.paid_date),
+                                    status: cycle.status,
+                                    amount: cycle.amount
+                                };
+
+                                printWeeklyInvoice(inv, orders, customer);
+                            });
+                        });
+                    }
+
+                } catch (err) {
+                    if (invoicesContent) {
+                        invoicesContent.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Invoices</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
             `;
-          }
+                    }
+                }
+            })();
+            return;
         }
-      })();
-      return;
-    }
 
-    // View Driver Details -> Dynamic Inline Grid
-    const viewDriverBtn = event.target.closest('.view-driver-details-btn');
-    if (viewDriverBtn) {
-      const driverId = viewDriverBtn.dataset.id;
+        // View Driver Details -> Dynamic Inline Grid
+        const viewDriverBtn = event.target.closest('.view-driver-details-btn');
+        if (viewDriverBtn) {
+            const driverId = viewDriverBtn.dataset.id;
 
-      const listSec = getElement('driverListSection');
-      const detailsSec = getElement('driverDetailsSection');
-      const detailsContent = getElement('driverDetailsContent');
+            const listSec = getElement('driverListSection');
+            const detailsSec = getElement('driverDetailsSection');
+            const detailsContent = getElement('driverDetailsContent');
 
-      if (listSec && detailsSec && detailsContent) {
-        listSec.style.display = 'none';
-        if (getElement('driverEditSection')) getElement('driverEditSection').style.display = 'none';
-        if (getElement('driverHistorySection')) getElement('driverHistorySection').style.display = 'none';
-        detailsSec.style.display = 'block';
-        detailsContent.innerHTML = `
+            if (listSec && detailsSec && detailsContent) {
+                listSec.style.display = 'none';
+                if (getElement('driverEditSection')) getElement('driverEditSection').style.display = 'none';
+                if (getElement('driverHistorySection')) getElement('driverHistorySection').style.display = 'none';
+                detailsSec.style.display = 'block';
+                detailsContent.innerHTML = `
           <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
             <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(52, 152, 219, 0.2); border-radius: 50%; border-top-color: #3498DB; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
             <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading driver profile details...</p>
           </div>
         `;
 
-        // Bind Back Button
-        const backBtn = getElement('backToDriverListFromDetailsBtn');
-        if (backBtn) {
-          backBtn.onclick = () => {
-            detailsSec.style.display = 'none';
-            listSec.style.display = 'block';
-          };
-        }
-      }
+                // Bind Back Button
+                const backBtn = getElement('backToDriverListFromDetailsBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        detailsSec.style.display = 'none';
+                        listSec.style.display = 'block';
+                    };
+                }
+            }
 
-      (async () => {
-        try {
-          const response = await apiRequest(`api/drivers/${driverId}/details`);
-          if (!response.success) {
-            throw new Error(response.message || 'Failed to load details.');
-          }
+            (async () => {
+                try {
+                    const response = await apiRequest(`api/drivers/${driverId}/details`);
+                    if (!response.success) {
+                        throw new Error(response.message || 'Failed to load details.');
+                    }
 
-          const driver = response.driver;
-          const activeShipments = response.active_shipments;
-          const totalOrders = response.total_orders;
+                    const driver = response.driver;
+                    const activeShipments = response.active_shipments;
+                    const totalOrders = response.total_orders;
 
-          const frontImgHtml = driver.license_copy_front 
-            ? `<img src="${getBaseUrl()}/${driver.license_copy_front}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Front">`
-            : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
+                    const frontImgHtml = driver.license_copy_front
+                        ? `<img src="${getBaseUrl()}/${driver.license_copy_front}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Front">`
+                        : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
 
-          const backImgHtml = driver.license_copy_back 
-            ? `<img src="${getBaseUrl()}/${driver.license_copy_back}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Back">`
-            : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
+                    const backImgHtml = driver.license_copy_back
+                        ? `<img src="${getBaseUrl()}/${driver.license_copy_back}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Back">`
+                        : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
 
-          const html = `
+                    const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
               <!-- Top Profiles & Performance stats Grid -->
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
@@ -1659,65 +1725,65 @@
             </div>
           `;
 
-          if (detailsContent) {
-            detailsContent.innerHTML = html;
-          }
+                    if (detailsContent) {
+                        detailsContent.innerHTML = html;
+                    }
 
-        } catch (err) {
-          if (detailsContent) {
-            detailsContent.innerHTML = `
+                } catch (err) {
+                    if (detailsContent) {
+                        detailsContent.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Profile</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
             `;
-          }
+                    }
+                }
+            })();
+            return;
         }
-      })();
-      return;
-    }
 
-    // View Driver History -> Dynamic Inline Grid
-    const viewDriverHistoryBtn = event.target.closest('.view-driver-history-btn');
-    if (viewDriverHistoryBtn) {
-      const driverId = viewDriverHistoryBtn.dataset.id;
+        // View Driver History -> Dynamic Inline Grid
+        const viewDriverHistoryBtn = event.target.closest('.view-driver-history-btn');
+        if (viewDriverHistoryBtn) {
+            const driverId = viewDriverHistoryBtn.dataset.id;
 
-      const listSec = getElement('driverListSection');
-      const historySec = getElement('driverHistorySection');
-      const historyContent = getElement('driverHistoryContent');
+            const listSec = getElement('driverListSection');
+            const historySec = getElement('driverHistorySection');
+            const historyContent = getElement('driverHistoryContent');
 
-      if (listSec && historySec && historyContent) {
-        listSec.style.display = 'none';
-        if (getElement('driverEditSection')) getElement('driverEditSection').style.display = 'none';
-        if (getElement('driverDetailsSection')) getElement('driverDetailsSection').style.display = 'none';
-        historySec.style.display = 'block';
-        historyContent.innerHTML = `
+            if (listSec && historySec && historyContent) {
+                listSec.style.display = 'none';
+                if (getElement('driverEditSection')) getElement('driverEditSection').style.display = 'none';
+                if (getElement('driverDetailsSection')) getElement('driverDetailsSection').style.display = 'none';
+                historySec.style.display = 'block';
+                historyContent.innerHTML = `
           <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
             <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(230,126,34,0.2); border-radius: 50%; border-top-color: #E67E22; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
             <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading delivery history...</p>
           </div>
         `;
 
-        // Bind Back Button
-        const backBtn = getElement('backToDriverListFromHistoryBtn');
-        if (backBtn) {
-          backBtn.onclick = () => {
-            historySec.style.display = 'none';
-            listSec.style.display = 'block';
-          };
-        }
-      }
+                // Bind Back Button
+                const backBtn = getElement('backToDriverListFromHistoryBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        historySec.style.display = 'none';
+                        listSec.style.display = 'block';
+                    };
+                }
+            }
 
-      (async () => {
-        try {
-          const response = await apiRequest(`api/drivers/${driverId}/details`);
-          if (!response.success) {
-            throw new Error(response.message || 'Failed to load details.');
-          }
+            (async () => {
+                try {
+                    const response = await apiRequest(`api/drivers/${driverId}/details`);
+                    if (!response.success) {
+                        throw new Error(response.message || 'Failed to load details.');
+                    }
 
-          const orders = response.orders || [];
+                    const orders = response.orders || [];
 
-          const html = `
+                    const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
               <!-- Deliveries Table Grid -->
               <div>
@@ -1728,7 +1794,7 @@
                       <tr class="kp_kitchen_admin_panel_table_row">
                         <th class="kp_kitchen_admin_panel_table_heading">Order ID & Date</th>
                         <th class="kp_kitchen_admin_panel_table_heading">Customer</th>
-                        <th class="kp_kitchen_admin_panel_table_heading">Tiffin Plan</th>
+                        <th class="kp_kitchen_admin_panel_table_heading">Customer Address</th>
                         <th class="kp_kitchen_admin_panel_table_heading">Dropped Image</th>
                         <th class="kp_kitchen_admin_panel_table_heading">Delivery Status</th>
                       </tr>
@@ -1745,7 +1811,7 @@
                             <span class="kp_kitchen_admin_panel_table_secondary">${escapeHtml(order.date)}</span>
                           </td>
                           <td class="kp_kitchen_admin_panel_table_cell"><strong>${escapeHtml(order.customer)}</strong></td>
-                          <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.tiffin)}</td>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="font-size: 0.85rem; max-width: 280px; white-space: normal; line-height: 1.4;">${escapeHtml(order.customer_address || 'No address')}</td>
                           <td class="kp_kitchen_admin_panel_table_cell">
                             ${order.proof_of_delivery_photo ? `
                               <a href="${getBaseUrl()}/${order.proof_of_delivery_photo}" target="_blank">
@@ -1765,80 +1831,80 @@
             </div>
           `;
 
-          if (historyContent) {
-            historyContent.innerHTML = html;
-          }
+                    if (historyContent) {
+                        historyContent.innerHTML = html;
+                    }
 
-        } catch (err) {
-          if (historyContent) {
-            historyContent.innerHTML = `
+                } catch (err) {
+                    if (historyContent) {
+                        historyContent.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading History</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
             `;
-          }
+                    }
+                }
+            })();
+            return;
         }
-      })();
-      return;
-    }
 
-    // View Order Details -> Dynamic Inline Grid
-    const viewOrderDetailsBtn = event.target.closest('.view-order-details-btn');
-    if (viewOrderDetailsBtn) {
-      const orderId = viewOrderDetailsBtn.dataset.id;
+        // View Order Details -> Dynamic Inline Grid
+        const viewOrderDetailsBtn = event.target.closest('.view-order-details-btn');
+        if (viewOrderDetailsBtn) {
+            const orderId = viewOrderDetailsBtn.dataset.id;
 
-      const listSec = getElement('ordersListSection');
-      const detailsSec = getElement('orderDetailsGridSection');
-      const detailsContent = getElement('orderDetailsGridContent');
+            const listSec = getElement('ordersListSection');
+            const detailsSec = getElement('orderDetailsGridSection');
+            const detailsContent = getElement('orderDetailsGridContent');
 
-      if (listSec && detailsSec && detailsContent) {
-        listSec.style.display = 'none';
-        detailsSec.style.display = 'block';
-        detailsContent.innerHTML = `
+            if (listSec && detailsSec && detailsContent) {
+                listSec.style.display = 'none';
+                detailsSec.style.display = 'block';
+                detailsContent.innerHTML = `
           <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
             <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(52, 152, 219, 0.2); border-radius: 50%; border-top-color: #3498DB; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
             <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading order details...</p>
           </div>
         `;
 
-        // Bind Back Button
-        const backBtn = getElement('backToOrdersListBtn');
-        if (backBtn) {
-          backBtn.onclick = () => {
-            detailsSec.style.display = 'none';
-            listSec.style.display = 'block';
-          };
-        }
-      }
+                // Bind Back Button
+                const backBtn = getElement('backToOrdersListBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        detailsSec.style.display = 'none';
+                        listSec.style.display = 'block';
+                    };
+                }
+            }
 
-      (async () => {
-        try {
-          const response = await apiRequest(`api/orders/${orderId}/details`);
-          if (!response.success) {
-            throw new Error(response.message || 'Failed to load details.');
-          }
+            (async () => {
+                try {
+                    const response = await apiRequest(`api/orders/${orderId}/details`);
+                    if (!response.success) {
+                        throw new Error(response.message || 'Failed to load details.');
+                    }
 
-          const order = response.order;
+                    const order = response.order;
 
-          // Build addons list html
-          let addonsHtml = '';
-          if (order.add_ons && order.add_ons.length > 0) {
-            addonsHtml = `
+                    // Build addons list html
+                    let addonsHtml = '';
+                    if (order.add_ons && order.add_ons.length > 0) {
+                        addonsHtml = `
               <ul style="margin: 0; padding-left: 20px; font-size: 0.9rem; line-height: 1.6; color: var(--text-secondary);">
                 ${order.add_ons.map(addon => `
                   <li><strong>${escapeHtml(addon.name)}</strong> (Quantity: ${addon.qty}) - $${Number(addon.price).toFixed(2)}</li>
                 `).join('')}
               </ul>
             `;
-          } else {
-            addonsHtml = `<p style="margin: 0; font-size: 0.9rem; font-style: italic; color: var(--text-secondary);">No addons ordered.</p>`;
-          }
+                    } else {
+                        addonsHtml = `<p style="margin: 0; font-size: 0.9rem; font-style: italic; color: var(--text-secondary);">No addons ordered.</p>`;
+                    }
 
-          // Build POD photos html
-          let podHtml = '';
-          if (order.proof_of_delivery_photo || order.proof_of_delivery_signature) {
-            podHtml = `
+                    // Build POD photos html
+                    let podHtml = '';
+                    if (order.proof_of_delivery_photo || order.proof_of_delivery_signature) {
+                        podHtml = `
               <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); grid-column: span 2;">
                 <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📦 Proof of Delivery</h4>
                 <div style="display: flex; gap: 24px; flex-wrap: wrap;">
@@ -1861,9 +1927,9 @@
                 </div>
               </div>
             `;
-          }
+                    }
 
-          const html = `
+                    const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
               <!-- Top Row: Customer & Order Details Grid -->
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
@@ -1885,7 +1951,7 @@
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Total Amount: <strong style="color: var(--text-primary); font-size: 1.1rem; color: #2ECC71;">$${Number(order.amount).toFixed(2)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Assigned Driver: <strong style="color: var(--text-primary);">${escapeHtml(order.driver_name)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">
-                    Current Status: 
+                    Current Status:
                     <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${order.status.toLowerCase().replace(/ /g, '')}">${escapeHtml(order.status)}</span>
                   </p>
                 </div>
@@ -1896,8 +1962,8 @@
                 <!-- Tiffin & Addons Card -->
                 <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
                   <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">🍱 Subscription Details</h4>
-                  <p style="margin: 8px 0 16px 0; font-size: 0.95rem; line-height: 1.5;">Tiffin Plan: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.tiffin_name)}</strong> ($${Number(order.tiffin_price).toFixed(2)})</p>
-                  
+                  <p style="margin: 8px 0 16px 0; font-size: 0.95rem; line-height: 1.5;">Tiffin Plan: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.tiffin_name)}</strong> (Quantity: <strong>${order.quantity}</strong>) ($${Number(order.tiffin_price).toFixed(2)} each)</p>
+
                   <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">Ordered Add-ons:</span>
                   ${addonsHtml}
                 </div>
@@ -1918,130 +1984,321 @@
             </div>
           `;
 
-          if (detailsContent) {
-            detailsContent.innerHTML = html;
-          }
+                    if (detailsContent) {
+                        detailsContent.innerHTML = html;
+                    }
 
-        } catch (err) {
-          if (detailsContent) {
-            detailsContent.innerHTML = `
+                } catch (err) {
+                    if (detailsContent) {
+                        detailsContent.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Details</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
               </div>
             `;
-          }
+                    }
+                }
+            })();
+            return;
         }
-      })();
-      return;
-    }
 
-    // Modal Cancel/Overlay clicks
-    if (event.target.id === 'modalClose' || event.target.id === 'modal') {
-      closeModal();
-    }
-    if (event.target.id === 'detailsModalClose' || event.target.id === 'detailsModal') {
-      closeDetailsModal();
-    }
-  });
+        // Modal Cancel/Overlay clicks
+        if (event.target.id === 'modalClose' || event.target.id === 'modal') {
+            closeModal();
+        }
+        if (event.target.id === 'detailsModalClose' || event.target.id === 'detailsModal') {
+            closeDetailsModal();
+        }
+    });
 
-  // Collapsible Sidebar Accordion Logic
-  function initCollapsibleSidebar() {
-    const activeSubItem = document.querySelector('.kp_kitchen_admin_panel_nav_sub_item_active');
-    if (activeSubItem) {
-      const parentGroup = activeSubItem.closest('.kp_kitchen_admin_panel_nav_group');
-      if (parentGroup) {
-        parentGroup.classList.add('kp_kitchen_admin_panel_nav_group_active');
-      }
-    }
+    // Collapsible Sidebar Accordion Logic
+    function initCollapsibleSidebar() {
+        const activeSubItem = document.querySelector('.kp_kitchen_admin_panel_nav_sub_item_active');
+        if (activeSubItem) {
+            const parentGroup = activeSubItem.closest('.kp_kitchen_admin_panel_nav_group');
+            if (parentGroup) {
+                parentGroup.classList.add('kp_kitchen_admin_panel_nav_group_active');
+            }
+        }
 
-    document.querySelectorAll('.kp_kitchen_admin_panel_nav_group_header').forEach(header => {
-      header.addEventListener('click', (e) => {
-        e.preventDefault();
-        const parent = header.closest('.kp_kitchen_admin_panel_nav_group');
-        const isActive = parent.classList.contains('kp_kitchen_admin_panel_nav_group_active');
-        
-        document.querySelectorAll('.kp_kitchen_admin_panel_nav_group').forEach(g => {
-          g.classList.remove('kp_kitchen_admin_panel_nav_group_active');
+        document.querySelectorAll('.kp_kitchen_admin_panel_nav_group_header').forEach(header => {
+            header.addEventListener('click', (e) => {
+                e.preventDefault();
+                const parent = header.closest('.kp_kitchen_admin_panel_nav_group');
+                const isActive = parent.classList.contains('kp_kitchen_admin_panel_nav_group_active');
+
+                document.querySelectorAll('.kp_kitchen_admin_panel_nav_group').forEach(g => {
+                    g.classList.remove('kp_kitchen_admin_panel_nav_group_active');
+                });
+
+                if (!isActive) {
+                    parent.classList.add('kp_kitchen_admin_panel_nav_group_active');
+                }
+            });
         });
-        
-        if (!isActive) {
-          parent.classList.add('kp_kitchen_admin_panel_nav_group_active');
-        }
-      });
-    });
-  }
-
-  // --- Header Search Bar Listener ---
-  const globalSearch = getElement('globalSearch');
-  if (globalSearch) {
-    globalSearch.addEventListener('keypress', event => {
-      if (event.key === 'Enter') {
-        const query = globalSearch.value.trim();
-        const url = new URL(window.location.href);
-        if (query) {
-          url.searchParams.set('search', query);
-        } else {
-          url.searchParams.delete('search');
-        }
-        window.location.href = url.toString();
-      }
-    });
-  }
-
-  // --- Client-side Customer Search ---
-  const customerSearchInput = getElement('customerSearchInput');
-  const clearSearchBtn = getElement('clearCustomerSearchBtn');
-  
-  if (customerSearchInput) {
-    customerSearchInput.addEventListener('input', () => {
-      const filterText = customerSearchInput.value.toLowerCase().trim();
-      const rows = document.querySelectorAll('#customersTableBody .kp_kitchen_admin_panel_table_row');
-      
-      let visibleCount = 0;
-      rows.forEach(row => {
-        const nameCell = row.cells[0]?.textContent.toLowerCase() || '';
-        const phoneCell = row.cells[1]?.textContent.toLowerCase() || '';
-        const emailCell = row.cells[2]?.textContent.toLowerCase() || '';
-        
-        if (nameCell.includes(filterText) || phoneCell.includes(filterText) || emailCell.includes(filterText)) {
-          row.style.display = '';
-          visibleCount++;
-        } else {
-          row.style.display = 'none';
-        }
-      });
-      
-      if (clearSearchBtn) {
-        clearSearchBtn.style.display = filterText.length > 0 ? 'inline-flex' : 'none';
-      }
-      
-      let noResultsRow = document.getElementById('customerNoResultsRow');
-      if (visibleCount === 0 && rows.length > 0) {
-        if (!noResultsRow) {
-          noResultsRow = document.createElement('tr');
-          noResultsRow.id = 'customerNoResultsRow';
-          noResultsRow.innerHTML = `<td colspan="6" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No customers found matching "${escapeHtml(customerSearchInput.value)}".</td>`;
-          document.getElementById('customersTableBody').appendChild(noResultsRow);
-        } else {
-          noResultsRow.style.display = '';
-          noResultsRow.querySelector('td').textContent = `No customers found matching "${customerSearchInput.value}".`;
-        }
-      } else if (noResultsRow) {
-        noResultsRow.style.display = 'none';
-      }
-    });
-    
-    if (clearSearchBtn) {
-      clearSearchBtn.addEventListener('click', () => {
-        customerSearchInput.value = '';
-        customerSearchInput.dispatchEvent(new Event('input'));
-      });
     }
-  }
 
-  // --- Initialise ---
-  initSearchQuery();
-  loadStateData();
-  initCollapsibleSidebar();
+    // --- Header Search Bar Listener ---
+    const globalSearch = getElement('globalSearch');
+    if (globalSearch) {
+        globalSearch.addEventListener('keypress', event => {
+            if (event.key === 'Enter') {
+                const query = globalSearch.value.trim();
+                const url = new URL(window.location.href);
+                if (query) {
+                    url.searchParams.set('search', query);
+                } else {
+                    url.searchParams.delete('search');
+                }
+                window.location.href = url.toString();
+            }
+        });
+    }
+
+    // --- Client-side Customer Search ---
+    const customerSearchInput = getElement('customerSearchInput');
+    const clearSearchBtn = getElement('clearCustomerSearchBtn');
+
+    if (customerSearchInput) {
+        customerSearchInput.addEventListener('input', () => {
+            const filterText = customerSearchInput.value.toLowerCase().trim();
+            const rows = document.querySelectorAll('#customersTableBody .kp_kitchen_admin_panel_table_row');
+
+            let visibleCount = 0;
+            rows.forEach(row => {
+                const nameCell = row.cells[0]?.textContent.toLowerCase() || '';
+                const phoneCell = row.cells[1]?.textContent.toLowerCase() || '';
+                const emailCell = row.cells[2]?.textContent.toLowerCase() || '';
+                const addressCell = row.cells[3]?.textContent.toLowerCase() || '';
+
+                if (nameCell.includes(filterText) || phoneCell.includes(filterText) || emailCell.includes(filterText) || addressCell.includes(filterText)) {
+                    row.style.display = '';
+                    visibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            if (clearSearchBtn) {
+                clearSearchBtn.style.display = filterText.length > 0 ? 'inline-flex' : 'none';
+            }
+
+            let noResultsRow = document.getElementById('customerNoResultsRow');
+            if (visibleCount === 0 && rows.length > 0) {
+                if (!noResultsRow) {
+                    noResultsRow = document.createElement('tr');
+                    noResultsRow.id = 'customerNoResultsRow';
+                    noResultsRow.innerHTML = `<td colspan="6" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No customers found matching "${escapeHtml(customerSearchInput.value)}".</td>`;
+                    document.getElementById('customersTableBody').appendChild(noResultsRow);
+                } else {
+                    noResultsRow.style.display = '';
+                    noResultsRow.querySelector('td').textContent = `No customers found matching "${customerSearchInput.value}".`;
+                }
+            } else if (noResultsRow) {
+                noResultsRow.style.display = 'none';
+            }
+        });
+
+        if (clearSearchBtn) {
+            clearSearchBtn.addEventListener('click', () => {
+                customerSearchInput.value = '';
+                customerSearchInput.dispatchEvent(new Event('input'));
+            });
+        }
+    }
+
+    // --- Client-side Customer Edit Form Concatenation ---
+    const customerEditForm = getElement('customerEditForm');
+    if (customerEditForm) {
+        customerEditForm.addEventListener('submit', () => {
+            const firstName = getElement('editCustomerFirstName')?.value.trim() || '';
+            const lastName = getElement('editCustomerLastName')?.value.trim() || '';
+            const nameInput = getElement('editCustomerName');
+            if (nameInput) {
+                nameInput.value = (firstName + ' ' + lastName).trim();
+            }
+
+            const street = getElement('editCustomerStreet')?.value.trim() || '';
+            const suburb = getElement('editCustomerSuburb')?.value.trim() || '';
+            const postcode = getElement('editCustomerPincode')?.value.trim() || '';
+            const addressInput = getElement('editCustomerAddress');
+            if (addressInput) {
+                addressInput.value = `${street}, ${suburb}, ${postcode}`;
+            }
+        });
+    }
+
+    // --- Client-side Driver Edit Form Concatenation ---
+    const inlineDriverEditForm = getElement('inlineDriverEditForm');
+    if (inlineDriverEditForm) {
+        inlineDriverEditForm.addEventListener('submit', () => {
+            const firstName = getElement('editDriverFirstName')?.value.trim() || '';
+            const lastName = getElement('editDriverLastName')?.value.trim() || '';
+            const nameInput = getElement('editDriverName');
+            if (nameInput) {
+                nameInput.value = (firstName + ' ' + lastName).trim();
+            }
+        });
+    }
+
+    // --- Client-side Delivery/Order History Search ---
+    const historySearchInput = getElement('historySearchInput');
+    if (historySearchInput) {
+        historySearchInput.addEventListener('input', () => {
+            const filterText = historySearchInput.value.toLowerCase().trim();
+            const rows = document.querySelectorAll('#customerPaymentGridContent tbody tr.kp_kitchen_admin_panel_table_row');
+
+            rows.forEach(row => {
+                if (row.cells.length < 5) return; // Skip empty state row
+
+                const orderId = row.cells[0]?.textContent.toLowerCase() || '';
+                const date = row.cells[1]?.textContent.toLowerCase() || '';
+                const tiffin = row.cells[2]?.textContent.toLowerCase() || '';
+                const qty = row.cells[3]?.textContent.toLowerCase() || '';
+                const addons = row.cells[4]?.textContent.toLowerCase() || '';
+                const amount = row.cells[5]?.textContent.toLowerCase() || '';
+
+                if (orderId.includes(filterText) || date.includes(filterText) || tiffin.includes(filterText) || qty.includes(filterText) || addons.includes(filterText) || amount.includes(filterText)) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        });
+    }
+
+    // --- Batch Driver Assignment ---
+    function initOrderBatchAssignment() {
+        const selectAllCheckbox = document.getElementById('selectAllOrdersCheckbox');
+        const rowCheckboxes = document.querySelectorAll('.order-batch-checkbox');
+        const driverSelects = document.querySelectorAll('.order-driver-select');
+
+        if (!selectAllCheckbox && rowCheckboxes.length === 0 && driverSelects.length === 0) {
+            return;
+        }
+
+        // Helper function to assign driver to an order via AJAX
+        async function assignDriverToOrder(orderId, driverName, selectEl, checkboxEl) {
+            try {
+                if (selectEl) selectEl.disabled = true;
+                if (checkboxEl) checkboxEl.disabled = true;
+
+                const response = await fetch(`${getBaseUrl()}/api/orders`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    body: JSON.stringify({
+                        id: orderId,
+                        driver: driverName
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    showToast(result.message || 'Failed to update order assignment.');
+                    if (checkboxEl) checkboxEl.checked = !checkboxEl.checked;
+                } else {
+                    showToast(`Order ${orderId} successfully assigned to ${driverName}.`);
+                    if (selectEl) {
+                        const option = Array.from(selectEl.options).find(opt => opt.getAttribute('data-driver-name') === driverName);
+                        if (option) {
+                            selectEl.value = option.value;
+                        }
+                    }
+                    if (checkboxEl) {
+                        checkboxEl.checked = (driverName !== 'Unassigned');
+                    }
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('An error occurred while assigning driver.');
+                if (checkboxEl) checkboxEl.checked = !checkboxEl.checked;
+            } finally {
+                if (selectEl) selectEl.disabled = false;
+                if (checkboxEl) checkboxEl.disabled = false;
+                updateSelectAllState();
+            }
+        }
+
+        function updateSelectAllState() {
+            if (!selectAllCheckbox) return;
+            const enabledCheckboxes = Array.from(rowCheckboxes).filter(cb => !cb.disabled);
+            if (enabledCheckboxes.length === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.disabled = true;
+                return;
+            }
+            selectAllCheckbox.disabled = false;
+            const allChecked = enabledCheckboxes.every(cb => cb.checked);
+            selectAllCheckbox.checked = allChecked;
+        }
+
+        updateSelectAllState();
+
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', async (e) => {
+                const isChecked = e.target.checked;
+                const enabledCheckboxes = Array.from(rowCheckboxes).filter(cb => !cb.disabled);
+
+                for (const checkbox of enabledCheckboxes) {
+                    if (checkbox.checked !== isChecked) {
+                        checkbox.checked = isChecked;
+                        const orderId = checkbox.getAttribute('data-order-id');
+                        const row = checkbox.closest('tr');
+                        const selectEl = row.querySelector('.order-driver-select');
+                        let driverName = 'Unassigned';
+
+                        if (isChecked) {
+                            const firstDriverOption = selectEl.querySelector('option[data-driver-name]:not([data-driver-name="Unassigned"])');
+                            if (firstDriverOption) {
+                                driverName = firstDriverOption.getAttribute('data-driver-name');
+                            }
+                        }
+
+                        await assignDriverToOrder(orderId, driverName, selectEl, checkbox);
+                    }
+                }
+            });
+        }
+
+        rowCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', async (e) => {
+                const isChecked = e.target.checked;
+                const orderId = checkbox.getAttribute('data-order-id');
+                const row = checkbox.closest('tr');
+                const selectEl = row.querySelector('.order-driver-select');
+                let driverName = 'Unassigned';
+
+                if (isChecked) {
+                    const firstDriverOption = selectEl.querySelector('option[data-driver-name]:not([data-driver-name="Unassigned"])');
+                    if (firstDriverOption) {
+                        driverName = firstDriverOption.getAttribute('data-driver-name');
+                    }
+                }
+
+                await assignDriverToOrder(orderId, driverName, selectEl, checkbox);
+            });
+        });
+
+        driverSelects.forEach(selectEl => {
+            selectEl.addEventListener('change', async (e) => {
+                const orderId = selectEl.closest('tr').getAttribute('data-order-id');
+                const checkboxEl = selectEl.closest('tr').querySelector('.order-batch-checkbox');
+                const selectedOption = selectEl.options[selectEl.selectedIndex];
+                const driverName = selectedOption.getAttribute('data-driver-name') || 'Unassigned';
+
+                await assignDriverToOrder(orderId, driverName, selectEl, checkboxEl);
+            });
+        });
+    }
+
+    // --- Initialise ---
+    initSearchQuery();
+    loadStateData();
+    initCollapsibleSidebar();
+    initOrderBatchAssignment();
 })();

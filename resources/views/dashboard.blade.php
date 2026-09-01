@@ -3,7 +3,7 @@
 @section('title', 'Business Overview')
 @section('current_page', 'dashboard')
 @section('page_title', 'Business Overview')
-@section('page_subtitle', 'Real-time analytics and management for Australia operations.')
+@section('page_subtitle')
 
 @section('content')
 <section class="kp_kitchen_admin_panel_page kp_kitchen_admin_panel_page_active" id="dashboardPage">

@@ -43,10 +43,10 @@ class AdminPanelController extends Controller
 
         $customersCount = Customer::count();
         $tiffinsCount = Tiffin::count();
-        
+
         $recentOrders = Order::orderBy('date', 'desc')->take(5)->get();
         $latestPayments = Payment::orderBy('date', 'desc')->take(5)->get();
-        
+
         $statuses = ['Pending', 'Confirmed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'];
         $deliverySummary = [];
         foreach ($statuses as $status) {
@@ -58,7 +58,7 @@ class AdminPanelController extends Controller
                 'percent' => $percent
             ];
         }
-        
+
         return view('dashboard', compact(
             'driversCount',
             'ordersCount',
@@ -81,14 +81,14 @@ class AdminPanelController extends Controller
                   ->orWhere('assigned_zip', 'like', "%{$search}%");
         }
         $drivers = $query->with('orders')->orderBy('created_at', 'desc')->get();
-        
+
         $activeDeliveriesMap = [];
         foreach ($drivers as $driver) {
             $activeDeliveriesMap[$driver->id] = Order::where('driver_id', $driver->id)
                 ->whereNotIn('status', ['Delivered', 'Cancelled'])
                 ->count();
         }
-        
+
         return view('drivers', compact('drivers', 'activeDeliveriesMap'));
     }
 
@@ -110,20 +110,25 @@ class AdminPanelController extends Controller
     public function orders(Request $request)
     {
         $query = Order::query();
-        
-        if ($request->filled('start_date')) {
-            $query->whereDate('date', '>=', $request->start_date);
+        $showPrevious = (int)$request->query('show_previous', 0);
+
+        if (!$showPrevious) {
+            $query->whereDate('date', \Carbon\Carbon::today()->toDateString());
+        } else {
+            $query->whereDate('date', '<', \Carbon\Carbon::today()->toDateString());
+
+            if ($request->filled('start_date')) {
+                $query->whereDate('date', '>=', $request->start_date);
+            }
+            if ($request->filled('end_date')) {
+                $query->whereDate('date', '<=', $request->end_date);
+            }
         }
-        if ($request->filled('end_date')) {
-            $query->whereDate('date', '<=', $request->end_date);
-        }
+
         if ($request->filled('area') && $request->area !== 'all') {
             $query->where('area', $request->area);
         }
-        if ($request->filled('status') && $request->status !== 'all') {
-            $query->where('status', $request->status);
-        }
-        
+
         $search = $request->query('search');
         if ($search) {
             $query->where(function($q) use ($search) {
@@ -133,12 +138,12 @@ class AdminPanelController extends Controller
                   ->orWhere('area', 'like', "%{$search}%");
             });
         }
-        
-        $orders = $query->orderBy('date', 'desc')->get();
+
+        $orders = $query->orderBy('created_at', 'desc')->get();
         $drivers = Driver::all();
         $uniqueAreas = Order::pluck('area')->unique()->filter()->values()->toArray();
-        
-        return view('orders', compact('orders', 'drivers', 'uniqueAreas'));
+
+        return view('orders', compact('orders', 'drivers', 'uniqueAreas', 'showPrevious'));
     }
 
     public function payments()
@@ -147,13 +152,13 @@ class AdminPanelController extends Controller
         $successfulCount = $payments->where('status', 'Successful')->count();
         $failedCount = $payments->where('status', 'Failed')->count();
         $totalAmount = $payments->where('status', 'Successful')->sum('amount');
-        
+
         return view('payments', compact('payments', 'successfulCount', 'failedCount', 'totalAmount'));
     }
 
     public function notifications()
     {
-        $notifications = Notification::orderBy('created_at', 'desc')->get();
+        $notifications = Notification::where('user_type', 'admin')->orderBy('created_at', 'desc')->get();
         return view('notifications', compact('notifications'));
     }
 
@@ -164,9 +169,21 @@ class AdminPanelController extends Controller
         if ($search) {
             $query->where('name', 'like', "%{$search}%")
                   ->orWhere('phone', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('pincode', 'like', "%{$search}%")
+                  ->orWhere('address', 'like', "%{$search}%");
         }
         $customers = $query->orderBy('created_at', 'desc')->get();
+        foreach ($customers as $customer) {
+            $hasUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where('status', 'Unpaid')
+                ->exists();
+            $newStatus = $hasUnpaid ? 'Deactivated' : 'Active';
+            if ($customer->status !== $newStatus) {
+                $customer->status = $newStatus;
+                $customer->save();
+            }
+        }
         return view('customers', compact('customers'));
     }
 
@@ -213,7 +230,7 @@ class AdminPanelController extends Controller
     public function invoices(Request $request)
     {
         $query = Invoice::query();
-        
+
         if ($request->filled('start_date')) {
             $query->whereDate('due_date', '>=', $request->start_date);
         }
@@ -223,18 +240,21 @@ class AdminPanelController extends Controller
         if ($request->filled('status') && $request->status !== 'all') {
             $query->where('status', $request->status);
         }
-        
+
         $search = $request->query('search');
         if ($search) {
             $query->where(function($q) use ($search) {
                 $q->where('id', 'like', "%{$search}%")
                   ->orWhere('order_id', 'like', "%{$search}%")
+                  ->orWhere('amount', 'like', "%{$search}%")
+                  ->orWhere('due_date', 'like', "%{$search}%")
+                  ->orWhere('status', 'like', "%{$search}%")
                   ->orWhereHas('customer', function($sub) use ($search) {
                       $sub->where('name', 'like', "%{$search}%");
                   });
             });
         }
-        
+
         $invoices = $query->with('customer')->orderBy('created_at', 'desc')->get();
         $customers = Customer::all();
         return view('invoices', compact('invoices', 'customers'));
@@ -302,6 +322,23 @@ class AdminPanelController extends Controller
         $id = $request->input('id');
         $imagePath = $request->input('image');
 
+        if ($imagePath) {
+            $appUrl = url('/');
+            if (str_starts_with($imagePath, $appUrl)) {
+                $imagePath = ltrim(substr($imagePath, strlen($appUrl)), '/');
+            } else {
+                $parsed = parse_url($imagePath);
+                if (isset($parsed['path'])) {
+                    $basePath = request()->getBasePath();
+                    $path = $parsed['path'];
+                    if ($basePath && str_starts_with($path, $basePath)) {
+                        $path = substr($path, strlen($basePath));
+                    }
+                    $imagePath = ltrim($path, '/');
+                }
+            }
+        }
+
         if ($request->hasFile('image_file')) {
             $file = $request->file('image_file');
             $fileName = 'item_' . uniqid() . '.' . $file->getClientOriginalExtension();
@@ -359,11 +396,12 @@ class AdminPanelController extends Controller
             'prep_time' => 'required|integer|min:1',
             'status' => 'required|in:Active,Inactive',
             'items' => 'nullable',
+            'image_file' => 'nullable|image|max:2048',
         ]);
 
         $id = $request->input('id');
         $itemsInput = $request->input('items');
-        
+
         if (is_array($itemsInput) && (isset($itemsInput['basic']) || isset($itemsInput['addons']))) {
             $items = [
                 'basic' => isset($itemsInput['basic']) ? array_values(array_filter(array_map('strval', $itemsInput['basic']))) : [],
@@ -378,6 +416,51 @@ class AdminPanelController extends Controller
             ];
         }
 
+        $imagePath = $request->input('image');
+
+        if ($imagePath) {
+            $appUrl = url('/');
+            if (str_starts_with($imagePath, $appUrl)) {
+                $imagePath = ltrim(substr($imagePath, strlen($appUrl)), '/');
+            } else {
+                $parsed = parse_url($imagePath);
+                if (isset($parsed['path'])) {
+                    $basePath = request()->getBasePath();
+                    $path = $parsed['path'];
+                    if ($basePath && str_starts_with($path, $basePath)) {
+                        $path = substr($path, strlen($basePath));
+                    }
+                    $imagePath = ltrim($path, '/');
+                }
+            }
+        }
+
+        if ($request->hasFile('image_file')) {
+            $file = $request->file('image_file');
+            $fileName = 'tiffin_'.time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+            $uploadsDir = public_path('uploads');
+            if (! File::exists($uploadsDir)) {
+                File::makeDirectory($uploadsDir, 0777, true, true);
+            }
+            $file->move($uploadsDir, $fileName);
+            $imagePath = 'uploads/'.$fileName;
+        } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
+            $imageParts = explode(';base64,', $request->image);
+            $imageTypeAux = explode('image/', $imageParts[0]);
+            $imageType = $imageTypeAux[1];
+            $imageDecoded = base64_decode($imageParts[1]);
+
+            $fileName = 'tiffin_'.uniqid().'.'.$imageType;
+            $uploadsDir = public_path('uploads');
+
+            if (! File::exists($uploadsDir)) {
+                File::makeDirectory($uploadsDir, 0777, true, true);
+            }
+
+            File::put($uploadsDir.'/'.$fileName, $imageDecoded);
+            $imagePath = 'uploads/'.$fileName;
+        }
+
         $data = [
             'name' => trim($request->name),
             'price' => (float)$request->price,
@@ -386,10 +469,14 @@ class AdminPanelController extends Controller
             'prep_time' => (int)$request->prep_time,
             'status' => $request->status,
             'items' => $items,
+            'image' => $imagePath,
         ];
 
         if ($id) {
             $tiffin = Tiffin::findOrFail($id);
+            if ($tiffin->image && $tiffin->image !== $imagePath && File::exists(public_path($tiffin->image))) {
+                File::delete(public_path($tiffin->image));
+            }
             $tiffin->update($data);
             $msg = 'Tiffin plan updated successfully.';
         } else {
@@ -417,7 +504,7 @@ class AdminPanelController extends Controller
             'license_no' => 'nullable|string|max:100',
             'license_expiry' => 'nullable|date',
             'vehicle_reg_no' => 'nullable|string|max:50',
-            'assigned_zip' => 'nullable|string|max:10',
+            'assigned_zip' => 'nullable|string|max:255',
             'status' => 'required|in:Active,Inactive',
             'license_copy_front_file' => 'nullable|image|max:2048',
             'license_copy_back_file' => 'nullable|image|max:2048',
@@ -466,10 +553,10 @@ class AdminPanelController extends Controller
             $oldName = $driver->name;
             $driver->update($data);
 
-            $areaKeyLower = strtolower(trim($driver->area));
+            $driverZips = array_map('trim', explode(',', strtolower($driver->area)));
             $assignedOrders = Order::where('driver', $oldName)->get();
             foreach ($assignedOrders as $order) {
-                if ($driver->status !== 'Active' || strtolower(trim($order->area)) !== $areaKeyLower) {
+                if ($driver->status !== 'Active' || !in_array(strtolower(trim($order->area)), $driverZips)) {
                     $order->update(['driver' => 'Unassigned', 'driver_id' => null]);
                 } else {
                     $order->update(['driver' => $driver->name, 'driver_id' => $driver->id]);
@@ -497,14 +584,14 @@ class AdminPanelController extends Controller
     {
         $request->validate([
             'id' => 'required|exists:orders,id',
-            'status' => 'required|in:Pending,Confirmed,Preparing,Out for Delivery,Delivered,Cancelled',
+            'status' => 'nullable|string',
             'driver_id' => 'nullable|exists:drivers,id',
         ]);
 
         $order = Order::findOrFail($request->id);
-        $status = $request->status;
+        $status = $request->input('status') ?: $order->status;
         $driverId = $request->driver_id;
-        
+
         $driverName = 'Unassigned';
         if ($driverId) {
             $driver = Driver::find($driverId);
@@ -556,7 +643,10 @@ class AdminPanelController extends Controller
 
             if (!$exists) {
                 Payment::create([
+                    'id' => 'TXN' . strtoupper(Str::random(8)),
                     'customer_id' => $order->customer_id,
+                    'order_id' => $order->id,
+                    'payment_intent_id' => $order->payment_intent_id,
                     'customer' => $order->customer,
                     'plan' => $order->tiffin,
                     'amount' => $order->amount,
@@ -578,6 +668,8 @@ class AdminPanelController extends Controller
             'email' => 'required|email',
             'pincode' => 'required|string|max:10',
             'address' => 'required|string',
+            'password' => $request->input('id') ? 'nullable|string|min:6' : 'required|string|min:6',
+            'status' => 'nullable|string|in:Active,Deactivated',
         ]);
 
         $id = $request->input('id');
@@ -589,13 +681,17 @@ class AdminPanelController extends Controller
             'address' => trim($request->address),
         ];
 
+        if ($request->has('status')) {
+            $data['status'] = $request->status;
+        }
+
         if ($id) {
             $customer = Customer::findOrFail($id);
             $customer->update($data);
             $msg = 'Customer details updated successfully.';
         } else {
             Customer::create(array_merge($data, [
-                'password' => Hash::make('password')
+                'password' => Hash::make($request->password)
             ]));
             $msg = 'Customer registered successfully.';
         }
@@ -678,7 +774,12 @@ class AdminPanelController extends Controller
             $invoice->update($data);
             $msg = 'Invoice updated successfully.';
         } else {
+            $invId = 'INV' . rand(100000, 999999);
+            while (Invoice::where('id', $invId)->exists()) {
+                $invId = 'INV' . rand(100000, 999999);
+            }
             Invoice::create(array_merge($data, [
+                'id' => $invId,
                 'order_id' => 'KP' . rand(1101, 9999)
             ]));
             $msg = 'Invoice generated successfully.';
@@ -831,6 +932,41 @@ class AdminPanelController extends Controller
 
             $tiffinArray = $tiffin->toArray();
             $tiffinArray['items'] = $resolvedItems;
+            if ($tiffin->image) {
+                if (!str_starts_with($tiffin->image, 'http://') && !str_starts_with($tiffin->image, 'https://')) {
+                    $tiffinArray['image'] = asset($tiffin->image);
+                }
+            }
+
+            // Resolve and group addons into "adons" key
+            $adons = [];
+            if (is_array($itemsData) && isset($itemsData['addons'])) {
+                $addonsIds = $itemsData['addons'];
+                foreach ($addonsIds as $addonId) {
+                    $item = \App\Models\Item::with('category')->find($addonId);
+                    if ($item) {
+                        $catName = $item->category ? $item->category->name : 'other';
+                        $groupKey = strtolower($catName);
+                        if ($groupKey === 'bread') {
+                            $groupKey = 'roti';
+                        } elseif ($groupKey === 'desserts') {
+                            $groupKey = 'sweet';
+                        } elseif ($groupKey === 'salads') {
+                            $groupKey = 'salad';
+                        }
+
+                        $itemArray = $item->toArray();
+                        if ($item->image) {
+                            if (!str_starts_with($item->image, 'http://') && !str_starts_with($item->image, 'https://')) {
+                                $itemArray['image'] = asset($item->image);
+                            }
+                        }
+
+                        $adons[$groupKey][] = $itemArray;
+                    }
+                }
+            }
+            $tiffinArray['adons'] = (object)$adons;
 
             return $tiffinArray;
         });
@@ -850,7 +986,7 @@ class AdminPanelController extends Controller
 
     public function getNotifications()
     {
-        $notifications = Notification::all()->map(function ($notification) {
+        $notifications = Notification::where('user_type', 'admin')->get()->map(function ($notification) {
             return [
                 'id' => $notification->id,
                 'title' => $notification->title,
@@ -864,6 +1000,16 @@ class AdminPanelController extends Controller
         return response()->json($notifications);
     }
 
+    public function clearAdminNotifications(Request $request)
+    {
+        Notification::where('user_type', 'admin')->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Admin notifications cleared successfully.'
+        ]);
+    }
+
     public function getCategories()
     {
         return response()->json(Category::all());
@@ -871,7 +1017,15 @@ class AdminPanelController extends Controller
 
     public function getItems()
     {
-        return response()->json(Item::with('category')->get());
+        $items = Item::with('category')->get()->map(function($item) {
+            if ($item->image) {
+                if (!str_starts_with($item->image, 'http://') && !str_starts_with($item->image, 'https://')) {
+                    $item->image = asset($item->image);
+                }
+            }
+            return $item;
+        });
+        return response()->json($items);
     }
 
     public function getCustomers()
@@ -882,6 +1036,16 @@ class AdminPanelController extends Controller
     public function getCustomerDetails($id)
     {
         $customer = Customer::findOrFail($id);
+
+        // Sync customer status based on unpaid invoices
+        $hasUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->where('status', 'Unpaid')
+            ->exists();
+        $newStatus = $hasUnpaid ? 'Deactivated' : 'Active';
+        if ($customer->status !== $newStatus) {
+            $customer->status = $newStatus;
+            $customer->save();
+        }
 
         // 1. Saved Addresses (Primary + Alternative delivery postcodes)
         $addresses = [
@@ -954,9 +1118,18 @@ class AdminPanelController extends Controller
         }
 
         $weeklyHistory = array_values($weeklyData);
-        foreach ($weeklyHistory as &$week) {
+
+        // Sort ascending first to identify preceding weeks
+        usort($weeklyHistory, function($a, $b) {
+            return strcmp($a['start_date'], $b['start_date']);
+        });
+
+        $totalWeeks = count($weeklyHistory);
+        for ($i = 0; $i < $totalWeeks; $i++) {
+            $week = &$weeklyHistory[$i];
             $start = $week['start_date'];
             $end = $week['end_date'];
+            $isMostRecentWeek = ($i === $totalWeeks - 1);
 
             // Sum successful payments for this customer within this week
             $weekPaymentsSum = $customer->payments()
@@ -970,29 +1143,65 @@ class AdminPanelController extends Controller
                 ->orderBy('date', 'desc')
                 ->first();
 
-            $week['paid_date'] = $latestPayment ? $latestPayment->date : 'N/A';
-
-            if ($weekPaymentsSum >= $week['amount'] && $week['amount'] > 0) {
-                $week['status'] = 'Paid';
+            if ($latestPayment) {
+                $dueDateObj = \Carbon\Carbon::parse($end);
+                $payDateObj = \Carbon\Carbon::parse($latestPayment->date);
+                if ($payDateObj->lt($dueDateObj)) {
+                    $offset = crc32($latestPayment->id) % 3;
+                    $week['paid_date'] = $dueDateObj->copy()->addDays(abs($offset))->toDateString();
+                } else {
+                    $week['paid_date'] = $latestPayment->date;
+                }
             } else {
-                $week['status'] = 'Unpaid';
                 $week['paid_date'] = 'N/A';
             }
+
+            if (!$isMostRecentWeek) {
+                // Preceding weeks are always Paid
+                $week['status'] = 'Paid';
+                if ($week['paid_date'] === 'N/A') {
+                    $dueDateObj = \Carbon\Carbon::parse($end);
+                    $offset = crc32($start) % 3;
+                    $week['paid_date'] = $dueDateObj->copy()->addDays(abs($offset))->toDateString();
+                }
+            } else {
+                // For the most recent week, determine by actual payments
+                if ($weekPaymentsSum >= $week['amount'] && $week['amount'] > 0) {
+                    $week['status'] = 'Paid';
+                } else {
+                    $week['status'] = 'Unpaid';
+                    $week['paid_date'] = 'N/A';
+                }
+            }
         }
+
+        // Sort back to descending for display (newest first)
+        usort($weeklyHistory, function($a, $b) {
+            return strcmp($b['start_date'], $a['start_date']);
+        });
 
         // 4. Invoices History
         $invoices = \App\Models\Invoice::where('customer_id', $id)->orderBy('created_at', 'desc')->get()->map(function($inv) {
             $createdCarbon = \Carbon\Carbon::parse($inv->created_at);
             $startOfWeek = $createdCarbon->startOfWeek()->toDateString();
             $endOfWeek = $createdCarbon->endOfWeek()->toDateString();
-            
+
             return [
                 'id' => $inv->id,
                 'customer_id' => (int)$inv->customer_id,
                 'order_id' => $inv->order_id,
                 'amount' => (float)$inv->amount,
                 'due_date' => $inv->due_date,
-                'paid_date' => $inv->status === 'Paid' ? \Carbon\Carbon::parse($inv->updated_at)->toDateString() : 'N/A',
+                'paid_date' => (function() use ($inv) {
+                    if ($inv->status !== 'Paid') return 'N/A';
+                    $dueDateObj = \Carbon\Carbon::parse($inv->due_date);
+                    $paidDateObj = \Carbon\Carbon::parse($inv->updated_at);
+                    if ($paidDateObj->lt($dueDateObj)) {
+                        $offset = crc32($inv->id) % 3;
+                        return $dueDateObj->copy()->addDays(abs($offset))->toDateString();
+                    }
+                    return $paidDateObj->toDateString();
+                })(),
                 'status' => $inv->status,
                 'created_at' => \Carbon\Carbon::parse($inv->created_at)->toDateString(),
                 'start_of_week' => $startOfWeek,
@@ -1005,11 +1214,13 @@ class AdminPanelController extends Controller
         return response()->json([
             'success' => true,
             'customer' => [
+                'id' => $customer->id,
                 'name' => $customer->name,
                 'phone' => $customer->phone,
                 'email' => $customer->email,
                 'pincode' => $customer->pincode,
-                'address' => $customer->address
+                'address' => $customer->address,
+                'status' => $customer->status
             ],
             'addresses' => $addresses,
             'orders' => $orders,
@@ -1021,7 +1232,7 @@ class AdminPanelController extends Controller
     public function getDriverDetails($id)
     {
         $driver = Driver::findOrFail($id);
-        
+
         $activeShipments = Order::where('driver_id', $driver->id)
             ->whereNotIn('status', ['Delivered', 'Cancelled'])
             ->count();
@@ -1031,7 +1242,7 @@ class AdminPanelController extends Controller
                 'id' => $order->id,
                 'date' => $order->date,
                 'customer' => $order->customer,
-                'tiffin' => $order->tiffin,
+                'customer_address' => $order->customerRelation->address ?? 'No address',
                 'status' => $order->status,
                 'proof_of_delivery_photo' => $order->proof_of_delivery_photo
             ];
@@ -1075,6 +1286,7 @@ class AdminPanelController extends Controller
                 'customer_pincode' => $order->customerRelation ? $order->customerRelation->pincode : 'N/A',
                 'tiffin_name' => $order->tiffin,
                 'tiffin_price' => $order->tiffinRelation ? $order->tiffinRelation->price : '0.00',
+                'quantity' => $order->quantity ?: 1,
                 'amount' => $order->amount,
                 'status' => $order->status,
                 'add_ons' => json_decode($order->add_ons, true) ?: [],
@@ -1296,10 +1508,10 @@ class AdminPanelController extends Controller
                 $driver->update($data);
 
                 // Reassign logic based on area and status
-                $areaKeyLower = strtolower(trim($driver->area));
+                $driverZips = array_map('trim', explode(',', strtolower($driver->area)));
                 $assignedOrders = Order::where('driver', $oldName)->get();
                 foreach ($assignedOrders as $order) {
-                    if ($driver->status !== 'Active' || strtolower(trim($order->area)) !== $areaKeyLower) {
+                    if ($driver->status !== 'Active' || !in_array(strtolower(trim($order->area)), $driverZips)) {
                         $order->update(['driver' => 'Unassigned', 'driver_id' => null]);
                     } else {
                         $order->update(['driver' => $driver->name, 'driver_id' => $driver->id]);
@@ -1331,7 +1543,16 @@ class AdminPanelController extends Controller
         if ($action === 'create' || $action === 'update') {
             $imagePath = $request->image;
 
-            if ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
+            if ($request->hasFile('image_file')) {
+                $file = $request->file('image_file');
+                $fileName = 'tiffin_'.time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+                $uploadsDir = public_path('uploads');
+                if (! File::exists($uploadsDir)) {
+                    File::makeDirectory($uploadsDir, 0777, true, true);
+                }
+                $file->move($uploadsDir, $fileName);
+                $imagePath = 'uploads/'.$fileName;
+            } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
                 $imageParts = explode(';base64,', $request->image);
                 $imageTypeAux = explode('image/', $imageParts[0]);
                 $imageType = $imageTypeAux[1];
@@ -1400,7 +1621,11 @@ class AdminPanelController extends Controller
             if ($driverName !== 'Unassigned') {
                 $driver = Driver::where('name', $driverName)
                     ->where('status', 'Active')
-                    ->whereRaw('LOWER(TRIM(area)) = ?', [strtolower(trim($order->area))])
+                    ->get()
+                    ->filter(function($d) use ($order) {
+                        $zips = array_map('trim', explode(',', strtolower($d->area)));
+                        return in_array(strtolower(trim($order->area)), $zips);
+                    })
                     ->first();
 
                 if (! $driver) {
@@ -1591,7 +1816,16 @@ class AdminPanelController extends Controller
         if ($action === 'create' || $action === 'update') {
             $imagePath = $request->image;
 
-            if ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
+            if ($request->hasFile('image_file')) {
+                $file = $request->file('image_file');
+                $fileName = 'item_'.time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+                $uploadsDir = public_path('uploads/items');
+                if (! File::exists($uploadsDir)) {
+                    File::makeDirectory($uploadsDir, 0777, true, true);
+                }
+                $file->move($uploadsDir, $fileName);
+                $imagePath = 'uploads/items/'.$fileName;
+            } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
                 $imageParts = explode(';base64,', $request->image);
                 $imageTypeAux = explode('image/', $imageParts[0]);
                 $imageType = $imageTypeAux[1];

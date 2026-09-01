@@ -1,21 +1,17 @@
 @extends('layouts.app')
 
-@section('title', 'Payment Deduction')
+@section('title', 'Payment History')
 @section('current_page', 'payments')
-@section('page_title', 'Payment Deduction')
-@section('page_subtitle', 'Review and process automatic payment deductions.')
+@section('page_title', 'Payment History')
+@section('page_subtitle', 'Review customer payment transactions.')
 
 @section('content')
 <section class="kp_kitchen_admin_panel_page kp_kitchen_admin_panel_page_active" id="paymentsPage">
   <div class="kp_kitchen_admin_panel_section_toolbar">
     <div>
-      <h2 class="kp_kitchen_admin_panel_section_title">Automatic Payment Deduction</h2>
-      <p class="kp_kitchen_admin_panel_section_text">Configure and review recurring customer deductions.</p>
+      <h2 class="kp_kitchen_admin_panel_section_title">Payment History</h2>
+      <p class="kp_kitchen_admin_panel_section_text">Review customer payment transactions and weekly billing history.</p>
     </div>
-    <form method="POST" action="{{ route('payments.run-deduction') }}">
-      @csrf
-      <button type="submit" class="kp_kitchen_admin_panel_primary_button">Run Deduction</button>
-    </form>
   </div>
 
   <div class="kp_kitchen_admin_panel_stats_grid kp_kitchen_admin_panel_stats_grid_three">
@@ -45,8 +41,8 @@
   <article class="kp_kitchen_admin_panel_card">
     <div class="kp_kitchen_admin_panel_card_header">
       <div>
-        <h3 class="kp_kitchen_admin_panel_card_title">Deduction History</h3>
-        <p class="kp_kitchen_admin_panel_card_subtitle">Recurring payments processed for customers</p>
+        <h3 class="kp_kitchen_admin_panel_card_title">Transaction Ledger</h3>
+        <p class="kp_kitchen_admin_panel_card_subtitle">Payments processed for weekly customer balances</p>
       </div>
     </div>
     <div class="kp_kitchen_admin_panel_table_wrap">
@@ -66,6 +62,16 @@
             <tr class="kp_kitchen_admin_panel_table_row">
               <td class="kp_kitchen_admin_panel_table_cell">
                 <strong class="kp_kitchen_admin_panel_table_primary">{{ $payment->id }}</strong>
+                @if ($payment->order_id)
+                  <span class="kp_kitchen_admin_panel_table_secondary" style="font-size: 0.75rem; opacity: 0.75; display: block; margin-top: 4px;">
+                    Order: <strong>{{ $payment->order_id }}</strong>
+                  </span>
+                @endif
+                @if ($payment->payment_intent_id)
+                  <span class="kp_kitchen_admin_panel_table_secondary" style="font-size: 0.70rem; opacity: 0.6; display: block; font-family: monospace;">
+                    Intent: {{ $payment->payment_intent_id }}
+                  </span>
+                @endif
               </td>
               <td class="kp_kitchen_admin_panel_table_cell">
                 <strong>{{ $payment->customer }}</strong>

@@ -18,7 +18,7 @@
 <body class="kp_kitchen_admin_panel_auth_body">
   <main class="kp_kitchen_admin_panel_auth_shell">
     <section class="kp_kitchen_admin_panel_auth_visual">
-      <div class="kp_kitchen_admin_panel_auth_brand">KP Kitchen</div>
+      <div class="kp_kitchen_admin_panel_auth_brand"><img src="{{ asset('public/assets/images/logo.png') }}" alt="KP's Kitchen Logo" style="max-height: 50px; width: auto; object-fit: contain;"></div>
       <div class="kp_kitchen_admin_panel_auth_visual_content">
         <span class="kp_kitchen_admin_panel_auth_badge">Admin Registration</span>
         <h1 class="kp_kitchen_admin_panel_auth_title">Create your administrator account.</h1>

@@ -297,11 +297,25 @@ class AuthController extends Controller
      */
     public function customerRegister(Request $request)
     {
+        if ($request->has('first_name') && $request->has('last_name')) {
+            $request->merge([
+                'name' => trim($request->first_name . ' ' . $request->last_name)
+            ]);
+        } elseif ($request->has('name')) {
+            $nameParts = explode(' ', $request->name, 2);
+            $request->merge([
+                'first_name' => $nameParts[0] ?? '',
+                'last_name' => $nameParts[1] ?? ''
+            ]);
+        }
+
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'name' => 'required_without:first_name|string|max:255',
+            'first_name' => 'required_without:name|string|max:255',
+            'last_name' => 'required_without:name|string|max:255',
             'email' => 'required|email|max:255',
             'phone' => 'required|string|max:50',
-            'password' => 'required|string|min:6',
+            'password' => 'required|string|min:6|confirmed',
             'pincode' => 'required|string|max:10',
             'address' => 'required|string',
         ]);
@@ -334,6 +348,13 @@ class AuthController extends Controller
             'user_type' => 'customer',
         ]);
 
+        $defaultAddr = $customer->addresses()->create([
+            'type' => 'Home',
+            'address_line' => trim($request->address),
+            'pincode' => trim($request->pincode),
+            'is_default' => true,
+        ]);
+
         try {
             Mail::to($customer->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen!", "Thank you {$customer->name} for registering in KP's Kitchen. We are excited to serve you delicious meals!"));
             Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$customer->name} have registerd"));
@@ -349,10 +370,14 @@ class AuthController extends Controller
             'customer' => [
                 'id' => $customer->id,
                 'name' => $customer->name,
+                'first_name' => $customer->first_name,
+                'last_name' => $customer->last_name,
                 'email' => $customer->email,
                 'phone' => $customer->phone,
                 'pincode' => $customer->pincode,
                 'address' => $customer->address,
+                'profile_image' => null,
+                'addresses' => [$defaultAddr],
             ]
         ], 201);
     }
@@ -436,10 +461,15 @@ class AuthController extends Controller
             'customer' => [
                 'id' => $customer->id,
                 'name' => $customer->name,
+                'first_name' => $customer->first_name,
+                'last_name' => $customer->last_name,
                 'email' => $customer->email,
                 'phone' => $customer->phone,
                 'pincode' => $customer->pincode,
                 'address' => $customer->address,
+                'profile_image' => $customer->profile_image ? asset($customer->profile_image) : null,
+                'user_type' => $customer->user_type,
+                'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get(),
             ]
         ]);
     }
@@ -466,19 +496,35 @@ class AuthController extends Controller
     public function customerProfile(Request $request)
     {
         $customer = $request->attributes->get('customer');
+
+        $addresses = $customer->addresses()->orderBy('is_default', 'desc')->get();
+        if ($addresses->isEmpty() && $customer->address) {
+            $created = $customer->addresses()->create([
+                'type' => 'Home',
+                'address_line' => $customer->address,
+                'pincode' => $customer->pincode,
+                'is_default' => true,
+            ]);
+            $addresses = collect([$created]);
+        }
+
         return response()->json([
             'success' => true,
             'customer' => [
                 'id' => $customer->id,
                 'name' => $customer->name,
+                'first_name' => $customer->first_name,
+                'last_name' => $customer->last_name,
                 'email' => $customer->email,
                 'phone' => $customer->phone,
                 'pincode' => $customer->pincode,
                 'address' => $customer->address,
+                'profile_image' => $customer->profile_image ? asset($customer->profile_image) : null,
                 'user_type' => $customer->user_type,
                 'total_orders' => $customer->orders()->count(),
                 'total_spent' => (float)$customer->orders()->sum('amount'),
                 'recent_orders' => $customer->orders()->latest()->take(5)->get(),
+                'addresses' => $addresses,
             ]
         ]);
     }
@@ -504,10 +550,44 @@ class AuthController extends Controller
     public function placeCustomerOrder(Request $request)
     {
         $customer = $request->attributes->get('customer');
+
+        $now = Carbon::now();
+        // Unpaid outstanding invoices from previous weeks (due date is in the past)
+        $outstandingInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->whereDate('due_date', '<', $now->toDateString())
+            ->get();
+
+        $outstandingAmount = $outstandingInvoices->sum('amount');
+
+        if ($outstandingAmount > 0) {
+            $earliestDueDate = $outstandingInvoices->min('due_date');
+            
+            // Count tiffins (quantity) ordered after this earliest due date
+            $postSaturdayTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
+                ->where('date', '>', $earliestDueDate)
+                ->sum('quantity');
+
+            if ($postSaturdayTiffinsCount >= 2) {
+                if ($customer->status !== 'Deactivated') {
+                    $customer->status = 'Deactivated';
+                    $customer->save();
+                }
+            }
+        }
+
+        if ($customer->status === 'Deactivated') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Your account is deactivated due to unpaid weekly invoices. Please clear your outstanding weekly balance to place new orders.',
+            ], 403);
+        }
+
         $validator = Validator::make($request->all(), [
             'tiffin_id' => 'required|exists:tiffins,id',
             'add_ons' => 'nullable|array',
             'note' => 'nullable|string',
+            'quantity' => 'nullable|integer|min:1',
         ]);
 
         if ($validator->fails()) {
@@ -518,8 +598,9 @@ class AuthController extends Controller
         }
 
         $tiffin = \App\Models\Tiffin::findOrFail($request->tiffin_id);
+        $quantity = (int)$request->input('quantity', 1);
         
-        $amount = (float)$tiffin->price;
+        $amount = ((float)$tiffin->price * $quantity);
         $addons = $request->input('add_ons', []);
         if (!empty($addons)) {
             foreach ($addons as $addonId) {
@@ -551,25 +632,245 @@ class AuthController extends Controller
             'customer' => $customer->name,
             'tiffin_id' => $tiffin->id,
             'tiffin' => $tiffin->name,
+            'quantity' => $quantity,
             'area' => $customer->pincode,
             'amount' => $amount,
             'status' => 'Pending',
             'date' => Carbon::now()->toDateString(),
             'add_ons' => json_encode($addonsData),
             'note' => $request->input('note'),
+            'payment_intent_id' => '',
         ]);
+
+        // Generate the invoice automatically for this order
+        $invoiceId = 'INV-' . Carbon::now()->format('Ymd') . '-' . rand(1000, 9999);
+        $invoice = \App\Models\Invoice::create([
+            'id' => $invoiceId,
+            'customer_id' => $customer->id,
+            'order_id' => $order->id,
+            'amount' => $amount,
+            'status' => 'Pending',
+            'due_date' => Carbon::now()->endOfWeek()->toDateString(),
+        ]);
+
+        if ($outstandingAmount > 0) {
+            $postSaturdayTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
+                ->where('date', '>', $earliestDueDate)
+                ->sum('quantity');
+
+            if ($postSaturdayTiffinsCount >= 2) {
+                $customer->status = 'Deactivated';
+                $customer->save();
+            }
+        }
 
         \App\Models\Notification::create([
             'title' => 'New Order Placed',
-            'message' => "Customer {$customer->name} placed order {$orderId} for plan {$tiffin->name}.",
+            'message' => "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}). Weekly invoice {$invoiceId} generated.",
+            'user_type' => 'admin',
+            'user_id' => null,
             'read_status' => false
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Order placed successfully.',
+            'message' => 'Order placed successfully. Weekly invoice generated.',
+            'order' => $order,
+            'invoice' => $invoice,
+            'stripe_client_secret' => '',
+            'payment_intent_id' => '',
+        ]);
+    }
+
+    public function confirmCustomerOrder(Request $request, $id)
+    {
+        $customer = $request->attributes->get('customer');
+        $order = \App\Models\Order::where('customer_id', $customer->id)->findOrFail($id);
+
+        if ($order->status === 'Payment Pending') {
+            $order->status = 'Pending';
+            $order->save();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Order confirmed and sent to kitchen.',
             'order' => $order
         ]);
+    }
+
+    public function payWeeklyBill(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+
+        $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->get();
+
+        $totalAmount = $invoices->sum('amount');
+
+        if ($totalAmount <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No outstanding balance due.'
+            ], 400);
+        }
+
+        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $paymentIntentId = '';
+        $clientSecret = '';
+
+        if ($stripeSecret && $stripeSecret !== 'mock') {
+            try {
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $stripeSecret,
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ])->asForm()->post('https://api.stripe.com/v1/payment_intents', [
+                    'amount' => (int)round($totalAmount * 100),
+                    'currency' => 'aud',
+                    'automatic_payment_methods[enabled]' => 'true',
+                ]);
+
+                if ($response->failed()) {
+                    $errorData = $response->json();
+                    $errorMessage = isset($errorData['error']['message']) ? $errorData['error']['message'] : 'Stripe PaymentIntent creation failed.';
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Stripe error: ' . $errorMessage
+                    ], 400);
+                }
+
+                $stripeData = $response->json();
+                $paymentIntentId = $stripeData['id'];
+                $clientSecret = $stripeData['client_secret'];
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                ], 500);
+            }
+        } else {
+            $paymentIntentId = 'pi_mock_' . strtolower(Str::random(16));
+            $clientSecret = $paymentIntentId . '_secret_' . strtolower(Str::random(16));
+        }
+
+        return response()->json([
+            'success' => true,
+            'amount' => $totalAmount,
+            'stripe_client_secret' => $clientSecret,
+            'payment_intent_id' => $paymentIntentId,
+        ]);
+    }
+
+    public function confirmWeeklyBillPayment(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $paymentIntentId = $request->input('payment_intent_id');
+
+        if (!$paymentIntentId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment intent ID is required.'
+            ], 400);
+        }
+
+        // Prevent Replay Attacks
+        if (\App\Models\Payment::where('payment_intent_id', $paymentIntentId)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This payment transaction has already been processed.'
+            ], 400);
+        }
+
+        // Prevent mock payment intents in production environment
+        if (app()->environment('production') && str_starts_with($paymentIntentId, 'pi_mock_')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid payment intent.'
+            ], 400);
+        }
+
+        $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->get();
+
+        $totalAmount = $invoices->sum('amount');
+
+        if ($totalAmount <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No outstanding balance to pay.'
+            ], 400);
+        }
+
+        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $paymentCleared = false;
+
+        if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
+            try {
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $stripeSecret,
+                ])->get('https://api.stripe.com/v1/payment_intents/' . $paymentIntentId);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (isset($data['status']) && $data['status'] === 'succeeded') {
+                        $paymentCleared = true;
+                    }
+                }
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                ], 500);
+            }
+        } else {
+            $paymentCleared = true;
+        }
+
+        if ($paymentCleared) {
+            $orderIds = $invoices->pluck('order_id')->filter();
+            $plans = \App\Models\Order::whereIn('id', $orderIds)->pluck('tiffin')->unique()->toArray();
+            $planName = !empty($plans) ? implode(', ', $plans) : 'Weekly Bill Payment';
+
+            foreach ($invoices as $invoice) {
+                $invoice->status = 'Paid';
+                $invoice->save();
+            }
+
+            \App\Models\Payment::create([
+                'id' => 'TXN' . strtoupper(Str::random(8)),
+                'customer_id' => $customer->id,
+                'customer' => $customer->name,
+                'plan' => $planName,
+                'amount' => $totalAmount,
+                'date' => Carbon::now()->toDateString(),
+                'status' => 'Successful',
+                'payment_intent_id' => $paymentIntentId,
+            ]);
+
+            $customer->status = 'Active';
+            $customer->save();
+
+            \App\Models\Notification::create([
+                'title' => 'Weekly Bill Paid',
+                'message' => "Thank you! Your weekly payment of AUD {$totalAmount} was successful.",
+                'user_type' => 'customer',
+                'user_id' => $customer->id,
+                'read_status' => false
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Weekly bill payment confirmed successfully.',
+                'amount_paid' => $totalAmount
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Payment verification failed.'
+        ], 400);
     }
 
     /**
@@ -593,10 +894,22 @@ class AuthController extends Controller
     public function customerNotifications(Request $request)
     {
         $customer = $request->attributes->get('customer');
-        $notifications = \App\Models\Notification::where('message', 'like', "%{$customer->name}%")
-            ->orWhere('title', 'like', '%System%')
+        $notifications = \App\Models\Notification::where(function ($query) use ($customer) {
+                $query->where('user_type', 'customer')
+                      ->where('user_id', $customer->id);
+            })
+            ->orWhere(function ($query) {
+                $query->where('user_type', 'customer')
+                      ->whereNull('user_id');
+            })
+            ->orWhere(function ($query) use ($customer) {
+                $query->where(function ($q) {
+                    $q->whereNull('user_type')->orWhere('user_type', 'admin');
+                })->where('message', 'like', "%{$customer->name}%");
+            })
             ->orderBy('created_at', 'desc')
             ->get();
+
         return response()->json([
             'success' => true,
             'notifications' => $notifications
@@ -792,6 +1105,8 @@ class AuthController extends Controller
             'driver' => [
                 'id' => $driver->id,
                 'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
                 'email' => $driver->email,
                 'phone' => $driver->phone,
                 'address' => $driver->address,
@@ -799,8 +1114,10 @@ class AuthController extends Controller
                 'license_expiry' => $driver->license_expiry,
                 'license_copy_front' => $driver->license_copy_front ? asset($driver->license_copy_front) : null,
                 'license_copy_back' => $driver->license_copy_back ? asset($driver->license_copy_back) : null,
+                'profile_image' => $driver->profile_image ? asset($driver->profile_image) : null,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
                 'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
                 'status' => $driver->status,
                 'user_type' => $driver->user_type,
                 'total_assigned_orders' => $driver->orders()->count(),
@@ -1101,6 +1418,7 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'profile_image' => $user->profile_image ? asset($user->profile_image) : null,
                 'user_type' => $user->user_type,
                 'created_at' => $user->created_at->toIso8601String(),
             ]
@@ -1436,5 +1754,1090 @@ class AuthController extends Controller
             'message' => 'Order status updated successfully.',
             'order' => $order
         ]);
+    }
+
+    public function editCustomerProfile(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+
+        // Normalize first_name and last_name into name if provided
+        if ($request->has('first_name') && $request->has('last_name')) {
+            $request->merge([
+                'name' => trim($request->first_name . ' ' . $request->last_name)
+            ]);
+        } elseif ($request->has('name')) {
+            $nameParts = explode(' ', $request->name, 2);
+            $request->merge([
+                'first_name' => $nameParts[0] ?? '',
+                'last_name' => $nameParts[1] ?? ''
+            ]);
+        }
+
+        // Normalize new_password into password if provided
+        if ($request->has('new_password')) {
+            $request->merge([
+                'password' => $request->new_password,
+                'password_confirmation' => $request->new_password_confirmation ?? ''
+            ]);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'required_without:first_name|string|max:255',
+            'first_name' => 'required_without:name|string|max:255',
+            'last_name' => 'required_without:name|string|max:255',
+            'phone' => 'required|string|max:20',
+            'email' => 'required|email|max:255|unique:customers,email,' . $customer->id,
+            'pincode' => 'required_without:addresses|string|max:20',
+            'address' => 'required_without:addresses|string',
+            'old_password' => 'nullable|required_with:password|string',
+            'password' => 'nullable|string|min:6|confirmed',
+            'profile_image' => 'nullable',
+            'image' => 'nullable',
+            'avatar' => 'nullable',
+            'photo' => 'nullable',
+            'addresses' => 'nullable|array',
+            'addresses.*.type' => 'required_with:addresses|string|max:50',
+            'addresses.*.address_line' => 'required_with:addresses|string',
+            'addresses.*.pincode' => 'required_with:addresses|string|max:20',
+            'addresses.*.is_default' => 'required_with:addresses|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $data = [
+            'name' => trim($request->name),
+            'phone' => trim($request->phone),
+            'email' => trim($request->email),
+        ];
+
+        // If addresses array was supplied, extract default address or use the first one as primary
+        if ($request->has('addresses') && is_array($request->addresses)) {
+            $defaultAddr = null;
+            foreach ($request->addresses as $addr) {
+                if (filter_var($addr['is_default'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    $defaultAddr = $addr;
+                    break;
+                }
+            }
+            if (!$defaultAddr && count($request->addresses) > 0) {
+                $defaultAddr = $request->addresses[0];
+            }
+
+            if ($defaultAddr) {
+                $data['address'] = trim($defaultAddr['address_line']);
+                $data['pincode'] = trim($defaultAddr['pincode']);
+            }
+        } else {
+            $data['address'] = trim($request->address);
+            $data['pincode'] = trim($request->pincode);
+        }
+
+        // Handle old password / new password validation
+        if ($request->filled('password')) {
+            if (!$request->filled('old_password')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation error: Old password is required to change password.',
+                ], 422);
+            }
+            if (!Hash::check($request->old_password, $customer->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The old password you entered is incorrect.'
+                ], 422);
+            }
+            $data['password'] = Hash::make($request->password);
+        }
+
+        // Handle universal image upload (multipart or base64)
+        $savedImage = $this->saveUploadedImage(
+            $request,
+            ['profile_image', 'image', 'avatar', 'photo', 'file'],
+            'profile_cust_' . $customer->id,
+            'uploads/profiles',
+            $customer->profile_image
+        );
+        if ($savedImage !== null) {
+            $data['profile_image'] = $savedImage;
+        }
+
+        $customer->update($data);
+        $customer->refresh();
+
+        // Process and sync addresses table
+        if ($request->has('addresses') && is_array($request->addresses)) {
+            $customer->addresses()->delete();
+            foreach ($request->addresses as $addr) {
+                $customer->addresses()->create([
+                    'type' => $addr['type'] ?? 'Home',
+                    'address_line' => trim($addr['address_line']),
+                    'pincode' => trim($addr['pincode']),
+                    'is_default' => filter_var($addr['is_default'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                ]);
+            }
+        }
+
+        $profileImageUrl = $customer->profile_image ? (str_starts_with($customer->profile_image, 'http') ? $customer->profile_image : asset($customer->profile_image)) : null;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile updated successfully.',
+            'customer' => [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'first_name' => $customer->first_name,
+                'last_name' => $customer->last_name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'pincode' => $customer->pincode,
+                'address' => $customer->address,
+                'profile_image' => $profileImageUrl,
+                'user_type' => $customer->user_type,
+                'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get(),
+            ]
+        ]);
+    }
+
+    /**
+     * Get all saved addresses for customer
+     */
+    public function getCustomerAddresses(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $addresses = $customer->addresses()->orderBy('is_default', 'desc')->get();
+        if ($addresses->isEmpty() && $customer->address) {
+            $created = $customer->addresses()->create([
+                'type' => 'Home',
+                'address_line' => $customer->address,
+                'pincode' => $customer->pincode,
+                'is_default' => true,
+            ]);
+            $addresses = collect([$created]);
+        }
+        return response()->json([
+            'success' => true,
+            'addresses' => $addresses
+        ]);
+    }
+
+    /**
+     * Add or update a customer address
+     */
+    public function addOrUpdateCustomerAddress(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $validator = Validator::make($request->all(), [
+            'id' => 'nullable|exists:customer_addresses,id',
+            'type' => 'required|string|max:50',
+            'address_line' => 'required|string',
+            'pincode' => 'required|string|max:20',
+            'is_default' => 'nullable|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $isDefault = filter_var($request->input('is_default', false), FILTER_VALIDATE_BOOLEAN);
+
+        if ($isDefault) {
+            $customer->addresses()->update(['is_default' => false]);
+            $customer->update([
+                'address' => trim($request->address_line),
+                'pincode' => trim($request->pincode)
+            ]);
+        }
+
+        if ($request->filled('id')) {
+            $address = $customer->addresses()->findOrFail($request->id);
+            $address->update([
+                'type' => trim($request->type),
+                'address_line' => trim($request->address_line),
+                'pincode' => trim($request->pincode),
+                'is_default' => $isDefault,
+            ]);
+        } else {
+            if ($customer->addresses()->count() === 0) {
+                $isDefault = true;
+                $customer->update([
+                    'address' => trim($request->address_line),
+                    'pincode' => trim($request->pincode)
+                ]);
+            }
+
+            $address = $customer->addresses()->create([
+                'type' => trim($request->type),
+                'address_line' => trim($request->address_line),
+                'pincode' => trim($request->pincode),
+                'is_default' => $isDefault,
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Address saved successfully.',
+            'address' => $address,
+            'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get()
+        ]);
+    }
+
+    /**
+     * Delete a customer address
+     */
+    public function deleteCustomerAddress(Request $request, $id)
+    {
+        $customer = $request->attributes->get('customer');
+        $address = $customer->addresses()->where('id', $id)->first();
+
+        if (!$address) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Address not found.'
+            ], 404);
+        }
+
+        $wasDefault = $address->is_default;
+        $address->delete();
+
+        if ($wasDefault) {
+            $nextAddr = $customer->addresses()->first();
+            if ($nextAddr) {
+                $nextAddr->update(['is_default' => true]);
+                $customer->update([
+                    'address' => $nextAddr->address_line,
+                    'pincode' => $nextAddr->pincode
+                ]);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Address deleted successfully.',
+            'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get()
+        ]);
+    }
+
+    public function clearCustomerNotifications(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        \App\Models\Notification::where('user_type', 'customer')
+            ->where('user_id', $customer->id)
+            ->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Notifications cleared successfully.'
+        ]);
+    }
+
+    public function cancelCustomerOrder(Request $request, $id)
+    {
+        $customer = $request->attributes->get('customer');
+        $order = \App\Models\Order::where('customer_id', $customer->id)->findOrFail($id);
+
+        if (in_array($order->status, ['Delivered', 'Cancelled'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This order cannot be cancelled as it is already ' . strtolower($order->status) . '.'
+            ], 422);
+        }
+
+        $order->status = 'Cancelled';
+        $order->save();
+
+        \App\Models\Notification::create([
+            'title' => 'Order Cancelled',
+            'message' => "Order {$order->id} has been cancelled by customer {$customer->name}.",
+            'user_type' => 'admin',
+            'user_id' => null,
+            'read_status' => false
+        ]);
+
+        \Illuminate\Support\Facades\Mail::to('admin@kpkitchen.com')->send(new \App\Mail\KitchenAlertMail("Order Cancellation Alert", "Order {$order->id} has been cancelled by customer {$customer->name}."));
+
+        if ($order->driver_id) {
+            \App\Models\Notification::create([
+                'title' => 'Order Cancelled',
+                'message' => "Order {$order->id} has been cancelled by the customer.",
+                'user_type' => 'driver',
+                'user_id' => $order->driver_id,
+                'read_status' => false
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Order has been cancelled successfully.',
+            'order' => $order
+        ]);
+    }
+
+    public function editDriverProfile(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+
+        // Normalize first_name and last_name into name if provided
+        if ($request->has('first_name') && $request->has('last_name')) {
+            $request->merge([
+                'name' => trim($request->first_name . ' ' . $request->last_name)
+            ]);
+        } elseif ($request->has('name')) {
+            $nameParts = explode(' ', $request->name, 2);
+            $request->merge([
+                'first_name' => $nameParts[0] ?? '',
+                'last_name' => $nameParts[1] ?? ''
+            ]);
+        }
+
+        // Normalize new_password into password if provided
+        if ($request->has('new_password')) {
+            $request->merge([
+                'password' => $request->new_password,
+                'password_confirmation' => $request->new_password_confirmation ?? ''
+            ]);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'required_without:first_name|string|max:255',
+            'first_name' => 'required_without:name|string|max:255',
+            'last_name' => 'required_without:name|string|max:255',
+            'phone' => 'required|string|max:50',
+            'email' => 'required|email|max:255|unique:drivers,email,' . $driver->id,
+            'address' => 'nullable|string',
+            'vehicle_reg_no' => 'nullable|string|max:50',
+            'license_no' => 'nullable|string|max:100',
+            'license_expiry' => 'nullable|date',
+            'assigned_zip' => 'nullable|string|max:255',
+            'area' => 'nullable|string|max:255',
+            'old_password' => 'nullable|required_with:password|string',
+            'password' => 'nullable|string|min:6|confirmed',
+            'profile_image' => 'nullable',
+            'image' => 'nullable',
+            'avatar' => 'nullable',
+            'photo' => 'nullable',
+            'license_copy_front' => 'nullable',
+            'license_copy_back' => 'nullable',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $data = [
+            'name' => trim($request->name),
+            'phone' => trim($request->phone),
+            'email' => strtolower(trim($request->email)),
+        ];
+
+        if ($request->has('address')) {
+            $data['address'] = $request->address ? trim($request->address) : null;
+        }
+        if ($request->has('vehicle_reg_no')) {
+            $data['vehicle_reg_no'] = $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null;
+        }
+        if ($request->has('license_no')) {
+            $data['license_no'] = $request->license_no ? trim($request->license_no) : null;
+        }
+        if ($request->has('license_expiry')) {
+            $data['license_expiry'] = $request->license_expiry ? trim($request->license_expiry) : null;
+        }
+        if ($request->has('assigned_zip')) {
+            $data['assigned_zip'] = $request->assigned_zip ? trim($request->assigned_zip) : null;
+            $data['area'] = $data['assigned_zip'];
+        } elseif ($request->has('area')) {
+            $data['area'] = $request->area ? trim($request->area) : null;
+            $data['assigned_zip'] = $data['area'];
+        }
+
+        // Handle old password / new password validation
+        if ($request->filled('password')) {
+            if (!$request->filled('old_password')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation error: Old password is required to change password.',
+                ], 422);
+            }
+            if (!Hash::check($request->old_password, $driver->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The old password you entered is incorrect.'
+                ], 422);
+            }
+            $data['password'] = Hash::make($request->password);
+        }
+
+        // Handle Profile Image Upload
+        $savedProfileImage = $this->saveUploadedImage(
+            $request,
+            ['profile_image', 'image', 'avatar', 'photo', 'file'],
+            'profile_drv_' . $driver->id,
+            'uploads/profiles',
+            $driver->profile_image
+        );
+        if ($savedProfileImage !== null) {
+            $data['profile_image'] = $savedProfileImage;
+        }
+
+        // Handle License Front Copy Upload
+        $savedLicenseFront = $this->saveUploadedImage(
+            $request,
+            ['license_copy_front', 'license_front', 'license_front_image'],
+            'license_front_drv_' . $driver->id,
+            'uploads/licenses',
+            $driver->license_copy_front
+        );
+        if ($savedLicenseFront !== null) {
+            $data['license_copy_front'] = $savedLicenseFront;
+        }
+
+        // Handle License Back Copy Upload
+        $savedLicenseBack = $this->saveUploadedImage(
+            $request,
+            ['license_copy_back', 'license_back', 'license_back_image'],
+            'license_back_drv_' . $driver->id,
+            'uploads/licenses',
+            $driver->license_copy_back
+        );
+        if ($savedLicenseBack !== null) {
+            $data['license_copy_back'] = $savedLicenseBack;
+        }
+
+        $driver->update($data);
+        $driver->refresh();
+
+        $profileImageUrl = $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null;
+        $licFrontUrl = $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null;
+        $licBackUrl = $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile updated successfully.',
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $licFrontUrl,
+                'license_copy_back' => $licBackUrl,
+                'profile_image' => $profileImageUrl,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
+                'status' => $driver->status,
+                'user_type' => $driver->user_type,
+            ]
+        ]);
+    }
+
+    public function clearDriverNotifications(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        \App\Models\Notification::where('user_type', 'driver')
+            ->where('user_id', $driver->id)
+            ->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Notifications cleared successfully.'
+        ]);
+    }
+
+    public function editAdminProfile(Request $request)
+    {
+        $user = Auth::user();
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:users,email,' . $user->id,
+            'password' => 'nullable|string|min:6',
+            'profile_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
+            ], 422);
+        }
+
+        $data = [
+            'name' => trim($request->name),
+            'email' => trim($request->email),
+        ];
+
+        if ($request->filled('password')) {
+            $data['password'] = Hash::make($request->password);
+        }
+
+        if ($request->hasFile('profile_image')) {
+            if ($user->profile_image && \Illuminate\Support\Facades\File::exists(public_path($user->profile_image))) {
+                \Illuminate\Support\Facades\File::delete(public_path($user->profile_image));
+            }
+            $file = $request->file('profile_image');
+            $fileName = 'profile_adm_' . $user->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $uploadsDir = public_path('uploads/profiles');
+            if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
+                \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
+            }
+            $file->move($uploadsDir, $fileName);
+            $data['profile_image'] = 'uploads/profiles/' . $fileName;
+        }
+
+        $user->update($data);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile updated successfully.',
+            'admin' => $user
+        ]);
+    }
+
+    public function createBillPaymentIntent(Request $request, $billId)
+    {
+        $customer = $request->attributes->get('customer');
+        $invoice = \App\Models\Invoice::where('customer_id', $customer->id)->findOrFail($billId);
+
+        if ($invoice->status === 'Paid') {
+            return response()->json([
+                'success' => false,
+                'message' => 'This bill has already been paid.'
+            ], 400);
+        }
+
+        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $paymentIntentId = '';
+        $clientSecret = '';
+
+        if ($stripeSecret && $stripeSecret !== 'mock') {
+            try {
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $stripeSecret,
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ])->asForm()->post('https://api.stripe.com/v1/payment_intents', [
+                    'amount' => (int)round($invoice->amount * 100),
+                    'currency' => 'aud',
+                    'automatic_payment_methods[enabled]' => 'true',
+                ]);
+
+                if ($response->failed()) {
+                    $errorData = $response->json();
+                    $errorMessage = isset($errorData['error']['message']) ? $errorData['error']['message'] : 'Stripe PaymentIntent creation failed.';
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Stripe error: ' . $errorMessage
+                    ], 400);
+                }
+
+                $stripeData = $response->json();
+                $paymentIntentId = $stripeData['id'];
+                $clientSecret = $stripeData['client_secret'];
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                ], 500);
+            }
+        } else {
+            $paymentIntentId = 'pi_mock_' . strtolower(Str::random(16));
+            $clientSecret = $paymentIntentId . '_secret_' . strtolower(Str::random(16));
+        }
+
+        return response()->json([
+            'success' => true,
+            'amount' => $invoice->amount,
+            'stripe_client_secret' => $clientSecret,
+            'payment_intent_id' => $paymentIntentId,
+        ]);
+    }
+
+    public function confirmBillPayment(Request $request, $billId)
+    {
+        $customer = $request->attributes->get('customer');
+        $paymentIntentId = $request->input('payment_intent_id');
+
+        if (!$paymentIntentId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment intent ID is required.'
+            ], 400);
+        }
+
+        // Prevent Replay Attacks
+        if (\App\Models\Payment::where('payment_intent_id', $paymentIntentId)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This payment transaction has already been processed.'
+            ], 400);
+        }
+
+        // Prevent mock payment intents in production environment
+        if (app()->environment('production') && str_starts_with($paymentIntentId, 'pi_mock_')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid payment intent.'
+            ], 400);
+        }
+
+        $invoice = \App\Models\Invoice::where('customer_id', $customer->id)->findOrFail($billId);
+
+        if ($invoice->status === 'Paid') {
+            return response()->json([
+                'success' => true,
+                'message' => 'Bill already marked as paid.',
+                'invoice' => $invoice
+            ]);
+        }
+
+        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $paymentCleared = false;
+
+        if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
+            try {
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $stripeSecret,
+                ])->get('https://api.stripe.com/v1/payment_intents/' . $paymentIntentId);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (isset($data['status']) && $data['status'] === 'succeeded') {
+                        $paymentCleared = true;
+                    }
+                }
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                ], 500);
+            }
+        } else {
+            $paymentCleared = true;
+        }
+
+        if ($paymentCleared) {
+            $invoice->status = 'Paid';
+            $invoice->save();
+
+            // Find order name to save as plan name
+            $planName = 'Weekly Bill Payment';
+            if ($invoice->order_id) {
+                $order = \App\Models\Order::find($invoice->order_id);
+                if ($order) {
+                    $planName = $order->tiffin;
+                }
+            }
+
+            \App\Models\Payment::create([
+                'id' => 'TXN' . strtoupper(Str::random(8)),
+                'customer_id' => $customer->id,
+                'customer' => $customer->name,
+                'plan' => $planName,
+                'amount' => $invoice->amount,
+                'date' => Carbon::now()->toDateString(),
+                'status' => 'Successful',
+                'payment_intent_id' => $paymentIntentId,
+            ]);
+
+            // Reactivate customer account if they have no other unpaid/pending previous invoices
+            $hasUnpaidOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->whereDate('due_date', '<', Carbon::now()->toDateString())
+                ->exists();
+
+            if (!$hasUnpaidOverdue) {
+                $customer->status = 'Active';
+                $customer->save();
+            }
+
+            \App\Models\Notification::create([
+                'title' => 'Bill Paid',
+                'message' => "Your payment of AUD {$invoice->amount} for bill {$invoice->id} was successful.",
+                'user_type' => 'customer',
+                'user_id' => $customer->id,
+                'read_status' => false
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payment confirmed successfully.',
+                'invoice' => $invoice
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Payment verification failed.'
+        ], 400);
+    }
+
+    public function createOrderPaymentIntent(Request $request, $orderId)
+    {
+        $customer = $request->attributes->get('customer');
+        $order = \App\Models\Order::where('customer_id', $customer->id)->findOrFail($orderId);
+
+        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $paymentIntentId = '';
+        $clientSecret = '';
+
+        if ($stripeSecret && $stripeSecret !== 'mock') {
+            try {
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $stripeSecret,
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ])->asForm()->post('https://api.stripe.com/v1/payment_intents', [
+                    'amount' => (int)round($order->amount * 100),
+                    'currency' => 'aud',
+                    'automatic_payment_methods[enabled]' => 'true',
+                ]);
+
+                if ($response->failed()) {
+                    $errorData = $response->json();
+                    $errorMessage = isset($errorData['error']['message']) ? $errorData['error']['message'] : 'Stripe PaymentIntent creation failed.';
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Stripe error: ' . $errorMessage
+                    ], 400);
+                }
+
+                $stripeData = $response->json();
+                $paymentIntentId = $stripeData['id'];
+                $clientSecret = $stripeData['client_secret'];
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                ], 500);
+            }
+        } else {
+            $paymentIntentId = 'pi_mock_' . strtolower(Str::random(16));
+            $clientSecret = $paymentIntentId . '_secret_' . strtolower(Str::random(16));
+        }
+
+        $order->payment_intent_id = $paymentIntentId;
+        $order->save();
+
+        return response()->json([
+            'success' => true,
+            'amount' => $order->amount,
+            'stripe_client_secret' => $clientSecret,
+            'payment_intent_id' => $paymentIntentId,
+        ]);
+    }
+
+    public function confirmOrderPayment(Request $request, $id)
+    {
+        $customer = $request->attributes->get('customer');
+        $order = \App\Models\Order::where('customer_id', $customer->id)->findOrFail($id);
+        $paymentIntentId = $request->input('payment_intent_id') ?: $order->payment_intent_id;
+
+        if (!$paymentIntentId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment intent ID is required.'
+            ], 400);
+        }
+
+        // Prevent Replay Attacks
+        if (\App\Models\Payment::where('payment_intent_id', $paymentIntentId)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This payment transaction has already been processed.'
+            ], 400);
+        }
+
+        // Prevent mock payment intents in production environment
+        if (app()->environment('production') && str_starts_with($paymentIntentId, 'pi_mock_')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid payment intent.'
+            ], 400);
+        }
+
+        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $paymentCleared = false;
+
+        if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
+            try {
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $stripeSecret,
+                ])->get('https://api.stripe.com/v1/payment_intents/' . $paymentIntentId);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (isset($data['status']) && $data['status'] === 'succeeded') {
+                        $paymentCleared = true;
+                    }
+                }
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                ], 500);
+            }
+        } else {
+            $paymentCleared = true;
+        }
+
+        if ($paymentCleared) {
+            $order->status = 'Pending';
+            $order->payment_intent_id = $paymentIntentId;
+            $order->save();
+
+            // Settle any matching invoice for this order
+            $invoice = \App\Models\Invoice::where('order_id', $order->id)->first();
+            if ($invoice) {
+                $invoice->status = 'Paid';
+                $invoice->save();
+            }
+
+            \App\Models\Payment::create([
+                'id' => 'TXN' . strtoupper(Str::random(8)),
+                'customer_id' => $customer->id,
+                'customer' => $customer->name,
+                'plan' => $order->tiffin,
+                'amount' => $order->amount,
+                'date' => Carbon::now()->toDateString(),
+                'status' => 'Successful',
+                'payment_intent_id' => $paymentIntentId,
+            ]);
+
+            // Reactivate account if no other outstanding unpaid/pending previous invoices
+            $hasUnpaidOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->whereDate('due_date', '<', Carbon::now()->toDateString())
+                ->exists();
+
+            if (!$hasUnpaidOverdue) {
+                $customer->status = 'Active';
+                $customer->save();
+            }
+
+            \App\Models\Notification::create([
+                'title' => 'Order Paid',
+                'message' => "Your payment of AUD {$order->amount} for order {$order->id} was successful.",
+                'user_type' => 'customer',
+                'user_id' => $customer->id,
+                'read_status' => false
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payment verified. Order confirmed and sent to kitchen.',
+                'order' => $order
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Payment verification failed.'
+        ], 400);
+    }
+
+    /**
+     * Dedicated Profile Image Upload for Customer
+     */
+    public function uploadCustomerProfileImage(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        $savedImage = $this->saveUploadedImage(
+            $request,
+            ['profile_image', 'image', 'avatar', 'photo', 'file'],
+            'profile_cust_' . $customer->id,
+            'uploads/profiles',
+            $customer->profile_image
+        );
+
+        if (!$savedImage) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid image file or Base64 string was provided.'
+            ], 422);
+        }
+
+        $customer->update(['profile_image' => $savedImage]);
+        $customer->refresh();
+
+        $imageUrl = str_starts_with($customer->profile_image, 'http') ? $customer->profile_image : asset($customer->profile_image);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile image uploaded successfully.',
+            'profile_image' => $imageUrl,
+            'customer' => [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'first_name' => $customer->first_name,
+                'last_name' => $customer->last_name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'pincode' => $customer->pincode,
+                'address' => $customer->address,
+                'profile_image' => $imageUrl,
+                'user_type' => $customer->user_type,
+                'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get(),
+            ]
+        ]);
+    }
+
+    /**
+     * Dedicated Profile Image Upload for Driver
+     */
+    public function uploadDriverProfileImage(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        $savedImage = $this->saveUploadedImage(
+            $request,
+            ['profile_image', 'image', 'avatar', 'photo', 'file'],
+            'profile_drv_' . $driver->id,
+            'uploads/profiles',
+            $driver->profile_image
+        );
+
+        if (!$savedImage) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid image file or Base64 string was provided.'
+            ], 422);
+        }
+
+        $driver->update(['profile_image' => $savedImage]);
+        $driver->refresh();
+
+        $imageUrl = str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile image uploaded successfully.',
+            'profile_image' => $imageUrl,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $driver->license_copy_front ? asset($driver->license_copy_front) : null,
+                'license_copy_back' => $driver->license_copy_back ? asset($driver->license_copy_back) : null,
+                'profile_image' => $imageUrl,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
+                'status' => $driver->status,
+                'user_type' => $driver->user_type,
+            ]
+        ]);
+    }
+
+    /**
+     * Universal image upload & Base64 decoder helper
+     */
+    protected function saveUploadedImage($request, $fieldNames, $prefix, $uploadFolder, $existingPath = null)
+    {
+        if (!is_array($fieldNames)) {
+            $fieldNames = [$fieldNames];
+        }
+
+        $file = null;
+        foreach ($fieldNames as $fn) {
+            if ($request->hasFile($fn)) {
+                $f = $request->file($fn);
+                if ($f && $f->isValid()) {
+                    $file = $f;
+                    break;
+                }
+            }
+        }
+
+        if ($file) {
+            if ($existingPath && \Illuminate\Support\Facades\File::exists(public_path($existingPath))) {
+                \Illuminate\Support\Facades\File::delete(public_path($existingPath));
+            }
+            $uploadsDir = public_path($uploadFolder);
+            if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
+                \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
+            }
+            $ext = $file->getClientOriginalExtension() ?: 'jpg';
+            $fileName = $prefix . '_' . time() . '_' . Str::random(6) . '.' . $ext;
+            $file->move($uploadsDir, $fileName);
+            return $uploadFolder . '/' . $fileName;
+        }
+
+        foreach ($fieldNames as $fn) {
+            if ($request->filled($fn) && is_string($request->input($fn))) {
+                $str = trim($request->input($fn));
+                if (empty($str)) {
+                    continue;
+                }
+                if (str_contains($str, ';base64,')) {
+                    $parts = explode(';base64,', $str);
+                    $header = $parts[0];
+                    $base64Data = $parts[1];
+                    $ext = 'jpg';
+                    if (str_contains($header, 'png')) $ext = 'png';
+                    elseif (str_contains($header, 'webp')) $ext = 'webp';
+                    elseif (str_contains($header, 'gif')) $ext = 'gif';
+
+                    $decoded = base64_decode($base64Data);
+                    if ($decoded !== false) {
+                        if ($existingPath && \Illuminate\Support\Facades\File::exists(public_path($existingPath))) {
+                            \Illuminate\Support\Facades\File::delete(public_path($existingPath));
+                        }
+                        $uploadsDir = public_path($uploadFolder);
+                        if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
+                            \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
+                        }
+                        $fileName = $prefix . '_' . time() . '_' . Str::random(6) . '.' . $ext;
+                        file_put_contents($uploadsDir . '/' . $fileName, $decoded);
+                        return $uploadFolder . '/' . $fileName;
+                    }
+                } elseif (strlen($str) > 100 && base64_decode($str, true) !== false && !str_starts_with($str, 'http') && !str_contains($str, '/')) {
+                    $decoded = base64_decode($str, true);
+                    if ($decoded !== false) {
+                        if ($existingPath && \Illuminate\Support\Facades\File::exists(public_path($existingPath))) {
+                            \Illuminate\Support\Facades\File::delete(public_path($existingPath));
+                        }
+                        $uploadsDir = public_path($uploadFolder);
+                        if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
+                            \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
+                        }
+                        $fileName = $prefix . '_' . time() . '_' . Str::random(6) . '.jpg';
+                        file_put_contents($uploadsDir . '/' . $fileName, $decoded);
+                        return $uploadFolder . '/' . $fileName;
+                    }
+                } elseif (str_starts_with($str, 'uploads/') || str_contains($str, '/uploads/')) {
+                    if (str_contains($str, '/uploads/')) {
+                        $parts = explode('/uploads/', $str);
+                        return 'uploads/' . end($parts);
+                    }
+                    return $str;
+                }
+            }
+        }
+
+        return null;
     }
 }

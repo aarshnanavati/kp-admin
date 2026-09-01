@@ -24,13 +24,9 @@
 <body class="kp_kitchen_admin_panel_body" data-current-page="@yield('current_page')">
     <div class="kp_kitchen_admin_panel_app">
         <aside id="sidebar" class="kp_kitchen_admin_panel_sidebar">
-            <div class="kp_kitchen_admin_panel_sidebar_brand">
-                <div class="kp_kitchen_admin_panel_brand_mark">KP</div>
-                <div class="kp_kitchen_admin_panel_brand_text_wrap">
-                    <strong class="kp_kitchen_admin_panel_brand_name">KP Kitchen</strong>
-                    <span class="kp_kitchen_admin_panel_brand_subtitle">Admin Panel</span>
-                </div>
-                <button id="sidebarClose" class="kp_kitchen_admin_panel_sidebar_close" aria-label="Close sidebar">
+            <div class="kp_kitchen_admin_panel_sidebar_brand" style="justify-content: space-between; align-items: center; padding: 16px 20px;">
+                <img src="{{ asset('public/assets/images/logo.png') }}" alt="KP's Kitchen Logo" style="max-height: 48px; max-width: 160px; object-fit: contain;">
+                <button id="sidebarClose" class="kp_kitchen_admin_panel_sidebar_close" aria-label="Close sidebar" style="position: static; margin-left: auto;">
                     ×
                 </button>
             </div>
@@ -74,8 +70,7 @@
                     <div class="kp_kitchen_admin_panel_nav_group_items">
                         <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('orders') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
                             href="{{ route('orders') }}">
-                            Orders <span id="orderBadge" class="kp_kitchen_admin_panel_nav_badge"
-                                style="margin-left:8px;">0</span>
+                            Orders
                         </a>
                         <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('invoices') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
                             href="{{ route('invoices') }}">Invoices</a>

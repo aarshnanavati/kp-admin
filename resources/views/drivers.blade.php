@@ -140,9 +140,15 @@
         <input type="hidden" name="id" id="editDriverId">
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px;">
 
+          <input type="hidden" name="name" id="editDriverName">
           <label class="kp_kitchen_admin_panel_form_group">
-            <span class="kp_kitchen_admin_panel_form_label">Full Name</span>
-            <input type="text" name="name" id="editDriverName" class="kp_kitchen_admin_panel_form_input" required>
+            <span class="kp_kitchen_admin_panel_form_label">First Name</span>
+            <input type="text" id="editDriverFirstName" class="kp_kitchen_admin_panel_form_input" required>
+          </label>
+
+          <label class="kp_kitchen_admin_panel_form_group">
+            <span class="kp_kitchen_admin_panel_form_label">Last Name</span>
+            <input type="text" id="editDriverLastName" class="kp_kitchen_admin_panel_form_input" required>
           </label>
 
           <label class="kp_kitchen_admin_panel_form_group">

@@ -24,6 +24,7 @@ class User extends Authenticatable
         'password',
         'api_token',
         'user_type',
+        'profile_image',
     ];
 
     /**

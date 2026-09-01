@@ -47,21 +47,40 @@ Route::post('/customer/cart/remove', [AuthController::class, 'removeFromCart']);
 Route::middleware('customer.auth')->group(function () {
     Route::post('/customer/logout', [AuthController::class, 'customerLogout']);
     Route::get('/customer/profile', [AuthController::class, 'customerProfile']);
+    Route::post('/customer/profile/edit', [AuthController::class, 'editCustomerProfile']);
+    Route::post('/customer/profile/image', [AuthController::class, 'uploadCustomerProfileImage']);
+    Route::post('/customer/profile-image', [AuthController::class, 'uploadCustomerProfileImage']);
+
+    // Customer Address Management Endpoints
+    Route::get('/customer/addresses', [AuthController::class, 'getCustomerAddresses']);
+    Route::post('/customer/addresses', [AuthController::class, 'addOrUpdateCustomerAddress']);
+    Route::delete('/customer/addresses/{id}', [AuthController::class, 'deleteCustomerAddress']);
 
     // Customer Operational Endpoints
     Route::get('/customer/orders', [AuthController::class, 'customerOrders']);
     Route::post('/customer/orders', [AuthController::class, 'placeCustomerOrder']);
+    Route::post('/customer/orders/{id}/cancel', [AuthController::class, 'cancelCustomerOrder']);
+    Route::post('/customer/orders/{orderId}/create-payment-intent', [AuthController::class, 'createOrderPaymentIntent']);
+    Route::post('/customer/orders/{id}/confirm', [AuthController::class, 'confirmOrderPayment']);
+    Route::post('/customer/weekly-bills/{billId}/create-payment-intent', [AuthController::class, 'createBillPaymentIntent']);
+    Route::post('/customer/weekly-bills/{billId}/confirm-payment', [AuthController::class, 'confirmBillPayment']);
     Route::get('/customer/invoices', [AuthController::class, 'customerInvoices']);
     Route::get('/customer/notifications', [AuthController::class, 'customerNotifications']);
-    Route::post('/customer/coupons/apply', [AuthController::class, 'applyCoupon']);
+    Route::post('/customer/notifications/clear-all', [AuthController::class, 'clearCustomerNotifications']);
+    Route::post('/customer/pay-weekly-bill', [AuthController::class, 'payWeeklyBill']);
+    Route::post('/customer/pay-weekly-bill/confirm', [AuthController::class, 'confirmWeeklyBillPayment']);
 });
 
 // --- Driver Authenticated API Routes ---
 Route::middleware('driver.auth')->group(function () {
     Route::post('/driver/logout', [AuthController::class, 'driverLogout']);
     Route::get('/driver/profile', [AuthController::class, 'driverProfile']);
+    Route::post('/driver/profile/edit', [AuthController::class, 'editDriverProfile']);
+    Route::post('/driver/profile/image', [AuthController::class, 'uploadDriverProfileImage']);
+    Route::post('/driver/profile-image', [AuthController::class, 'uploadDriverProfileImage']);
     Route::get('/driver/assigned-orders', [AuthController::class, 'getDriverAssignedOrders']);
     Route::post('/driver/orders/{id}/status', [AuthController::class, 'updateDriverOrderStatus']);
+    Route::post('/driver/notifications/clear-all', [AuthController::class, 'clearDriverNotifications']);
 });
 
 // --- Admin Dashboard & Operational API Routes (Session & Bearer Token Protected) ---
@@ -141,4 +160,6 @@ Route::middleware('api.or.session')->group(function () {
 
     // Admin Profile API
     Route::get('/admin/profile', [AuthController::class, 'adminProfile']);
+    Route::post('/admin/profile/edit', [AuthController::class, 'editAdminProfile']);
+    Route::post('/admin/notifications/clear-all', [AdminPanelController::class, 'clearAdminNotifications']);
 });

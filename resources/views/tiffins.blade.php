@@ -68,6 +68,7 @@
                 data-prep_time="{{ $tiffin->prep_time }}"
                 data-status="{{ $tiffin->status }}"
                 data-description="{{ $tiffin->description }}"
+                data-image="{{ $tiffin->image }}"
                 data-items="{{ json_encode($tiffinItems) }}">
                 Edit
               </button>

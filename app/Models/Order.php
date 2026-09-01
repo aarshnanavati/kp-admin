@@ -18,6 +18,7 @@ class Order extends Model
         'customer',
         'tiffin_id',
         'tiffin',
+        'quantity',
         'area',
         'driver_id',
         'driver',
@@ -28,6 +29,7 @@ class Order extends Model
         'proof_of_delivery_photo',
         'proof_of_delivery_signature',
         'note',
+        'payment_intent_id',
     ];
 
     public function customerRelation()

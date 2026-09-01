@@ -13,7 +13,13 @@
       <p class="kp_kitchen_admin_panel_section_text">Review customer billing records.</p>
     </div>
     <div class="kp_kitchen_admin_panel_filter_group">
-      <form id="invoiceFilterForm" method="GET" action="{{ route('invoices') }}" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+      <form id="invoiceFilterForm" method="GET" action="{{ route('invoices') }}" style="display: flex; gap: 8px; align-items: center; flex-wrap: nowrap;">
+        <div style="position: relative; display: flex; align-items: center;">
+          <input type="text" class="kp_kitchen_admin_panel_form_input" name="search" value="{{ request('search') }}" placeholder="Search invoices..." style="padding-left: 32px; width: 220px; padding-top: 6px; padding-bottom: 6px;" id="invoiceSearchInput">
+          <svg style="position: absolute; left: 10px; width: 14px; height: 14px; fill: var(--text-secondary);" viewBox="0 0 24 24">
+            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+          </svg>
+        </div>
         <input type="date" class="kp_kitchen_admin_panel_form_input" name="start_date" value="{{ request('start_date') }}" onchange="this.form.submit()" title="Start Date" style="max-width: 140px; padding: 6px 10px;">
         <span style="font-size: 0.8rem; color: var(--text-secondary);">to</span>
         <input type="date" class="kp_kitchen_admin_panel_form_input" name="end_date" value="{{ request('end_date') }}" onchange="this.form.submit()" title="End Date" style="max-width: 140px; padding: 6px 10px;">
@@ -81,4 +87,25 @@
     </div>
   </article>
 </section>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('invoiceSearchInput');
+    let timeout = null;
+    
+    searchInput.addEventListener('input', function() {
+        clearTimeout(timeout);
+        timeout = setTimeout(function() {
+            document.getElementById('invoiceFilterForm').submit();
+        }, 300);
+    });
+
+    if (searchInput.value) {
+        searchInput.focus();
+        const val = searchInput.value;
+        searchInput.value = '';
+        searchInput.value = val;
+    }
+});
+</script>
 @endsection
