@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
+use App\Services\FcmService;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -346,6 +347,7 @@ class AuthController extends Controller
             'address' => trim($request->address),
             'api_token' => $token,
             'user_type' => 'customer',
+            'fcm_token' => $request->input('fcm_token'),
         ]);
 
         $defaultAddr = $customer->addresses()->create([
@@ -410,7 +412,11 @@ class AuthController extends Controller
         }
 
         $token = Str::random(60);
-        $customer->update(['api_token' => $token]);
+        $updateFields = ['api_token' => $token];
+        if ($request->filled('fcm_token')) {
+            $updateFields['fcm_token'] = $request->fcm_token;
+        }
+        $customer->update($updateFields);
 
         // Cart Shifting Logic: Move items from guest_carts to carts table
         $tempUserId = $request->input('temp_user_id');
@@ -437,14 +443,38 @@ class AuthController extends Controller
             }
         }
 
-        // First Login Notification Alert
+        // First Login Notification Alert for Admin
         if ($customer->login_count === 0) {
             \App\Models\Notification::create([
                 'title' => 'First Login Alert',
                 'message' => "Customer {$customer->name} has logged in for the first time!",
+                'user_type' => 'admin',
+                'user_id' => null,
                 'read_status' => false
             ]);
+            FcmService::sendToAdmin(
+                'First Login Alert',
+                "Customer {$customer->name} has logged in for the first time!",
+                ['type' => 'customer_first_login', 'customer_id' => $customer->id]
+            );
         }
+
+        // Dedicated Customer Login Notification
+        \App\Models\Notification::create([
+            'title' => 'Login Successful',
+            'message' => "Welcome back, {$customer->name}! You have successfully logged in.",
+            'user_type' => 'customer',
+            'user_id' => $customer->id,
+            'read_status' => false
+        ]);
+
+        FcmService::sendToCustomer(
+            $customer->id,
+            'Login Successful',
+            "Welcome back, {$customer->name}! You have successfully logged in.",
+            ['type' => 'login']
+        );
+
         $customer->increment('login_count');
 
         try {
@@ -552,42 +582,81 @@ class AuthController extends Controller
         $customer = $request->attributes->get('customer');
 
         $now = Carbon::now();
-        // Unpaid outstanding invoices from previous weeks (due date is in the past)
+        // Unpaid outstanding invoices from previous weeks (due date is strictly in the past)
         $outstandingInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
             ->whereIn('status', ['Pending', 'Unpaid'])
             ->whereDate('due_date', '<', $now->toDateString())
             ->get();
 
-        $outstandingAmount = $outstandingInvoices->sum('amount');
+        $outstandingAmount = (float) $outstandingInvoices->sum('amount');
 
         if ($outstandingAmount > 0) {
             $earliestDueDate = $outstandingInvoices->min('due_date');
             
             // Count tiffins (quantity) ordered after this earliest due date
-            $postSaturdayTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
+            $postDueTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
                 ->where('date', '>', $earliestDueDate)
                 ->sum('quantity');
 
-            if ($postSaturdayTiffinsCount >= 2) {
+            if ($postDueTiffinsCount >= 2) {
                 if ($customer->status !== 'Deactivated') {
                     $customer->status = 'Deactivated';
                     $customer->save();
                 }
+            }
+        } else {
+            // All overdue invoices are cleared (paid anytime during the week) - ensure customer is Active
+            if ($customer->status === 'Deactivated') {
+                $customer->status = 'Active';
+                $customer->save();
             }
         }
 
         if ($customer->status === 'Deactivated') {
             return response()->json([
                 'success' => false,
-                'message' => 'Your account is deactivated due to unpaid weekly invoices. Please clear your outstanding weekly balance to place new orders.',
+                'message' => 'Your account is deactivated due to unpaid weekly invoices (AUD ' . number_format($outstandingAmount, 2) . '). You can pay your overdue balance anytime to reactivate your account and continue ordering.',
+                'has_overdue' => true,
+                'overdue_amount' => round($outstandingAmount, 2),
+                'overdue_bill_id' => $outstandingInvoices->isNotEmpty() ? $outstandingInvoices->first()->id : null,
             ], 403);
+        }
+
+        // Normalize tiffin_id if sent as id
+        if (!$request->has('tiffin_id') && $request->has('id')) {
+            $request->merge(['tiffin_id' => $request->id]);
+        }
+
+        // If custom_items are provided, automatically resolve/ensure the customizable tiffin if tiffin_id is missing or invalid
+        $hasCustomItems = $request->filled('custom_items') || (is_array($request->input('custom_items')) && count($request->input('custom_items')) > 0);
+        $tiffinId = $request->input('tiffin_id');
+
+        if ($hasCustomItems && (!$tiffinId || $tiffinId === 'custom' || !is_numeric($tiffinId) || !\App\Models\Tiffin::where('id', $tiffinId)->exists())) {
+            $customTiffin = \App\Models\Tiffin::where('is_customizable', true)->first()
+                ?? \App\Models\Tiffin::where('name', 'like', '%custom%')->first();
+
+            if (!$customTiffin) {
+                $customTiffin = \App\Models\Tiffin::create([
+                    'name' => 'Custom tiffin',
+                    'description' => 'Build your own tiffin from today\'s active menu items.',
+                    'price' => 0.00,
+                    'prep_time' => '30 mins',
+                    'status' => 'Active',
+                    'is_customizable' => true,
+                ]);
+            }
+
+            $request->merge(['tiffin_id' => $customTiffin->id]);
         }
 
         $validator = Validator::make($request->all(), [
             'tiffin_id' => 'required|exists:tiffins,id',
-            'add_ons' => 'nullable|array',
+            'add_ons' => 'nullable',
+            'adons' => 'nullable',
             'note' => 'nullable|string',
             'quantity' => 'nullable|integer|min:1',
+            'selections' => 'nullable',
+            'custom_items' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -599,32 +668,103 @@ class AuthController extends Controller
 
         $tiffin = \App\Models\Tiffin::findOrFail($request->tiffin_id);
         $quantity = (int)$request->input('quantity', 1);
-        
-        $amount = ((float)$tiffin->price * $quantity);
-        $addons = $request->input('add_ons', []);
-        if (!empty($addons)) {
-            foreach ($addons as $addonId) {
+
+        // Resolve "Or" choices / Build-Your-Own items and work out the unit price.
+        $selectionsData = null;
+        $selectionDelta = 0.0;
+        $hasExplicitCustomItems = $request->filled('custom_items') || $request->filled('items') || $request->filled('selections');
+
+        if ($tiffin->is_customizable) {
+            $picked = $request->input('custom_items')
+                ?? $request->input('items')
+                ?? $request->input('selections')
+                ?? $request->input('add_ons')
+                ?? $request->input('adons')
+                ?? [];
+            $resolved = $tiffin->resolveCustomItems($picked);
+            if (!empty($resolved['errors'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => implode(' ', $resolved['errors']),
+                ], 422);
+            }
+            $customUnitPrice = $resolved['unit_price'];
+            $selectionsData = [
+                'mode' => 'custom',
+                'custom_items' => $resolved['items'],
+                'item_count' => $resolved['count'],
+                'items_total' => $resolved['items_total'],
+                'summary' => $resolved['summary'],
+                'unit_price' => $resolved['unit_price'],
+            ];
+        } elseif (!empty($tiffin->components)) {
+            $resolved = $tiffin->resolveSelections($request->input('selections', []));
+            if (!empty($resolved['errors'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => implode(' ', $resolved['errors']),
+                ], 422);
+            }
+            $selectionDelta = $resolved['delta'];
+            $selectionsData = [
+                'choices' => $resolved['choices'],
+                'summary' => $resolved['summary'],
+                'unit_price' => round((float) $tiffin->price + $selectionDelta, 2),
+            ];
+        }
+
+        $unitPrice = $customUnitPrice ?? ((float)$tiffin->price + $selectionDelta);
+        $amount = ($unitPrice * $quantity);
+
+        // Extract addon IDs from array or grouped object (e.g. adons: { salad: [...], roti: [...] })
+        $rawAddons = $request->input('add_ons') ?? $request->input('adons');
+        if ($tiffin->is_customizable && !$hasExplicitCustomItems) {
+            $rawAddons = [];
+        }
+        $extractedAddonIds = [];
+
+        if (is_array($rawAddons)) {
+            $isAssoc = array_keys($rawAddons) !== range(0, count($rawAddons) - 1);
+            if ($isAssoc) {
+                foreach ($rawAddons as $groupKey => $groupItems) {
+                    if (is_array($groupItems)) {
+                        foreach ($groupItems as $itemEntry) {
+                            if (is_array($itemEntry) && isset($itemEntry['id'])) {
+                                $extractedAddonIds[] = (int)$itemEntry['id'];
+                            } elseif (is_numeric($itemEntry)) {
+                                $extractedAddonIds[] = (int)$itemEntry;
+                            }
+                        }
+                    }
+                }
+            } else {
+                foreach ($rawAddons as $itemEntry) {
+                    if (is_array($itemEntry) && isset($itemEntry['id'])) {
+                        $extractedAddonIds[] = (int)$itemEntry['id'];
+                    } elseif (is_numeric($itemEntry)) {
+                        $extractedAddonIds[] = (int)$itemEntry;
+                    }
+                }
+            }
+        }
+
+        $addonsData = [];
+        if (!empty($extractedAddonIds)) {
+            foreach ($extractedAddonIds as $addonId) {
                 $item = \App\Models\Item::find($addonId);
                 if ($item) {
                     $amount += (float)$item->price;
+                    $addonsData[] = [
+                        'id' => $item->id,
+                        'name' => $item->name,
+                        'price' => $item->price,
+                        'qty' => 1
+                    ];
                 }
             }
         }
 
         $orderId = 'ORD' . strtoupper(Str::random(8));
-
-        $addonsData = [];
-        foreach ($addons as $addonId) {
-            $item = \App\Models\Item::find($addonId);
-            if ($item) {
-                $addonsData[] = [
-                    'id' => $item->id,
-                    'name' => $item->name,
-                    'price' => $item->price,
-                    'qty' => 1
-                ];
-            }
-        }
 
         $order = \App\Models\Order::create([
             'id' => $orderId,
@@ -638,45 +778,107 @@ class AuthController extends Controller
             'status' => 'Pending',
             'date' => Carbon::now()->toDateString(),
             'add_ons' => json_encode($addonsData),
+            'selections' => $selectionsData,
             'note' => $request->input('note'),
             'payment_intent_id' => '',
         ]);
 
-        // Generate the invoice automatically for this order
-        $invoiceId = 'INV-' . Carbon::now()->format('Ymd') . '-' . rand(1000, 9999);
-        $invoice = \App\Models\Invoice::create([
-            'id' => $invoiceId,
-            'customer_id' => $customer->id,
-            'order_id' => $order->id,
-            'amount' => $amount,
-            'status' => 'Pending',
-            'due_date' => Carbon::now()->endOfWeek()->toDateString(),
-        ]);
+        // Consolidate into the customer's Weekly Bill / Invoice for this billing week
+        $now = Carbon::now();
+        $startOfWeek = $now->copy()->startOfWeek()->toDateString();
+        $endOfWeek = $now->copy()->endOfWeek()->toDateString();
+        $dueDate = $endOfWeek;
+        $weekNumber = $now->weekOfYear;
+        $year = $now->year;
+        $weeklyInvPrefix = 'INV-W' . $year . str_pad((string) $weekNumber, 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
+
+        $weeklyOrders = \App\Models\Order::where('customer_id', $customer->id)
+            ->whereBetween('date', [$startOfWeek, $endOfWeek])
+            ->get();
+        $totalWeeklyAmount = (float) $weeklyOrders->sum('amount');
+        $weeklyOrderIds = $weeklyOrders->pluck('id')->toArray();
+        $orderIdString = count($weeklyOrderIds) <= 3
+            ? implode(', ', $weeklyOrderIds)
+            : 'KP-W' . $year . '-' . count($weeklyOrderIds) . 'orders';
+
+        $invoice = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->where(function ($q) use ($weeklyInvPrefix, $startOfWeek, $endOfWeek) {
+                $q->where('id', 'like', $weeklyInvPrefix . '%')
+                  ->orWhereBetween('due_date', [$startOfWeek, $endOfWeek]);
+            })
+            ->first();
+
+        if (!$invoice) {
+            $invoiceId = $weeklyInvPrefix . '-' . rand(100, 999);
+            $invoice = \App\Models\Invoice::create([
+                'id' => $invoiceId,
+                'customer_id' => $customer->id,
+                'order_id' => $orderIdString,
+                'amount' => $totalWeeklyAmount,
+                'status' => 'Pending',
+                'due_date' => $dueDate,
+            ]);
+        } else {
+            $invoice->amount = $totalWeeklyAmount;
+            $invoice->order_id = $orderIdString;
+            $invoice->due_date = $dueDate;
+            if ($invoice->status === 'Paid') {
+                $invoice->status = 'Pending';
+            }
+            $invoice->save();
+        }
 
         if ($outstandingAmount > 0) {
-            $postSaturdayTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
+            $postDueTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
                 ->where('date', '>', $earliestDueDate)
                 ->sum('quantity');
 
-            if ($postSaturdayTiffinsCount >= 2) {
+            if ($postDueTiffinsCount >= 2) {
                 $customer->status = 'Deactivated';
                 $customer->save();
             }
         }
 
+        $choicesLine = ($selectionsData && !empty($selectionsData['summary']))
+            ? " Choices: {$selectionsData['summary']}."
+            : '';
+
         \App\Models\Notification::create([
             'title' => 'New Order Placed',
-            'message' => "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}). Weekly invoice {$invoiceId} generated.",
+            'message' => "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}).{$choicesLine} Weekly bill {$invoice->id} updated (Total AUD " . number_format($totalWeeklyAmount, 2) . ").",
             'user_type' => 'admin',
             'user_id' => null,
             'read_status' => false
         ]);
 
+        FcmService::sendToAdmin(
+            'New Order Placed',
+            "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}).{$choicesLine}",
+            ['order_id' => $order->id, 'type' => 'new_order']
+        );
+
+        \App\Models\Notification::create([
+            'title' => 'Order Placed Successfully',
+            'message' => "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}) has been placed successfully. Weekly bill total: AUD " . number_format($totalWeeklyAmount, 2) . ".",
+            'user_type' => 'customer',
+            'user_id' => $customer->id,
+            'read_status' => false
+        ]);
+
+        FcmService::sendToCustomer(
+            $customer->id,
+            'Order Placed Successfully',
+            "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}) has been placed successfully.",
+            ['order_id' => $order->id, 'type' => 'order_placed']
+        );
+
         return response()->json([
             'success' => true,
-            'message' => 'Order placed successfully. Weekly invoice generated.',
+            'message' => 'Order placed successfully. Weekly bill updated.',
             'order' => $order,
             'invoice' => $invoice,
+            'weekly_bill' => $invoice,
+            'total_weekly_amount' => $totalWeeklyAmount,
             'stripe_client_secret' => '',
             'payment_intent_id' => '',
         ]);
@@ -702,17 +904,20 @@ class AuthController extends Controller
     public function payWeeklyBill(Request $request)
     {
         $customer = $request->attributes->get('customer');
+        $billId = $request->input('bill_id') ?: $request->input('invoice_id') ?: $request->input('id');
+        $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $billId, $request);
+        $totalAmount = (float) $resolved['amount'];
 
-        $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
-            ->whereIn('status', ['Pending', 'Unpaid'])
-            ->get();
-
-        $totalAmount = $invoices->sum('amount');
+        if ($totalAmount <= 0) {
+            $this->ensureInvoicesForCustomerOrders($customer);
+            $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $billId, $request);
+            $totalAmount = (float) $resolved['amount'];
+        }
 
         if ($totalAmount <= 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'No outstanding balance due.'
+                'message' => 'No outstanding balance due for the selected bill.',
             ], 400);
         }
 
@@ -726,7 +931,7 @@ class AuthController extends Controller
                     'Authorization' => 'Bearer ' . $stripeSecret,
                     'Content-Type' => 'application/x-www-form-urlencoded',
                 ])->asForm()->post('https://api.stripe.com/v1/payment_intents', [
-                    'amount' => (int)round($totalAmount * 100),
+                    'amount' => (int) round($totalAmount * 100),
                     'currency' => 'aud',
                     'automatic_payment_methods[enabled]' => 'true',
                 ]);
@@ -736,7 +941,7 @@ class AuthController extends Controller
                     $errorMessage = isset($errorData['error']['message']) ? $errorData['error']['message'] : 'Stripe PaymentIntent creation failed.';
                     return response()->json([
                         'success' => false,
-                        'message' => 'Stripe error: ' . $errorMessage
+                        'message' => 'Stripe error: ' . $errorMessage,
                     ], 400);
                 }
 
@@ -746,7 +951,7 @@ class AuthController extends Controller
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                    'message' => 'Stripe connection error: ' . $e->getMessage(),
                 ], 500);
             }
         } else {
@@ -754,11 +959,20 @@ class AuthController extends Controller
             $clientSecret = $paymentIntentId . '_secret_' . strtolower(Str::random(16));
         }
 
+        $primaryInvoice = $resolved['invoices']->first();
+        $targetBillId = $primaryInvoice ? $primaryInvoice->id : ($billId ?: 'INV-WEEKLY');
+
         return response()->json([
             'success' => true,
             'amount' => $totalAmount,
             'stripe_client_secret' => $clientSecret,
             'payment_intent_id' => $paymentIntentId,
+            'label' => $resolved['label'],
+            'week_range' => $resolved['week_range'],
+            'weekly_bill_id' => $targetBillId,
+            'bill_id' => $targetBillId,
+            'invoice_id' => $targetBillId,
+            'is_overdue' => $resolved['is_overdue'] ?? false,
         ]);
     }
 
@@ -770,7 +984,7 @@ class AuthController extends Controller
         if (!$paymentIntentId) {
             return response()->json([
                 'success' => false,
-                'message' => 'Payment intent ID is required.'
+                'message' => 'Payment intent ID is required.',
             ], 400);
         }
 
@@ -778,7 +992,7 @@ class AuthController extends Controller
         if (\App\Models\Payment::where('payment_intent_id', $paymentIntentId)->exists()) {
             return response()->json([
                 'success' => false,
-                'message' => 'This payment transaction has already been processed.'
+                'message' => 'This payment transaction has already been processed.',
             ], 400);
         }
 
@@ -786,20 +1000,18 @@ class AuthController extends Controller
         if (app()->environment('production') && str_starts_with($paymentIntentId, 'pi_mock_')) {
             return response()->json([
                 'success' => false,
-                'message' => 'Invalid payment intent.'
+                'message' => 'Invalid payment intent.',
             ], 400);
         }
 
-        $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
-            ->whereIn('status', ['Pending', 'Unpaid'])
-            ->get();
+        $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $request->input('bill_id') ?: $request->input('invoice_id'), $request);
+        $invoices = $resolved['invoices'];
+        $totalAmount = (float) $resolved['amount'];
 
-        $totalAmount = $invoices->sum('amount');
-
-        if ($totalAmount <= 0) {
+        if ($totalAmount <= 0 && $invoices->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'message' => 'No outstanding balance to pay.'
+                'message' => 'No outstanding balance to pay for the selected bill.',
             ], 400);
         }
 
@@ -814,14 +1026,16 @@ class AuthController extends Controller
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    if (isset($data['status']) && $data['status'] === 'succeeded') {
+                    if (isset($data['status']) && in_array($data['status'], ['succeeded', 'processing', 'requires_capture'])) {
+                        $paymentCleared = true;
+                    } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
                         $paymentCleared = true;
                     }
                 }
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                    'message' => 'Stripe connection error: ' . $e->getMessage(),
                 ], 500);
             }
         } else {
@@ -829,83 +1043,435 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
-            $orderIds = $invoices->pluck('order_id')->filter();
-            $plans = \App\Models\Order::whereIn('id', $orderIds)->pluck('tiffin')->unique()->toArray();
-            $planName = !empty($plans) ? implode(', ', $plans) : 'Weekly Bill Payment';
-
+            // Settle all resolved invoices
             foreach ($invoices as $invoice) {
                 $invoice->status = 'Paid';
                 $invoice->save();
+            }
+
+            // Settle orders in the week if available
+            if (!empty($resolved['start_date']) && !empty($resolved['end_date'])) {
+                \App\Models\Order::where('customer_id', $customer->id)
+                    ->whereBetween('date', [$resolved['start_date'], $resolved['end_date']])
+                    ->where('status', 'Payment Pending')
+                    ->update(['status' => 'Pending']);
+            } else {
+                \App\Models\Order::where('customer_id', $customer->id)
+                    ->where('status', 'Payment Pending')
+                    ->update(['status' => 'Pending']);
             }
 
             \App\Models\Payment::create([
                 'id' => 'TXN' . strtoupper(Str::random(8)),
                 'customer_id' => $customer->id,
                 'customer' => $customer->name,
-                'plan' => $planName,
+                'plan' => $resolved['label'],
                 'amount' => $totalAmount,
                 'date' => Carbon::now()->toDateString(),
                 'status' => 'Successful',
                 'payment_intent_id' => $paymentIntentId,
             ]);
 
-            $customer->status = 'Active';
-            $customer->save();
+            // Reactivate customer account if all overdue invoices are settled
+            $hasUnpaidOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->whereDate('due_date', '<', Carbon::now()->toDateString())
+                ->exists();
+
+            if (!$hasUnpaidOverdue) {
+                $customer->status = 'Active';
+                $customer->save();
+            }
 
             \App\Models\Notification::create([
                 'title' => 'Weekly Bill Paid',
-                'message' => "Thank you! Your weekly payment of AUD {$totalAmount} was successful.",
+                'message' => "Thank you! Your payment of AUD " . number_format($totalAmount, 2) . " for {$resolved['label']} was successful. Your account is active.",
                 'user_type' => 'customer',
                 'user_id' => $customer->id,
-                'read_status' => false
+                'read_status' => false,
             ]);
+
+            FcmService::sendToCustomer(
+                $customer->id,
+                'Weekly Bill Paid',
+                "Your weekly payment of AUD " . number_format($totalAmount, 2) . " was successful. Your account is active.",
+                ['type' => 'payment_success']
+            );
+
+            // Fetch updated remaining balances
+            $remainingUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->sum('amount');
+            $remainingOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->whereDate('due_date', '<', Carbon::now()->toDateString())
+                ->sum('amount');
 
             return response()->json([
                 'success' => true,
-                'message' => 'Weekly bill payment confirmed successfully.',
-                'amount_paid' => $totalAmount
+                'message' => 'Weekly bill payment confirmed successfully. Your account is active and you can continue ordering.',
+                'amount_paid' => $totalAmount,
+                'outstanding_balance' => round((float) $remainingUnpaid, 2),
+                'overdue_balance' => round((float) $remainingOverdue, 2),
+                'weekly_balance' => 0.00,
+                'account_status' => $customer->status,
+                'can_order' => ($customer->status === 'Active'),
             ]);
         }
 
         return response()->json([
             'success' => false,
-            'message' => 'Payment verification failed.'
+            'message' => 'Payment verification failed.',
         ], 400);
     }
 
     /**
-     * Get invoices for the authenticated customer.
+     * Get invoices and weekly balances for the authenticated customer.
      */
     public function customerInvoices(Request $request)
     {
         $customer = $request->attributes->get('customer');
-        $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
-            ->orderBy('created_at', 'desc')
+
+        // Ensure physical weekly invoice records exist for all orders
+        $this->ensureInvoicesForCustomerOrders($customer);
+
+        // Current week reference
+        $now = Carbon::now();
+        $startOfWeek = $request->filled('start_date')
+            ? Carbon::parse($request->start_date)->toDateString()
+            : $now->copy()->startOfWeek()->toDateString();
+        $endOfWeek = $request->filled('end_date')
+            ? Carbon::parse($request->end_date)->toDateString()
+            : $now->copy()->endOfWeek()->toDateString();
+        $dueDate = $now->copy()->endOfWeek()->toDateString();
+
+        // Invoices query
+        $invoicesQuery = \App\Models\Invoice::where('customer_id', $customer->id);
+
+        if ($request->filled('status')) {
+            $invoicesQuery->where('status', $request->status);
+        }
+
+        $invoices = $invoicesQuery->orderBy('created_at', 'desc')->get();
+
+        // Total outstanding unpaid balance
+        $allUnpaidInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
             ->get();
+        $outstandingBalance = (float) $allUnpaidInvoices->sum('amount');
+
+        // Overdue unpaid balance (due date is strictly in past)
+        $overdueInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->whereDate('due_date', '<', $now->toDateString())
+            ->get();
+        $overdueBalance = (float) $overdueInvoices->sum('amount');
+        $hasOverdue = $overdueBalance > 0;
+        $overdueBillId = $overdueInvoices->isNotEmpty() ? $overdueInvoices->first()->id : null;
+
+        // Auto-reactivate customer if overdue balance cleared
+        if (!$hasOverdue && $customer->status === 'Deactivated') {
+            $customer->status = 'Active';
+            $customer->save();
+        }
+
+        // Orders placed in this particular week
+        $currentWeekOrders = $customer->orders()
+            ->whereBetween('date', [$startOfWeek, $endOfWeek])
+            ->get();
+        $currentWeekTotalAmount = (float) $currentWeekOrders->sum('amount');
+        $currentWeekOrdersCount = $currentWeekOrders->count();
+
+        // Invoices for this particular week
+        $currentWeekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->where(function ($q) use ($startOfWeek, $endOfWeek) {
+                $q->whereBetween('due_date', [$startOfWeek, $endOfWeek])
+                    ->orWhereBetween('created_at', [
+                        Carbon::parse($startOfWeek)->startOfDay(),
+                        Carbon::parse($endOfWeek)->endOfDay(),
+                    ]);
+            })
+            ->get();
+
+        $currentWeekUnpaidInvoices = $currentWeekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+        $currentWeekBalance = (float) $currentWeekUnpaidInvoices->sum('amount');
+
+        if ($currentWeekInvoices->isNotEmpty() && $currentWeekUnpaidInvoices->isEmpty()) {
+            $currentWeekBalance = 0.00;
+        }
+
+        // Weekly billing history breakdown
+        $weeklyData = [];
+        $allOrders = $customer->orders()->orderBy('date', 'desc')->get();
+
+        foreach ($allOrders as $order) {
+            $dt = Carbon::parse($order->date);
+            $wStart = $dt->startOfWeek()->toDateString();
+            $wEnd = $dt->endOfWeek()->toDateString();
+            $weekKey = $wStart . '_' . $wEnd;
+
+            if (! isset($weeklyData[$weekKey])) {
+                $weeklyData[$weekKey] = [
+                    'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                    'start_date' => $wStart,
+                    'end_date' => $wEnd,
+                    'amount' => 0.00,
+                    'orders_count' => 0,
+                    'status' => 'Pending',
+                    'due_date' => $wEnd,
+                    'paid_date' => 'N/A',
+                ];
+            }
+
+            $weeklyData[$weekKey]['amount'] += (float) $order->amount;
+            $weeklyData[$weekKey]['orders_count']++;
+        }
+
+        // Also incorporate any invoices that might not have orders directly attached
+        foreach ($invoices as $inv) {
+            if ($inv->due_date) {
+                $dt = Carbon::parse($inv->due_date);
+            } elseif (preg_match('/INV-W(\d{4})(\d{2})/', $inv->id, $m)) {
+                $dt = Carbon::now()->setISODate((int) $m[1], (int) $m[2]);
+            } else {
+                $dt = Carbon::parse($inv->created_at ?: now());
+            }
+            $wStart = $dt->copy()->startOfWeek()->toDateString();
+            $wEnd = $dt->copy()->endOfWeek()->toDateString();
+            $weekKey = $wStart . '_' . $wEnd;
+            if (!isset($weeklyData[$weekKey])) {
+                $weeklyData[$weekKey] = [
+                    'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                    'start_date' => $wStart,
+                    'end_date' => $wEnd,
+                    'amount' => (float)$inv->amount,
+                    'orders_count' => 0,
+                    'status' => $inv->status,
+                    'due_date' => $inv->due_date ?: $wEnd,
+                    'paid_date' => $inv->status === 'Paid' ? Carbon::parse($inv->updated_at)->toDateString() : 'N/A',
+                ];
+            }
+        }
+
+        $weeklyHistory = array_values($weeklyData);
+
+        foreach ($weeklyHistory as &$w) {
+            $wStart = $w['start_date'];
+            $wEnd = $w['end_date'];
+            $dtStart = Carbon::parse($wStart);
+            $wYear = $dtStart->year;
+            $wWeekNum = $dtStart->weekOfYear;
+            $prefix = 'INV-W' . $wYear . str_pad((string) $wWeekNum, 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
+
+            $wOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
+            $wOrderIds = $wOrders->pluck('id')->toArray();
+
+            $wInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($wOrderIds, $wStart, $wEnd, $prefix) {
+                    $q->where('id', 'like', $prefix . '%')
+                      ->orWhereBetween('due_date', [$wStart, $wEnd]);
+                    if (! empty($wOrderIds)) {
+                        $q->orWhereIn('order_id', $wOrderIds);
+                    }
+                })
+                ->get();
+
+            $unpaid = $wInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $paid = $wInvoices->where('status', 'Paid');
+
+            $weeklyInv = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($wOrderIds, $wStart, $wEnd, $prefix) {
+                    $q->where('id', 'like', $prefix . '%')
+                      ->orWhereBetween('due_date', [$wStart, $wEnd]);
+                    if (!empty($wOrderIds)) {
+                        $q->orWhereIn('order_id', $wOrderIds);
+                    }
+                })
+                ->first();
+
+            $totalWkAmount = (float) ($wOrders->isNotEmpty() ? $wOrders->sum('amount') : ($weeklyInv ? $weeklyInv->amount : $w['amount']));
+            $orderIdString = count($wOrderIds) <= 3 ? implode(', ', $wOrderIds) : 'KP-W' . $wYear . '-' . count($wOrderIds) . 'orders';
+
+            if (!$weeklyInv && $totalWkAmount > 0) {
+                $weeklyInv = \App\Models\Invoice::create([
+                    'id' => $prefix . '-001',
+                    'customer_id' => $customer->id,
+                    'order_id' => $orderIdString,
+                    'amount' => $totalWkAmount,
+                    'status' => Carbon::parse($wEnd)->lt(Carbon::today()) ? 'Unpaid' : 'Pending',
+                    'due_date' => $wEnd,
+                ]);
+            }
+
+            $wBillId = $weeklyInv ? $weeklyInv->id : ($prefix . '-001');
+            $w['id'] = $wBillId;
+            $w['weekly_bill_id'] = $wBillId;
+            $w['bill_id'] = $wBillId;
+            $w['invoice_id'] = $wBillId;
+            $w['week_id'] = $wStart . '_' . $wEnd;
+            $w['amount'] = $weeklyInv ? (float) $weeklyInv->amount : $totalWkAmount;
+
+            if ($wInvoices->isNotEmpty() && $unpaid->isEmpty()) {
+                $w['status'] = 'Paid';
+                $latestPaidTime = $paid->max('updated_at');
+                $w['paid_date'] = $latestPaidTime ? Carbon::parse($latestPaidTime)->toDateString() : $wEnd;
+            } elseif ($unpaid->isNotEmpty()) {
+                $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
+                $w['status'] = $isOverdue ? 'Unpaid' : 'Pending';
+                $w['paid_date'] = 'N/A';
+            } else {
+                $w['status'] = 'Pending';
+                $w['paid_date'] = 'N/A';
+            }
+
+            // Map all tiffin orders in this week for full-week itemized view
+            $w['orders'] = $wOrders->map(function ($ord) use ($wBillId) {
+                return [
+                    'id' => $ord->id,
+                    'date' => $ord->date,
+                    'tiffin' => $ord->tiffin,
+                    'quantity' => $ord->quantity ?: 1,
+                    'amount' => (float) $ord->amount,
+                    'status' => $ord->status,
+                    'add_ons' => $ord->add_ons,
+                    'selections' => $ord->selections,
+                    'weekly_bill_id' => $wBillId,
+                    'bill_id' => $wBillId,
+                    'invoice_id' => $wBillId,
+                ];
+            })->values()->toArray();
+        }
+        unset($w);
+
+        usort($weeklyHistory, function ($a, $b) {
+            return strcmp($b['start_date'], $a['start_date']);
+        });
+
+        $currentWeekBillId = !empty($weeklyHistory) ? $weeklyHistory[0]['id'] : ('INV-W' . Carbon::now()->year . str_pad((string) Carbon::now()->weekOfYear, 2, '0', STR_PAD_LEFT) . '-' . $customer->id . '-001');
+
         return response()->json([
             'success' => true,
-            'invoices' => $invoices
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'account_status' => $customer->status,
+            'can_order' => ($customer->status === 'Active') || !$hasOverdue,
+            'outstanding_balance' => round($outstandingBalance, 2),
+            'overdue_balance' => round($overdueBalance, 2),
+            'overdue_amount' => round($overdueBalance, 2),
+            'has_overdue' => $hasOverdue,
+            'overdue_bill_id' => $overdueBillId,
+            'weekly_balance' => round($currentWeekBalance, 2),
+            'total_amount_due' => round($outstandingBalance, 2),
+            'current_week' => [
+                'id' => $currentWeekBillId,
+                'weekly_bill_id' => $currentWeekBillId,
+                'bill_id' => $currentWeekBillId,
+                'invoice_id' => $currentWeekBillId,
+                'start_date' => $startOfWeek,
+                'end_date' => $endOfWeek,
+                'due_date' => $dueDate,
+                'week_range' => Carbon::parse($startOfWeek)->format('d M Y') . ' - ' . Carbon::parse($endOfWeek)->format('d M Y'),
+                'orders_count' => $currentWeekOrdersCount,
+                'total_amount' => round($currentWeekTotalAmount, 2),
+                'unpaid_amount' => round($currentWeekBalance, 2),
+                'has_overdue' => $hasOverdue,
+                'overdue_amount' => round($overdueBalance, 2),
+                'overdue_bill_id' => $overdueBillId,
+                'orders' => $currentWeekOrders,
+            ],
+            'invoices' => $invoices,
+            'weekly_history' => $weeklyHistory,
+            'weekly_bills' => $weeklyHistory,
+            'weekly_billing' => $weeklyHistory,
         ]);
     }
 
     /**
-     * Get customer notifications.
+     * Get details for a single weekly bill or invoice.
      */
+    public function customerInvoiceDetails(Request $request, $id)
+    {
+        $customer = $request->attributes->get('customer');
+        $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $id, $request);
+
+        $primaryInvoice = $resolved['invoices']->first();
+        $billId = $primaryInvoice ? $primaryInvoice->id : $id;
+        if (!str_starts_with($billId, 'INV-W') && !empty($resolved['start_date'])) {
+            $dt = Carbon::parse($resolved['start_date']);
+            $billId = 'INV-W' . $dt->year . str_pad((string)$dt->weekOfYear, 2, '0', STR_PAD_LEFT) . '-' . $customer->id . '-001';
+        }
+
+        $startDate = $resolved['start_date'] ?: ($primaryInvoice ? Carbon::parse($primaryInvoice->created_at)->startOfWeek()->toDateString() : Carbon::now()->startOfWeek()->toDateString());
+        $endDate = $resolved['end_date'] ?: ($primaryInvoice ? Carbon::parse($primaryInvoice->created_at)->endOfWeek()->toDateString() : Carbon::now()->endOfWeek()->toDateString());
+
+        $orders = $customer->orders()->whereBetween('date', [$startDate, $endDate])->get();
+        if ($orders->isEmpty() && $primaryInvoice && $primaryInvoice->order_id) {
+            $orderIds = array_filter(array_map('trim', explode(',', $primaryInvoice->order_id)));
+            $orders = $customer->orders()->whereIn('id', $orderIds)->get();
+        }
+
+        $status = $resolved['invoices']->whereIn('status', ['Pending', 'Unpaid'])->isNotEmpty() ? 'Pending' : 'Paid';
+        if ($status === 'Pending' && Carbon::parse($endDate)->lt(Carbon::today())) {
+            $status = 'Unpaid';
+        }
+
+        $totalAmount = (float) ($resolved['amount'] > 0 ? $resolved['amount'] : ($orders->isNotEmpty() ? $orders->sum('amount') : ($primaryInvoice ? $primaryInvoice->amount : 0)));
+
+        $invoiceData = [
+            'id' => $billId,
+            'weekly_bill_id' => $billId,
+            'bill_id' => $billId,
+            'invoice_id' => $billId,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'amount' => $totalAmount,
+            'total_amount' => $totalAmount,
+            'status' => $status,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'due_date' => $endDate,
+            'week_range' => Carbon::parse($startDate)->format('d M Y') . ' - ' . Carbon::parse($endDate)->format('d M Y'),
+            'orders_count' => $orders->count(),
+            'orders' => $orders->map(function ($ord) use ($billId) {
+                return [
+                    'id' => $ord->id,
+                    'date' => $ord->date,
+                    'tiffin' => $ord->tiffin,
+                    'quantity' => $ord->quantity ?: 1,
+                    'amount' => (float) $ord->amount,
+                    'status' => $ord->status,
+                    'add_ons' => $ord->add_ons,
+                    'selections' => $ord->selections,
+                    'weekly_bill_id' => $billId,
+                    'bill_id' => $billId,
+                    'invoice_id' => $billId,
+                ];
+            })->values(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'invoice' => $invoiceData,
+            'weekly_bill' => $invoiceData,
+            'weekly_bill_id' => $billId,
+            'bill_id' => $billId,
+        ]);
+    }
+
     public function customerNotifications(Request $request)
     {
         $customer = $request->attributes->get('customer');
-        $notifications = \App\Models\Notification::where(function ($query) use ($customer) {
-                $query->where('user_type', 'customer')
-                      ->where('user_id', $customer->id);
-            })
-            ->orWhere(function ($query) {
-                $query->where('user_type', 'customer')
-                      ->whereNull('user_id');
-            })
-            ->orWhere(function ($query) use ($customer) {
-                $query->where(function ($q) {
-                    $q->whereNull('user_type')->orWhere('user_type', 'admin');
-                })->where('message', 'like', "%{$customer->name}%");
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $notifications = \App\Models\Notification::where('user_type', 'customer')
+            ->where(function ($query) use ($customer) {
+                $query->where('user_id', $customer->id)
+                      ->orWhereNull('user_id');
             })
             ->orderBy('created_at', 'desc')
             ->get();
@@ -960,16 +1526,45 @@ class AuthController extends Controller
      */
     public function driverRegister(Request $request)
     {
+        // Normalize first_name and last_name into name if provided
+        if ($request->has('first_name') && $request->has('last_name')) {
+            $request->merge([
+                'name' => trim($request->first_name . ' ' . $request->last_name)
+            ]);
+        } elseif ($request->has('name')) {
+            $nameParts = explode(' ', $request->name, 2);
+            $request->merge([
+                'first_name' => $nameParts[0] ?? '',
+                'last_name' => $nameParts[1] ?? ''
+            ]);
+        }
+
+        // Normalize password confirmation
+        if ($request->has('confirm_password') && !$request->has('password_confirmation')) {
+            $request->merge(['password_confirmation' => $request->confirm_password]);
+        }
+
+        // Normalize area and assigned_zip
+        if ($request->has('area') && !$request->has('assigned_zip')) {
+            $request->merge(['assigned_zip' => $request->area]);
+        }
+
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'name' => 'required_without:first_name|string|max:255',
+            'first_name' => 'required_without:name|string|max:255',
+            'last_name' => 'required_without:name|string|max:255',
             'phone' => 'required|string|max:50',
             'email' => 'required|email|max:255',
-            'password' => 'required|string|min:6',
+            'password' => 'required|string|min:6|confirmed',
             'address' => 'nullable|string',
             'license_no' => 'nullable|string|max:100',
             'license_expiry' => 'nullable|date',
             'vehicle_reg_no' => 'nullable|string|max:50',
-            'assigned_zip' => 'nullable|string|max:10',
+            'assigned_zip' => 'nullable|string|max:255',
+            'area' => 'nullable|string|max:255',
+            'license_copy_front' => 'nullable',
+            'license_copy_back' => 'nullable',
+            'profile_image' => 'nullable',
         ]);
 
         if ($validator->fails()) {
@@ -987,7 +1582,28 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $token = Str::random(60);
+        $licenseFront = $this->saveUploadedImage(
+            $request,
+            ['license_copy_front', 'license_front', 'license_front_image'],
+            'license_front_drv_' . time(),
+            'uploads/licenses'
+        );
+
+        $licenseBack = $this->saveUploadedImage(
+            $request,
+            ['license_copy_back', 'license_back', 'license_back_image'],
+            'license_back_drv_' . time(),
+            'uploads/licenses'
+        );
+
+        $profileImage = $this->saveUploadedImage(
+            $request,
+            ['profile_image', 'image', 'avatar', 'photo', 'file'],
+            'profile_drv_' . time(),
+            'uploads/profiles'
+        );
+
+        $assignedZip = $request->assigned_zip ? trim($request->assigned_zip) : ($request->area ? trim($request->area) : null);
 
         $driver = \App\Models\Driver::create([
             'name' => trim($request->name),
@@ -996,33 +1612,69 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
             'address' => $request->address ? trim($request->address) : null,
             'license_no' => $request->license_no ? trim($request->license_no) : null,
+            'license_copy_front' => $licenseFront,
+            'license_copy_back' => $licenseBack,
+            'profile_image' => $profileImage,
             'license_expiry' => $request->license_expiry ? trim($request->license_expiry) : null,
             'vehicle_reg_no' => $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null,
-            'assigned_zip' => $request->assigned_zip ? trim($request->assigned_zip) : null,
-            'area' => $request->assigned_zip ? trim($request->assigned_zip) : null,
-            'api_token' => $token,
-            'status' => 'Active',
+            'assigned_zip' => $assignedZip,
+            'area' => $assignedZip,
+            // No API token and not active until an admin approves the profile.
+            'api_token' => null,
+            'status' => 'Inactive',
+            'approval_status' => 'Pending',
             'user_type' => 'driver',
+            'fcm_token' => $request->input('fcm_token'),
         ]);
 
+        // Alert the admin dashboard that a driver is waiting for review.
         try {
-            Mail::to($driver->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Team!", "Thank you {$driver->name} for registering in KP's Kitchen. We are excited to have you as part of our driver network!"));
-            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$driver->name} have registerd"));
+            \App\Models\Notification::create([
+                'title' => 'New Driver Awaiting Approval',
+                'message' => "{$driver->name} ({$driver->email}) has registered as a driver and is awaiting admin approval.",
+                'user_type' => 'admin',
+                'user_id' => null,
+                'read_status' => false,
+            ]);
+            FcmService::sendToAdmin(
+                'New Driver Awaiting Approval',
+                "{$driver->name} ({$driver->email}) has registered as a driver and is awaiting admin approval.",
+                ['type' => 'driver_registration', 'driver_id' => $driver->id]
+            );
+        } catch (\Exception $e) {
+            Log::warning("Driver approval notification failed: " . $e->getMessage());
+        }
+
+        try {
+            Mail::to($driver->email)->send(new KitchenAlertMail("Registration received - pending approval", "Thank you {$driver->name} for registering with KP's Kitchen. Your profile has been submitted and is now pending review by our team. You will be able to log in once an admin approves your account."));
+            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New Driver Awaiting Approval", "Driver {$driver->name} ({$driver->email}) has registered and needs review in the admin panel."));
         } catch (\Exception $e) {
             Log::warning("Driver registration email triggers failed: " . $e->getMessage());
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'Driver registration successful.',
-            'token' => $token,
+            'message' => 'Registration submitted. Your account is pending admin approval - you will be able to log in once it is approved.',
+            'token' => null,
+            'approval_status' => $driver->approval_status,
             'user_type' => $driver->user_type,
             'driver' => [
                 'id' => $driver->id,
                 'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
                 'email' => $driver->email,
                 'phone' => $driver->phone,
+                'address' => $driver->address,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $driver->license_copy_front ? asset($driver->license_copy_front) : null,
+                'license_copy_back' => $driver->license_copy_back ? asset($driver->license_copy_back) : null,
+                'profile_image' => $driver->profile_image ? asset($driver->profile_image) : null,
                 'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
+                'approval_status' => $driver->approval_status,
             ]
         ], 201);
     }
@@ -1054,8 +1706,47 @@ class AuthController extends Controller
             ], 401);
         }
 
+        // Gate login on admin approval.
+        if ($driver->approval_status === 'Pending') {
+            return response()->json([
+                'success' => false,
+                'approval_status' => 'Pending',
+                'message' => 'Your account is awaiting admin approval. Please try again once it has been reviewed.',
+            ], 403);
+        }
+
+        if ($driver->approval_status === 'Rejected') {
+            return response()->json([
+                'success' => false,
+                'approval_status' => 'Rejected',
+                'message' => $driver->rejection_reason
+                    ? 'Your registration was not approved: ' . $driver->rejection_reason
+                    : 'Your registration was not approved. Please contact KP\'s Kitchen for details.',
+            ], 403);
+        }
+
         $token = Str::random(60);
-        $driver->update(['api_token' => $token]);
+        $updateFields = ['api_token' => $token];
+        if ($request->filled('fcm_token')) {
+            $updateFields['fcm_token'] = $request->fcm_token;
+        }
+        $driver->update($updateFields);
+
+        // Dedicated Driver Login Notification
+        \App\Models\Notification::create([
+            'title' => 'Login Successful',
+            'message' => "Welcome back, {$driver->name}! You have successfully logged in.",
+            'user_type' => 'driver',
+            'user_id' => $driver->id,
+            'read_status' => false,
+        ]);
+
+        FcmService::sendToDriver(
+            $driver->id,
+            'Login Successful',
+            "Welcome back, {$driver->name}! You have successfully logged in.",
+            ['type' => 'login']
+        );
 
         try {
             Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("User Login Notification", "{$driver->name} has logged in into KP's Kitchen."));
@@ -1214,6 +1905,16 @@ class AuthController extends Controller
      */
     public function customerResetPassword(Request $request)
     {
+        if ($request->has('new_password')) {
+            $request->merge(['password' => $request->new_password]);
+        }
+        if ($request->has('password_confirmation')) {
+            $request->merge(['confirm_password' => $request->password_confirmation]);
+        }
+        if ($request->has('new_password_confirmation')) {
+            $request->merge(['confirm_password' => $request->new_password_confirmation]);
+        }
+
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'otp' => 'required|string|size:6',
@@ -1350,6 +2051,16 @@ class AuthController extends Controller
      */
     public function driverResetPassword(Request $request)
     {
+        if ($request->has('new_password')) {
+            $request->merge(['password' => $request->new_password]);
+        }
+        if ($request->has('password_confirmation')) {
+            $request->merge(['confirm_password' => $request->password_confirmation]);
+        }
+        if ($request->has('new_password_confirmation')) {
+            $request->merge(['confirm_password' => $request->new_password_confirmation]);
+        }
+
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'otp' => 'required|string|size:6',
@@ -1458,9 +2169,19 @@ class AuthController extends Controller
         }
 
         $cartItems = $query->get()->map(function ($cart) {
+            $selections = is_array($cart->selections) ? $cart->selections : null;
+            $unitPrice = $selections['unit_price']
+                ?? ($cart->tiffin ? (float) $cart->tiffin->price : null);
+
             return [
                 'id' => $cart->id,
                 'quantity' => $cart->quantity,
+                'selections' => $selections['choices'] ?? [],
+                'choices_summary' => $selections['summary'] ?? '',
+                'is_custom' => ($selections['mode'] ?? null) === 'custom',
+                'custom_items' => $selections['custom_items'] ?? [],
+                'unit_price' => $unitPrice,
+                'line_total' => $unitPrice !== null ? round($unitPrice * $cart->quantity, 2) : null,
                 'tiffin' => $cart->tiffin ? [
                     'id' => $cart->tiffin->id,
                     'name' => $cart->tiffin->name,
@@ -1508,10 +2229,39 @@ class AuthController extends Controller
             ], 400);
         }
 
+        // Normalize tiffin_id if sent as id
+        if (!$request->has('tiffin_id') && $request->has('id')) {
+            $request->merge(['tiffin_id' => $request->id]);
+        }
+
+        // If custom_items are provided, automatically resolve/ensure the customizable tiffin if tiffin_id is missing or invalid
+        $hasCustomItems = $request->filled('custom_items') || (is_array($request->input('custom_items')) && count($request->input('custom_items')) > 0);
+        $tiffinId = $request->input('tiffin_id');
+
+        if ($hasCustomItems && (!$tiffinId || $tiffinId === 'custom' || !is_numeric($tiffinId) || !\App\Models\Tiffin::where('id', $tiffinId)->exists())) {
+            $customTiffin = \App\Models\Tiffin::where('is_customizable', true)->first()
+                ?? \App\Models\Tiffin::where('name', 'like', '%custom%')->first();
+
+            if (!$customTiffin) {
+                $customTiffin = \App\Models\Tiffin::create([
+                    'name' => 'Custom tiffin',
+                    'description' => 'Build your own tiffin from today\'s active menu items.',
+                    'price' => 0.00,
+                    'prep_time' => '30 mins',
+                    'status' => 'Active',
+                    'is_customizable' => true,
+                ]);
+            }
+
+            $request->merge(['tiffin_id' => $customTiffin->id]);
+        }
+
         $validator = Validator::make($request->all(), [
             'tiffin_id' => 'nullable|exists:tiffins,id',
             'item_id' => 'nullable|exists:items,id',
             'quantity' => 'nullable|integer|min:1',
+            'selections' => 'nullable',
+            'custom_items' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -1532,11 +2282,65 @@ class AuthController extends Controller
             ], 400);
         }
 
+        // Resolve the customer's "Or" choices / Build-Your-Own items for this plan.
+        $selectionsPayload = null;
+        if ($tiffinId) {
+            $tiffinModel = \App\Models\Tiffin::find($tiffinId);
+
+            if ($tiffinModel && $tiffinModel->is_customizable) {
+                $picked = $request->input('custom_items', $request->input('selections', []));
+                $resolved = $tiffinModel->resolveCustomItems($picked);
+
+                if (!empty($resolved['errors'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => implode(' ', $resolved['errors']),
+                    ], 422);
+                }
+
+                $selectionsPayload = [
+                    'mode' => 'custom',
+                    'custom_items' => $resolved['items'],
+                    'item_count' => $resolved['count'],
+                    'items_total' => $resolved['items_total'],
+                    'summary' => $resolved['summary'],
+                    'unit_price' => $resolved['unit_price'],
+                ];
+            } elseif ($tiffinModel && !empty($tiffinModel->components)) {
+                $rawSelections = $request->input('selections', []);
+                $resolved = $tiffinModel->resolveSelections($rawSelections);
+
+                if (!empty($resolved['errors'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => implode(' ', $resolved['errors']),
+                    ], 422);
+                }
+
+                $selectionsPayload = [
+                    'choices' => $resolved['choices'],
+                    'summary' => $resolved['summary'],
+                    'unit_price' => round((float) $tiffinModel->price + $resolved['delta'], 2),
+                ];
+            }
+        }
+
+        $sameSelections = function ($stored) use ($selectionsPayload) {
+            if (($selectionsPayload['mode'] ?? null) === 'custom') {
+                $a = is_array($stored) ? ($stored['custom_items'] ?? null) : null;
+                return json_encode($a) === json_encode($selectionsPayload['custom_items']);
+            }
+            $a = is_array($stored) ? ($stored['choices'] ?? []) : [];
+            $b = $selectionsPayload['choices'] ?? [];
+            return json_encode($a) === json_encode($b);
+        };
+
         if ($customerId) {
             $cartItem = \App\Models\Cart::where('customer_id', $customerId)
                 ->where('tiffin_id', $tiffinId)
                 ->where('item_id', $itemId)
-                ->first();
+                ->get()
+                ->first(fn ($c) => $sameSelections($c->selections));
 
             if ($cartItem) {
                 $cartItem->increment('quantity', $quantity);
@@ -1546,13 +2350,15 @@ class AuthController extends Controller
                     'tiffin_id' => $tiffinId,
                     'item_id' => $itemId,
                     'quantity' => $quantity,
+                    'selections' => $selectionsPayload,
                 ]);
             }
         } else {
             $cartItem = \App\Models\GuestCart::where('temp_user_id', $tempUserId)
                 ->where('tiffin_id', $tiffinId)
                 ->where('item_id', $itemId)
-                ->first();
+                ->get()
+                ->first(fn ($c) => $sameSelections($c->selections));
 
             if ($cartItem) {
                 $cartItem->increment('quantity', $quantity);
@@ -1562,6 +2368,7 @@ class AuthController extends Controller
                     'tiffin_id' => $tiffinId,
                     'item_id' => $itemId,
                     'quantity' => $quantity,
+                    'selections' => $selectionsPayload,
                 ]);
             }
         }
@@ -1658,9 +2465,39 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $orders = \App\Models\Order::where('driver_id', $driver->id)
+        $orders = \App\Models\Order::with('customerRelation')
+            ->where('driver_id', $driver->id)
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->get()
+            ->map(function ($order) {
+                $customer = $order->customerRelation;
+                $addons = is_string($order->add_ons) ? json_decode($order->add_ons, true) : ($order->add_ons ?? []);
+
+                return [
+                    'id' => $order->id,
+                    'customer_id' => $order->customer_id,
+                    'customer' => $customer ? $customer->name : $order->customer,
+                    'customer_phone' => $customer ? $customer->phone : null,
+                    'customer_address' => $customer ? $customer->address : null,
+                    'pincode' => $customer ? $customer->pincode : $order->area,
+                    'driver_id' => $order->driver_id,
+                    'driver' => $order->driver,
+                    'tiffin_id' => $order->tiffin_id,
+                    'tiffin' => $order->tiffin,
+                    'quantity' => $order->quantity,
+                    'amount' => $order->amount,
+                    'status' => $order->status,
+                    'area' => $order->area,
+                    'date' => $order->date,
+                    'add_ons' => $addons,
+                    'selections' => $order->selections,
+                    'note' => $order->note,
+                    'proof_of_delivery_photo' => $order->proof_of_delivery_photo ? asset($order->proof_of_delivery_photo) : null,
+                    'proof_of_delivery_signature' => $order->proof_of_delivery_signature ? asset($order->proof_of_delivery_signature) : null,
+                    'created_at' => $order->created_at,
+                    'updated_at' => $order->updated_at,
+                ];
+            });
 
         return response()->json([
             'success' => true,
@@ -1746,8 +2583,27 @@ class AuthController extends Controller
         \App\Models\Notification::create([
             'title' => 'Order Status Updated',
             'message' => "Driver {$driver->name} updated order {$order->id} status to {$order->status}.",
+            'user_type' => 'admin',
+            'user_id' => null,
             'read_status' => false
         ]);
+
+        if ($order->customer_id) {
+            \App\Models\Notification::create([
+                'title' => 'Order Status Update',
+                'message' => "Your order {$order->id} is now {$order->status}.",
+                'user_type' => 'customer',
+                'user_id' => $order->customer_id,
+                'read_status' => false
+            ]);
+
+            FcmService::sendToCustomer(
+                $order->customer_id,
+                'Order Status Update',
+                "Your order {$order->id} is now {$order->status}.",
+                ['order_id' => $order->id, 'status' => $order->status, 'type' => 'order_status']
+            );
+        }
 
         return response()->json([
             'success' => true,
@@ -1782,13 +2638,13 @@ class AuthController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'name' => 'required_without:first_name|string|max:255',
-            'first_name' => 'required_without:name|string|max:255',
-            'last_name' => 'required_without:name|string|max:255',
-            'phone' => 'required|string|max:20',
-            'email' => 'required|email|max:255|unique:customers,email,' . $customer->id,
-            'pincode' => 'required_without:addresses|string|max:20',
-            'address' => 'required_without:addresses|string',
+            'name' => 'nullable|string|max:255',
+            'first_name' => 'nullable|string|max:255',
+            'last_name' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:20',
+            'email' => 'nullable|email|max:255|unique:customers,email,' . $customer->id,
+            'pincode' => 'nullable|string|max:20',
+            'address' => 'nullable|string',
             'old_password' => 'nullable|required_with:password|string',
             'password' => 'nullable|string|min:6|confirmed',
             'profile_image' => 'nullable',
@@ -1809,11 +2665,17 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $data = [
-            'name' => trim($request->name),
-            'phone' => trim($request->phone),
-            'email' => trim($request->email),
-        ];
+        $data = [];
+
+        if ($request->filled('name')) {
+            $data['name'] = trim($request->name);
+        }
+        if ($request->filled('phone')) {
+            $data['phone'] = trim($request->phone);
+        }
+        if ($request->filled('email')) {
+            $data['email'] = strtolower(trim($request->email));
+        }
 
         // If addresses array was supplied, extract default address or use the first one as primary
         if ($request->has('addresses') && is_array($request->addresses)) {
@@ -1833,8 +2695,12 @@ class AuthController extends Controller
                 $data['pincode'] = trim($defaultAddr['pincode']);
             }
         } else {
-            $data['address'] = trim($request->address);
-            $data['pincode'] = trim($request->pincode);
+            if ($request->has('address')) {
+                $data['address'] = trim($request->address);
+            }
+            if ($request->has('pincode')) {
+                $data['pincode'] = trim($request->pincode);
+            }
         }
 
         // Handle old password / new password validation
@@ -2061,6 +2927,12 @@ class AuthController extends Controller
             'read_status' => false
         ]);
 
+        FcmService::sendToAdmin(
+            'Order Cancelled',
+            "Order {$order->id} has been cancelled by customer {$customer->name}.",
+            ['order_id' => $order->id, 'type' => 'order_cancelled']
+        );
+
         \Illuminate\Support\Facades\Mail::to('admin@kpkitchen.com')->send(new \App\Mail\KitchenAlertMail("Order Cancellation Alert", "Order {$order->id} has been cancelled by customer {$customer->name}."));
 
         if ($order->driver_id) {
@@ -2071,6 +2943,13 @@ class AuthController extends Controller
                 'user_id' => $order->driver_id,
                 'read_status' => false
             ]);
+
+            FcmService::sendToDriver(
+                $order->driver_id,
+                'Order Cancelled',
+                "Order {$order->id} has been cancelled by the customer.",
+                ['order_id' => $order->id, 'type' => 'order_cancelled']
+            );
         }
 
         return response()->json([
@@ -2106,11 +2985,11 @@ class AuthController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'name' => 'required_without:first_name|string|max:255',
-            'first_name' => 'required_without:name|string|max:255',
-            'last_name' => 'required_without:name|string|max:255',
-            'phone' => 'required|string|max:50',
-            'email' => 'required|email|max:255|unique:drivers,email,' . $driver->id,
+            'name' => 'nullable|string|max:255',
+            'first_name' => 'nullable|string|max:255',
+            'last_name' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:50',
+            'email' => 'nullable|email|max:255|unique:drivers,email,' . $driver->id,
             'address' => 'nullable|string',
             'vehicle_reg_no' => 'nullable|string|max:50',
             'license_no' => 'nullable|string|max:100',
@@ -2134,11 +3013,17 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $data = [
-            'name' => trim($request->name),
-            'phone' => trim($request->phone),
-            'email' => strtolower(trim($request->email)),
-        ];
+        $data = [];
+
+        if ($request->filled('name')) {
+            $data['name'] = trim($request->name);
+        }
+        if ($request->filled('phone')) {
+            $data['phone'] = trim($request->phone);
+        }
+        if ($request->filled('email')) {
+            $data['email'] = strtolower(trim($request->email));
+        }
 
         if ($request->has('address')) {
             $data['address'] = $request->address ? trim($request->address) : null;
@@ -2245,16 +3130,47 @@ class AuthController extends Controller
         ]);
     }
 
+    public function getDriverNotifications(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        if (!$driver) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $notifications = \App\Models\Notification::where('user_type', 'driver')
+            ->where(function ($query) use ($driver) {
+                $query->where('user_id', $driver->id)
+                      ->orWhereNull('user_id');
+            })
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'notifications' => $notifications
+        ]);
+    }
+
     public function clearDriverNotifications(Request $request)
     {
         $driver = $request->attributes->get('driver');
+        if (!$driver) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
         \App\Models\Notification::where('user_type', 'driver')
             ->where('user_id', $driver->id)
             ->delete();
 
         return response()->json([
             'success' => true,
-            'message' => 'Notifications cleared successfully.'
+            'message' => 'Driver notifications cleared successfully.'
         ]);
     }
 
@@ -2314,15 +3230,357 @@ class AuthController extends Controller
         ]);
     }
 
+    /**
+     * Helper to resolve target invoices and calculate total amount for a bill/week payment request.
+     */
+    private function resolveWeeklyInvoicesForPayment($customer, $billId = null, Request $request = null)
+    {
+        $billId = $billId ? trim((string) $billId) : ($request ? trim((string) ($request->input('bill_id') ?: $request->input('invoice_id') ?: $request->input('id') ?: '')) : '');
+
+        $startDate = $request ? $request->input('start_date', $request->input('week_start')) : null;
+        $endDate = $request ? $request->input('end_date', $request->input('week_end')) : null;
+
+        // 1. If explicit date range provided in request
+        if ($startDate && $endDate) {
+            $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('due_date', [$startDate, $endDate]);
+                })
+                ->get();
+            $weeklyOrders = $customer->orders()->whereBetween('date', [$startDate, $endDate])->get();
+            $unpaidInvoices = $invoices->whereIn('status', ['Pending', 'Unpaid']);
+            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $weeklyOrders->sum('amount');
+            $weekRange = Carbon::parse($startDate)->format('d M Y') . ' - ' . Carbon::parse($endDate)->format('d M Y');
+            $isOverdue = Carbon::parse($endDate)->lt(Carbon::today()) && $unpaidInvoices->isNotEmpty();
+
+            return [
+                'invoices' => $invoices,
+                'orders' => $weeklyOrders,
+                'amount' => $amount,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'label' => "Weekly Bill ({$weekRange})",
+                'week_range' => $weekRange,
+                'is_overdue' => $isOverdue,
+            ];
+        }
+
+        // 2. If billId is 'overdue', 'past_due', or indicates overdue invoices
+        if (in_array(strtolower($billId), ['overdue', 'past_due', 'previous_overdue'])) {
+            $overdueInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->whereDate('due_date', '<', Carbon::now()->toDateString())
+                ->get();
+
+            if ($overdueInvoices->isEmpty()) {
+                $overdueInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                    ->whereIn('status', ['Pending', 'Unpaid'])
+                    ->get();
+            }
+
+            $amount = (float) $overdueInvoices->sum('amount');
+
+            return [
+                'invoices' => $overdueInvoices,
+                'orders' => collect([]),
+                'amount' => $amount,
+                'start_date' => null,
+                'end_date' => null,
+                'label' => 'Overdue Weekly Bill Payment',
+                'week_range' => null,
+                'is_overdue' => true,
+            ];
+        }
+
+        // 3. If billId is empty or indicates total/all outstanding
+        if (empty($billId) || in_array(strtolower($billId), ['all', 'previous', 'outstanding', 'total', 'balance', 'weekly'])) {
+            $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->get();
+
+            if ($invoices->isEmpty()) {
+                $this->ensureInvoicesForCustomerOrders($customer);
+                $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                    ->whereIn('status', ['Pending', 'Unpaid'])
+                    ->get();
+            }
+
+            $amount = (float) $invoices->sum('amount');
+            $hasOverdue = $invoices->where('due_date', '<', Carbon::now()->toDateString())->isNotEmpty();
+
+            return [
+                'invoices' => $invoices,
+                'orders' => collect([]),
+                'amount' => $amount,
+                'start_date' => null,
+                'end_date' => null,
+                'label' => $hasOverdue ? 'Weekly Balance Payment (Including Overdue)' : 'Weekly Balance Payment (All Outstanding)',
+                'week_range' => null,
+                'is_overdue' => $hasOverdue,
+            ];
+        }
+
+        // 4. If billId is 'current', 'current_week', 'this_week'
+        if (in_array(strtolower($billId), ['current', 'current_week', 'this_week'])) {
+            $now = Carbon::now();
+            $wStart = $now->copy()->startOfWeek()->toDateString();
+            $wEnd = $now->copy()->endOfWeek()->toDateString();
+
+            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($wStart, $wEnd) {
+                    $q->whereBetween('due_date', [$wStart, $wEnd]);
+                })
+                ->get();
+
+            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $amount = (float) $unpaidInvoices->sum('amount');
+
+            // If current week has 0 unpaid amount, fallback to any overdue/unpaid invoices
+            if ($amount <= 0) {
+                $allUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+                    ->whereIn('status', ['Pending', 'Unpaid'])
+                    ->get();
+                if ($allUnpaid->isNotEmpty()) {
+                    return [
+                        'invoices' => $allUnpaid,
+                        'orders' => collect([]),
+                        'amount' => (float) $allUnpaid->sum('amount'),
+                        'start_date' => null,
+                        'end_date' => null,
+                        'label' => 'Weekly Balance Payment',
+                        'week_range' => null,
+                        'is_overdue' => $allUnpaid->where('due_date', '<', $now->toDateString())->isNotEmpty(),
+                    ];
+                }
+            }
+
+            $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
+            return [
+                'invoices' => $unpaidInvoices,
+                'orders' => $weekOrders,
+                'amount' => $amount,
+                'start_date' => $wStart,
+                'end_date' => $wEnd,
+                'label' => 'Current Week Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
+                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                'is_overdue' => false,
+            ];
+        }
+
+        // 5. Direct primary key match in invoices table
+        $directInvoice = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->where('id', $billId)
+            ->first();
+
+        if ($directInvoice) {
+            $createdCarbon = Carbon::parse($directInvoice->due_date ?: $directInvoice->created_at);
+            $wStart = $createdCarbon->copy()->startOfWeek()->toDateString();
+            $wEnd = $createdCarbon->copy()->endOfWeek()->toDateString();
+            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($wStart, $wEnd, $directInvoice) {
+                    $q->where('id', $directInvoice->id)
+                      ->orWhereBetween('due_date', [$wStart, $wEnd]);
+                })
+                ->get();
+            $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
+            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : ($directInvoice->status !== 'Paid' ? (float) $directInvoice->amount : 0.00);
+            $isOverdue = Carbon::parse($directInvoice->due_date ?: $wEnd)->lt(Carbon::today());
+
+            return [
+                'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : collect([$directInvoice]),
+                'orders' => $weekOrders,
+                'amount' => $amount,
+                'start_date' => $wStart,
+                'end_date' => $wEnd,
+                'label' => "Weekly Bill Payment ({$directInvoice->id})",
+                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                'is_overdue' => $isOverdue,
+            ];
+        }
+
+        // 6. Match by week range string e.g. "2026-09-08_2026-09-14"
+        if (preg_match('/^(\d{4}-\d{2}-\d{2})[_\s\-to]+(\d{4}-\d{2}-\d{2})$/', $billId, $matches)) {
+            $wStart = $matches[1];
+            $wEnd = $matches[2];
+            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($wStart, $wEnd) {
+                    $q->whereBetween('due_date', [$wStart, $wEnd]);
+                })
+                ->get();
+            $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
+            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $weekOrders->sum('amount');
+            $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
+
+            return [
+                'invoices' => $weekInvoices,
+                'orders' => $weekOrders,
+                'amount' => $amount,
+                'start_date' => $wStart,
+                'end_date' => $wEnd,
+                'label' => 'Weekly Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
+                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                'is_overdue' => $isOverdue,
+            ];
+        }
+
+        // 7. Match by date string inside billId e.g. "2026-09-08" or "INV-20260908-1" or "INV-W202637..."
+        if (preg_match('/(\d{4}-?\d{2}-?\d{2})/', $billId, $dateMatches)) {
+            $rawDate = str_replace('-', '', $dateMatches[1]);
+            $dt = strlen($rawDate) === 8 ? Carbon::createFromFormat('Ymd', $rawDate) : Carbon::parse($dateMatches[1]);
+            $wStart = $dt->copy()->startOfWeek()->toDateString();
+            $wEnd = $dt->copy()->endOfWeek()->toDateString();
+
+            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($wStart, $wEnd, $billId) {
+                    $q->where('id', 'like', "%{$billId}%")
+                        ->orWhereBetween('due_date', [$wStart, $wEnd]);
+                })
+                ->get();
+            $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
+            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $weekOrders->sum('amount');
+            $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
+
+            return [
+                'invoices' => $weekInvoices,
+                'orders' => $weekOrders,
+                'amount' => $amount,
+                'start_date' => $wStart,
+                'end_date' => $wEnd,
+                'label' => 'Weekly Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
+                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                'is_overdue' => $isOverdue,
+            ];
+        }
+
+        // 8. Match by order ID e.g. "ORD..."
+        $matchingOrder = \App\Models\Order::where('customer_id', $customer->id)->where('id', $billId)->first();
+        if ($matchingOrder) {
+            $dt = Carbon::parse($matchingOrder->date);
+            $wStart = $dt->copy()->startOfWeek()->toDateString();
+            $wEnd = $dt->copy()->endOfWeek()->toDateString();
+            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($wStart, $wEnd, $matchingOrder) {
+                    $q->where('order_id', 'like', "%{$matchingOrder->id}%")
+                        ->orWhereBetween('due_date', [$wStart, $wEnd]);
+                })
+                ->get();
+            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $matchingOrder->amount;
+            $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
+
+            return [
+                'invoices' => $weekInvoices,
+                'orders' => collect([$matchingOrder]),
+                'amount' => $amount,
+                'start_date' => $wStart,
+                'end_date' => $wEnd,
+                'label' => "Weekly Bill Payment ({$matchingOrder->tiffin})",
+                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                'is_overdue' => $isOverdue,
+            ];
+        }
+
+        // 9. General Fallback
+        $fallbackInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->get();
+
+        if ($fallbackInvoices->isEmpty()) {
+            $this->ensureInvoicesForCustomerOrders($customer);
+            $fallbackInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->get();
+        }
+
+        $hasOverdue = $fallbackInvoices->where('due_date', '<', Carbon::now()->toDateString())->isNotEmpty();
+
+        return [
+            'invoices' => $fallbackInvoices,
+            'orders' => collect([]),
+            'amount' => (float) $fallbackInvoices->sum('amount'),
+            'start_date' => null,
+            'end_date' => null,
+            'label' => $hasOverdue ? 'Overdue Weekly Bill Payment' : 'Weekly Bill Payment',
+            'week_range' => null,
+            'is_overdue' => $hasOverdue,
+        ];
+    }
+
+    /**
+     * Helper to ensure weekly invoice DB records exist for all customer orders across weeks.
+     */
+    private function ensureInvoicesForCustomerOrders($customer)
+    {
+        $orders = $customer->orders()->get();
+        $weeklyGroups = [];
+        foreach ($orders as $order) {
+            $dt = Carbon::parse($order->date);
+            $wStart = $dt->copy()->startOfWeek()->toDateString();
+            $wEnd = $dt->copy()->endOfWeek()->toDateString();
+            $wYear = $dt->year;
+            $wWeekNum = $dt->weekOfYear;
+            $key = $wYear . '_' . $wWeekNum;
+            if (!isset($weeklyGroups[$key])) {
+                $weeklyGroups[$key] = [
+                    'start' => $wStart,
+                    'end' => $wEnd,
+                    'year' => $wYear,
+                    'week_num' => $wWeekNum,
+                    'orders' => [],
+                    'total' => 0.0,
+                ];
+            }
+            $weeklyGroups[$key]['orders'][] = $order->id;
+            $weeklyGroups[$key]['total'] += (float) $order->amount;
+        }
+
+        foreach ($weeklyGroups as $key => $grp) {
+            $prefix = 'INV-W' . $grp['year'] . str_pad((string)$grp['week_num'], 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
+            $exists = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($prefix, $grp) {
+                    $q->where('id', 'like', $prefix . '%')
+                      ->orWhereBetween('due_date', [$grp['start'], $grp['end']])
+                      ->orWhereBetween('created_at', [
+                          Carbon::parse($grp['start'])->startOfDay(),
+                          Carbon::parse($grp['end'])->endOfDay(),
+                      ]);
+                })
+                ->first();
+
+            if (!$exists) {
+                $orderIdStr = count($grp['orders']) <= 3 ? implode(', ', $grp['orders']) : 'KP-W' . $grp['year'] . '-' . count($grp['orders']) . 'orders';
+                $isPast = Carbon::parse($grp['end'])->lt(Carbon::today());
+                \App\Models\Invoice::create([
+                    'id' => $prefix . '-001',
+                    'customer_id' => $customer->id,
+                    'order_id' => $orderIdStr,
+                    'amount' => $grp['total'],
+                    'status' => $isPast ? 'Unpaid' : 'Pending',
+                    'due_date' => $grp['end'],
+                ]);
+            }
+        }
+    }
+
     public function createBillPaymentIntent(Request $request, $billId)
     {
         $customer = $request->attributes->get('customer');
-        $invoice = \App\Models\Invoice::where('customer_id', $customer->id)->findOrFail($billId);
+        $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $billId, $request);
+        $totalAmount = (float) $resolved['amount'];
 
-        if ($invoice->status === 'Paid') {
+        if ($totalAmount <= 0) {
+            $this->ensureInvoicesForCustomerOrders($customer);
+            $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $billId, $request);
+            $totalAmount = (float) $resolved['amount'];
+        }
+
+        if ($totalAmount <= 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'This bill has already been paid.'
+                'message' => 'No outstanding balance due for this bill.',
             ], 400);
         }
 
@@ -2336,7 +3594,7 @@ class AuthController extends Controller
                     'Authorization' => 'Bearer ' . $stripeSecret,
                     'Content-Type' => 'application/x-www-form-urlencoded',
                 ])->asForm()->post('https://api.stripe.com/v1/payment_intents', [
-                    'amount' => (int)round($invoice->amount * 100),
+                    'amount' => (int) round($totalAmount * 100),
                     'currency' => 'aud',
                     'automatic_payment_methods[enabled]' => 'true',
                 ]);
@@ -2346,7 +3604,7 @@ class AuthController extends Controller
                     $errorMessage = isset($errorData['error']['message']) ? $errorData['error']['message'] : 'Stripe PaymentIntent creation failed.';
                     return response()->json([
                         'success' => false,
-                        'message' => 'Stripe error: ' . $errorMessage
+                        'message' => 'Stripe error: ' . $errorMessage,
                     ], 400);
                 }
 
@@ -2356,7 +3614,7 @@ class AuthController extends Controller
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                    'message' => 'Stripe connection error: ' . $e->getMessage(),
                 ], 500);
             }
         } else {
@@ -2364,11 +3622,20 @@ class AuthController extends Controller
             $clientSecret = $paymentIntentId . '_secret_' . strtolower(Str::random(16));
         }
 
+        $primaryInvoice = $resolved['invoices']->first();
+        $targetBillId = $primaryInvoice ? $primaryInvoice->id : ($billId ?: 'INV-WEEKLY');
+
         return response()->json([
             'success' => true,
-            'amount' => $invoice->amount,
+            'amount' => $totalAmount,
             'stripe_client_secret' => $clientSecret,
             'payment_intent_id' => $paymentIntentId,
+            'label' => $resolved['label'],
+            'week_range' => $resolved['week_range'],
+            'weekly_bill_id' => $targetBillId,
+            'bill_id' => $targetBillId,
+            'invoice_id' => $targetBillId,
+            'is_overdue' => $resolved['is_overdue'] ?? false,
         ]);
     }
 
@@ -2380,7 +3647,7 @@ class AuthController extends Controller
         if (!$paymentIntentId) {
             return response()->json([
                 'success' => false,
-                'message' => 'Payment intent ID is required.'
+                'message' => 'Payment intent ID is required.',
             ], 400);
         }
 
@@ -2388,7 +3655,7 @@ class AuthController extends Controller
         if (\App\Models\Payment::where('payment_intent_id', $paymentIntentId)->exists()) {
             return response()->json([
                 'success' => false,
-                'message' => 'This payment transaction has already been processed.'
+                'message' => 'This payment transaction has already been processed.',
             ], 400);
         }
 
@@ -2396,17 +3663,18 @@ class AuthController extends Controller
         if (app()->environment('production') && str_starts_with($paymentIntentId, 'pi_mock_')) {
             return response()->json([
                 'success' => false,
-                'message' => 'Invalid payment intent.'
+                'message' => 'Invalid payment intent.',
             ], 400);
         }
 
-        $invoice = \App\Models\Invoice::where('customer_id', $customer->id)->findOrFail($billId);
+        $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $billId, $request);
+        $invoices = $resolved['invoices'];
+        $totalAmount = (float) $resolved['amount'];
 
-        if ($invoice->status === 'Paid') {
+        if ($totalAmount <= 0 && $invoices->isEmpty()) {
             return response()->json([
                 'success' => true,
                 'message' => 'Bill already marked as paid.',
-                'invoice' => $invoice
             ]);
         }
 
@@ -2421,14 +3689,16 @@ class AuthController extends Controller
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    if (isset($data['status']) && $data['status'] === 'succeeded') {
+                    if (isset($data['status']) && in_array($data['status'], ['succeeded', 'processing', 'requires_capture'])) {
+                        $paymentCleared = true;
+                    } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
                         $paymentCleared = true;
                     }
                 }
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Stripe connection error: ' . $e->getMessage()
+                    'message' => 'Stripe connection error: ' . $e->getMessage(),
                 ], 500);
             }
         } else {
@@ -2436,30 +3706,34 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
-            $invoice->status = 'Paid';
-            $invoice->save();
+            foreach ($invoices as $invoice) {
+                $invoice->status = 'Paid';
+                $invoice->save();
+            }
 
-            // Find order name to save as plan name
-            $planName = 'Weekly Bill Payment';
-            if ($invoice->order_id) {
-                $order = \App\Models\Order::find($invoice->order_id);
-                if ($order) {
-                    $planName = $order->tiffin;
-                }
+            if (!empty($resolved['start_date']) && !empty($resolved['end_date'])) {
+                \App\Models\Order::where('customer_id', $customer->id)
+                    ->whereBetween('date', [$resolved['start_date'], $resolved['end_date']])
+                    ->where('status', 'Payment Pending')
+                    ->update(['status' => 'Pending']);
+            } else {
+                \App\Models\Order::where('customer_id', $customer->id)
+                    ->where('status', 'Payment Pending')
+                    ->update(['status' => 'Pending']);
             }
 
             \App\Models\Payment::create([
                 'id' => 'TXN' . strtoupper(Str::random(8)),
                 'customer_id' => $customer->id,
                 'customer' => $customer->name,
-                'plan' => $planName,
-                'amount' => $invoice->amount,
+                'plan' => $resolved['label'],
+                'amount' => $totalAmount,
                 'date' => Carbon::now()->toDateString(),
                 'status' => 'Successful',
                 'payment_intent_id' => $paymentIntentId,
             ]);
 
-            // Reactivate customer account if they have no other unpaid/pending previous invoices
+            // Reactivate customer account if no other unpaid/pending overdue invoices
             $hasUnpaidOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
                 ->whereIn('status', ['Pending', 'Unpaid'])
                 ->whereDate('due_date', '<', Carbon::now()->toDateString())
@@ -2471,23 +3745,44 @@ class AuthController extends Controller
             }
 
             \App\Models\Notification::create([
-                'title' => 'Bill Paid',
-                'message' => "Your payment of AUD {$invoice->amount} for bill {$invoice->id} was successful.",
+                'title' => 'Weekly Bill Paid',
+                'message' => "Your payment of AUD {$totalAmount} for {$resolved['label']} was successful. Your account is active.",
                 'user_type' => 'customer',
                 'user_id' => $customer->id,
-                'read_status' => false
+                'read_status' => false,
             ]);
+
+            FcmService::sendToCustomer(
+                $customer->id,
+                'Weekly Bill Paid',
+                "Your weekly payment of AUD " . number_format($totalAmount, 2) . " was successful. Your account is active.",
+                ['type' => 'payment_success']
+            );
+
+            // Fetch updated remaining balances
+            $remainingUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->sum('amount');
+            $remainingOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->whereDate('due_date', '<', Carbon::now()->toDateString())
+                ->sum('amount');
 
             return response()->json([
                 'success' => true,
-                'message' => 'Payment confirmed successfully.',
-                'invoice' => $invoice
+                'message' => 'Payment confirmed successfully. Your account is active and you can continue ordering.',
+                'amount_paid' => $totalAmount,
+                'outstanding_balance' => round((float) $remainingUnpaid, 2),
+                'overdue_balance' => round((float) $remainingOverdue, 2),
+                'weekly_balance' => 0.00,
+                'account_status' => $customer->status,
+                'can_order' => ($customer->status === 'Active'),
             ]);
         }
 
         return response()->json([
             'success' => false,
-            'message' => 'Payment verification failed.'
+            'message' => 'Payment verification failed.',
         ], 400);
     }
 
@@ -2840,4 +4135,73 @@ class AuthController extends Controller
 
         return null;
     }
+
+    /**
+     * Update customer FCM device token.
+     */
+    public function updateCustomerFcmToken(Request $request)
+    {
+        $customer = $request->attributes->get('customer');
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'fcm_token' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'FCM token is required.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $customer->update(['fcm_token' => $request->fcm_token]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Customer FCM token updated successfully.',
+            'fcm_token' => $customer->fcm_token
+        ]);
+    }
+
+    /**
+     * Update driver FCM device token.
+     */
+    public function updateDriverFcmToken(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        if (!$driver) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'fcm_token' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'FCM token is required.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $driver->update(['fcm_token' => $request->fcm_token]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Driver FCM token updated successfully.',
+            'fcm_token' => $driver->fcm_token
+        ]);
+    }
 }
+

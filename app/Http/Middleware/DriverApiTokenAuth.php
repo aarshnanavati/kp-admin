@@ -33,6 +33,17 @@ class DriverApiTokenAuth
             ], 401);
         }
 
+        // Only admin-approved drivers may use the driver API.
+        if ($driver->approval_status !== 'Approved') {
+            return response()->json([
+                'success' => false,
+                'approval_status' => $driver->approval_status,
+                'message' => $driver->approval_status === 'Rejected'
+                    ? 'Your driver account was not approved.'
+                    : 'Your driver account is awaiting admin approval.',
+            ], 403);
+        }
+
         // Put the driver instance into the request attributes so controllers can access it easily
         $request->attributes->set('driver', $driver);
 

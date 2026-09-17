@@ -18,6 +18,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
+use App\Services\FcmService;
 
 class AdminPanelController extends Controller
 {
@@ -95,16 +96,38 @@ class AdminPanelController extends Controller
     public function tiffins(Request $request)
     {
         $search = $request->query('search');
+        $tab = $request->query('tab', 'fixed');
+
         $query = Tiffin::with('category');
         if ($search) {
-            $query->where('name', 'like', "%{$search}%")
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
                   ->orWhere('description', 'like', "%{$search}%");
+            });
         }
-        $tiffins = $query->orderBy('created_at', 'desc')->get();
+        $allTiffins = (clone $query)->orderBy('created_at', 'desc')->get();
+        $fixedTiffins = $allTiffins->filter(fn($t) => !$t->is_customizable)->values();
+        $customTiffins = $allTiffins->filter(fn($t) => (bool)$t->is_customizable)->values();
+
+        $fixedCount = $fixedTiffins->count();
+        $customCount = $customTiffins->count();
+        $allCount = $allTiffins->count();
+
+        if ($tab === 'custom') {
+            $tiffins = $customTiffins;
+        } elseif ($tab === 'all') {
+            $tiffins = $allTiffins;
+        } else {
+            $tab = 'fixed';
+            $tiffins = $fixedTiffins;
+        }
+
         $categories = Category::all();
-        $items = Item::where('status', 'Active')->get();
+        $items = Item::with('category')->where('status', 'Active')->get();
         $itemsMap = $items->pluck('name', 'id')->toArray();
-        return view('tiffins', compact('tiffins', 'categories', 'items', 'itemsMap'));
+        $customItemPool = Tiffin::customizableItemPool();
+
+        return view('tiffins', compact('tiffins', 'fixedTiffins', 'customTiffins', 'allTiffins', 'tab', 'fixedCount', 'customCount', 'allCount', 'categories', 'items', 'itemsMap', 'customItemPool'));
     }
 
     public function orders(Request $request)
@@ -129,13 +152,31 @@ class AdminPanelController extends Controller
             $query->where('area', $request->area);
         }
 
+        if ($request->filled('driver') && $request->driver !== 'all') {
+            if ($request->driver === 'unassigned') {
+                $query->where(function($q) {
+                    $q->whereNull('driver_id')
+                      ->orWhere('driver', 'Unassigned')
+                      ->orWhere('driver', '')
+                      ->orWhereNull('driver');
+                });
+            } else {
+                $driverVal = $request->driver;
+                $query->where(function($q) use ($driverVal) {
+                    $q->where('driver_id', $driverVal)
+                      ->orWhere('driver', $driverVal);
+                });
+            }
+        }
+
         $search = $request->query('search');
         if ($search) {
             $query->where(function($q) use ($search) {
                 $q->where('id', 'like', "%{$search}%")
                   ->orWhere('customer', 'like', "%{$search}%")
                   ->orWhere('tiffin', 'like', "%{$search}%")
-                  ->orWhere('area', 'like', "%{$search}%");
+                  ->orWhere('area', 'like', "%{$search}%")
+                  ->orWhere('driver', 'like', "%{$search}%");
             });
         }
 
@@ -175,10 +216,11 @@ class AdminPanelController extends Controller
         }
         $customers = $query->orderBy('created_at', 'desc')->get();
         foreach ($customers as $customer) {
-            $hasUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->where('status', 'Unpaid')
+            $hasOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->whereDate('due_date', '<', \Carbon\Carbon::now()->toDateString())
                 ->exists();
-            $newStatus = $hasUnpaid ? 'Deactivated' : 'Active';
+            $newStatus = $hasOverdue ? 'Deactivated' : 'Active';
             if ($customer->status !== $newStatus) {
                 $customer->status = $newStatus;
                 $customer->save();
@@ -311,8 +353,12 @@ class AdminPanelController extends Controller
     public function saveItem(Request $request)
     {
         $request->validate([
-            'name' => 'required|string|max:255',
-            'price' => 'required|numeric|min:0',
+            'name' => 'nullable|string|max:255',
+            'names' => 'nullable|array',
+            'names.*' => 'nullable|string|max:255',
+            'price' => 'nullable|numeric|min:0',
+            'prices' => 'nullable|array',
+            'prices.*' => 'nullable|numeric|min:0',
             'category_id' => 'required|exists:categories,id',
             'description' => 'nullable|string',
             'status' => 'required|in:Active,Inactive',
@@ -320,6 +366,50 @@ class AdminPanelController extends Controller
         ]);
 
         $id = $request->input('id');
+        $fallbackPrice = (float) $request->input('price', 0);
+
+        // Collect one or more name/price pairs (bulk add for a category).
+        $pairs = [];
+        if (!$id && is_array($request->input('names'))) {
+            $rawNames = $request->input('names');
+            $rawPrices = is_array($request->input('prices')) ? $request->input('prices') : [];
+            foreach ($rawNames as $i => $rawName) {
+                $name = trim((string) $rawName);
+                if ($name === '') {
+                    continue;
+                }
+                $price = (isset($rawPrices[$i]) && $rawPrices[$i] !== '' && $rawPrices[$i] !== null)
+                    ? (float) $rawPrices[$i]
+                    : $fallbackPrice;
+                $pairs[] = ['name' => $name, 'price' => $price];
+            }
+        }
+
+        // Single item (edit, or the classic single "name" field).
+        if (empty($pairs)) {
+            $name = trim((string) $request->input('name'));
+            if ($name !== '') {
+                $pairs[] = ['name' => $name, 'price' => $fallbackPrice];
+            }
+        }
+
+        // De-duplicate case-insensitively, keep first occurrence.
+        $seen = [];
+        $pairs = array_values(array_filter($pairs, function ($pair) use (&$seen) {
+            $key = mb_strtolower($pair['name']);
+            if (isset($seen[$key])) {
+                return false;
+            }
+            $seen[$key] = true;
+            return true;
+        }));
+
+        if (empty($pairs)) {
+            return redirect()->back()
+                ->withErrors(['name' => 'Please enter at least one item name.'])
+                ->withInput();
+        }
+
         $imagePath = $request->input('image');
 
         if ($imagePath) {
@@ -358,9 +448,7 @@ class AdminPanelController extends Controller
             $imagePath = 'uploads/items/' . $fileName;
         }
 
-        $data = [
-            'name' => trim($request->name),
-            'price' => (float)$request->price,
+        $baseData = [
             'category_id' => $request->category_id,
             'description' => $request->description ? trim($request->description) : null,
             'status' => $request->status,
@@ -369,11 +457,16 @@ class AdminPanelController extends Controller
 
         if ($id) {
             $item = Item::findOrFail($id);
-            $item->update($data);
+            $item->update($baseData + ['name' => $pairs[0]['name'], 'price' => $pairs[0]['price']]);
             $msg = 'Item updated successfully.';
         } else {
-            Item::create($data);
-            $msg = 'Item created successfully.';
+            foreach ($pairs as $pair) {
+                Item::create($baseData + ['name' => $pair['name'], 'price' => $pair['price']]);
+            }
+            $count = count($pairs);
+            $msg = $count > 1
+                ? "{$count} items created successfully."
+                : 'Item created successfully.';
         }
 
         return redirect()->back()->with('success', $msg);
@@ -396,6 +489,8 @@ class AdminPanelController extends Controller
             'prep_time' => 'required|integer|min:1',
             'status' => 'required|in:Active,Inactive',
             'items' => 'nullable',
+            'components_json' => 'nullable|string',
+            'is_customizable' => 'nullable',
             'image_file' => 'nullable|image|max:2048',
         ]);
 
@@ -415,6 +510,9 @@ class AdminPanelController extends Controller
                 'addons' => array_values(array_map('intval', $tiffinAddons)),
             ];
         }
+
+        // Choice "slot" components (fixed items + "Or" alternatives).
+        $items['components'] = $this->parseTiffinComponents($request->input('components_json'));
 
         $imagePath = $request->input('image');
 
@@ -461,15 +559,20 @@ class AdminPanelController extends Controller
             $imagePath = 'uploads/'.$fileName;
         }
 
+        $isCustomizable = filter_var($request->input('is_customizable'), FILTER_VALIDATE_BOOLEAN);
+
         $data = [
             'name' => trim($request->name),
-            'price' => (float)$request->price,
+            // A customizable tiffin has no base price - the total is the sum of
+            // the items the customer picks.
+            'price' => $isCustomizable ? 0 : (float) $request->price,
             'category_id' => $request->category_id,
             'description' => $request->description ? trim($request->description) : null,
             'prep_time' => (int)$request->prep_time,
             'status' => $request->status,
             'items' => $items,
             'image' => $imagePath,
+            'is_customizable' => $isCustomizable,
         ];
 
         if ($id) {
@@ -480,8 +583,15 @@ class AdminPanelController extends Controller
             $tiffin->update($data);
             $msg = 'Tiffin plan updated successfully.';
         } else {
-            Tiffin::create($data);
+            $tiffin = Tiffin::create($data);
             $msg = 'Tiffin plan created successfully.';
+        }
+
+        // Only one tiffin can be the "Build Your Own" plan.
+        if ($isCustomizable) {
+            Tiffin::where('id', '!=', $tiffin->id)
+                ->where('is_customizable', true)
+                ->update(['is_customizable' => false]);
         }
 
         return redirect()->back()->with('success', $msg);
@@ -492,6 +602,96 @@ class AdminPanelController extends Controller
         $tiffin = Tiffin::findOrFail($id);
         $tiffin->delete();
         return redirect()->back()->with('success', 'Tiffin plan deleted successfully.');
+    }
+
+    /**
+     * Normalise the components_json payload submitted by the tiffin form into
+     * a clean, storable structure. Each entry is a "slot" of the plan which is
+     * either a fixed item or a set of "Or" alternatives.
+     */
+    private function parseTiffinComponents($componentsJson): array
+    {
+        if (!is_string($componentsJson) || trim($componentsJson) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($componentsJson, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+
+        $components = [];
+
+        foreach ($decoded as $comp) {
+            if (!is_array($comp)) {
+                continue;
+            }
+
+            $label = trim((string) ($comp['label'] ?? ''));
+            $rawOptions = (isset($comp['options']) && is_array($comp['options'])) ? $comp['options'] : [];
+            $options = [];
+
+            foreach ($rawOptions as $opt) {
+                if (!is_array($opt)) {
+                    continue;
+                }
+
+                $name = trim((string) ($opt['name'] ?? ''));
+                $itemId = (isset($opt['item_id']) && $opt['item_id'] !== '' && $opt['item_id'] !== null)
+                    ? (int) $opt['item_id']
+                    : null;
+
+                if ($name === '' && $itemId) {
+                    $name = (string) optional(Item::find($itemId))->name;
+                }
+                if ($name === '') {
+                    continue;
+                }
+
+                // Best-effort link to a catalog item so price/image can be resolved later.
+                if (!$itemId) {
+                    $match = Item::whereRaw('LOWER(name) = ?', [mb_strtolower($name)])->first();
+                    if ($match) {
+                        $itemId = $match->id;
+                    }
+                }
+
+                $options[] = [
+                    'item_id' => $itemId,
+                    'name' => $name,
+                    'price_delta' => round((float) ($opt['price_delta'] ?? 0), 2),
+                    'default' => !empty($opt['default']),
+                ];
+            }
+
+            if ($label === '' || empty($options)) {
+                continue;
+            }
+
+            $seenDefault = false;
+            foreach ($options as &$o) {
+                if ($o['default'] && !$seenDefault) {
+                    $seenDefault = true;
+                } else {
+                    $o['default'] = false;
+                }
+            }
+            unset($o);
+            if (!$seenDefault) {
+                $options[0]['default'] = true;
+            }
+
+            $components[] = [
+                'label' => $label,
+                'type' => count($options) > 1
+                    ? ((($comp['type'] ?? '') === 'fixed') ? 'fixed' : 'single_choice')
+                    : 'fixed',
+                'required' => array_key_exists('required', $comp) ? (bool) $comp['required'] : true,
+                'options' => array_values($options),
+            ];
+        }
+
+        return $components;
     }
 
     public function saveDriver(Request $request)
@@ -553,10 +753,9 @@ class AdminPanelController extends Controller
             $oldName = $driver->name;
             $driver->update($data);
 
-            $driverZips = array_map('trim', explode(',', strtolower($driver->area)));
-            $assignedOrders = Order::where('driver', $oldName)->get();
+            $assignedOrders = Order::where('driver', $oldName)->orWhere('driver_id', $driver->id)->get();
             foreach ($assignedOrders as $order) {
-                if ($driver->status !== 'Active' || !in_array(strtolower(trim($order->area)), $driverZips)) {
+                if ($driver->status !== 'Active' || $driver->approval_status !== 'Approved') {
                     $order->update(['driver' => 'Unassigned', 'driver_id' => null]);
                 } else {
                     $order->update(['driver' => $driver->name, 'driver_id' => $driver->id]);
@@ -565,7 +764,12 @@ class AdminPanelController extends Controller
 
             $msg = 'Driver details updated successfully.';
         } else {
-            Driver::create($data);
+            // Drivers the admin adds directly are pre-approved.
+            Driver::create($data + [
+                'approval_status' => 'Approved',
+                'reviewed_at' => now(),
+                'reviewed_by' => optional($request->user())->id,
+            ]);
             $msg = 'Driver registered successfully.';
         }
 
@@ -600,6 +804,7 @@ class AdminPanelController extends Controller
             }
         }
 
+        $oldDriverId = $order->driver_id;
         $order->update([
             'status' => $status,
             'driver_id' => $driverId,
@@ -624,6 +829,33 @@ class AdminPanelController extends Controller
                     'started_at' => ($tripStatus === 'Completed' || $tripStatus === 'Out for Delivery') ? Carbon::now() : null,
                     'completed_at' => ($tripStatus === 'Completed') ? Carbon::now() : null,
                 ]
+            );
+
+            // Notify driver when a new order is assigned to them
+            if ($driverId != $oldDriverId) {
+                \App\Models\Notification::create([
+                    'title' => 'New Order Assigned',
+                    'message' => "Order #{$order->id} ({$order->tiffin}) for customer {$order->customer} in area {$order->area} has been assigned to you.",
+                    'user_type' => 'driver',
+                    'user_id' => $driverId,
+                    'read_status' => false,
+                ]);
+
+                FcmService::sendToDriver(
+                    $driverId,
+                    'New Order Assigned',
+                    "Order #{$order->id} ({$order->tiffin}) for customer {$order->customer} in area {$order->area} has been assigned to you.",
+                    ['order_id' => $order->id, 'type' => 'order_assigned']
+                );
+            }
+        }
+
+        if ($order->customer_id && in_array($status, ['Out for Delivery', 'Delivered', 'Cancelled'])) {
+            FcmService::sendToCustomer(
+                $order->customer_id,
+                'Order Status Update',
+                "Your order {$order->id} is now {$status}.",
+                ['order_id' => $order->id, 'status' => $status, 'type' => 'order_status']
             );
         }
 
@@ -859,16 +1091,19 @@ class AdminPanelController extends Controller
      */
     public function getData()
     {
-        $notifications = Notification::all()->map(function ($notification) {
-            return [
-                'id' => $notification->id,
-                'title' => $notification->title,
-                'message' => $notification->message,
-                'read' => (bool) $notification->read_status,
-                'time' => $this->getRelativeTime($notification->created_at),
-                'created_at' => $notification->created_at->toIso8601String(),
-            ];
-        })->sortByDesc('created_at')->values();
+        $notifications = Notification::where('user_type', 'admin')
+            ->orWhereNull('user_type')
+            ->get()
+            ->map(function ($notification) {
+                return [
+                    'id' => $notification->id,
+                    'title' => $notification->title,
+                    'message' => $notification->message,
+                    'read' => (bool) $notification->read_status,
+                    'time' => $this->getRelativeTime($notification->created_at),
+                    'created_at' => $notification->created_at->toIso8601String(),
+                ];
+            })->sortByDesc('created_at')->values();
 
         return response()->json([
             'drivers' => Driver::all(),
@@ -891,9 +1126,29 @@ class AdminPanelController extends Controller
         return response()->json(Driver::all());
     }
 
-    public function getTiffins()
+    public function getTiffins(Request $request = null)
     {
-        $tiffins = Tiffin::with('category')->get();
+        $type = $request ? $request->query('type', 'fixed') : 'fixed';
+
+        $query = Tiffin::with('category');
+
+        $hasCustomizableColumn = \Illuminate\Support\Facades\Schema::hasTable('tiffins') 
+            && \Illuminate\Support\Facades\Schema::hasColumn('tiffins', 'is_customizable');
+
+        if ($hasCustomizableColumn) {
+            if ($type === 'custom' || $type === 'customize' || $type === 'customizable') {
+                $query->where('is_customizable', true);
+            } elseif ($type === 'all') {
+                // Include both fixed and customizable
+            } else {
+                // Default: fixed tiffins only
+                $query->where(function ($q) {
+                    $q->where('is_customizable', false)->orWhereNull('is_customizable');
+                });
+            }
+        }
+
+        $tiffins = $query->get();
 
         $formatted = $tiffins->map(function ($tiffin) {
             $resolvedItems = [];
@@ -930,8 +1185,32 @@ class AdminPanelController extends Controller
                 }
             }
 
+            // Choice "slot" components (fixed items + "Or" alternatives).
+            $components = $tiffin->components;
+            if (!empty($components)) {
+                $resolvedItems = [];
+                foreach ($components as $comp) {
+                    $names = array_column($comp['options'], 'name');
+                    $resolvedItems[] = $comp['type'] === 'fixed'
+                        ? ($names[0] ?? '')
+                        : implode(' / ', $names);
+                }
+                foreach (($itemsData['addons'] ?? []) as $addonId) {
+                    $addonItem = \App\Models\Item::find($addonId);
+                    if ($addonItem) {
+                        $resolvedItems[] = $addonItem->name;
+                    }
+                }
+                $resolvedItems = array_values(array_filter($resolvedItems));
+            }
+
             $tiffinArray = $tiffin->toArray();
             $tiffinArray['items'] = $resolvedItems;
+            $tiffinArray['components'] = $components;
+            $defaultSelections = $tiffin->defaultSelectionMap();
+            $tiffinArray['default_selections'] = (object) $defaultSelections;
+            $tiffinArray['base_price'] = (float) $tiffin->price;
+            $tiffinArray['default_price'] = $tiffin->unitPriceFor($defaultSelections);
             if ($tiffin->image) {
                 if (!str_starts_with($tiffin->image, 'http://') && !str_starts_with($tiffin->image, 'https://')) {
                     $tiffinArray['image'] = asset($tiffin->image);
@@ -968,10 +1247,162 @@ class AdminPanelController extends Controller
             }
             $tiffinArray['adons'] = (object)$adons;
 
+            // Build-Your-Own (customizable) tiffin: attach today's dynamic item pool.
+            $tiffinArray['is_customizable'] = (bool) $tiffin->is_customizable;
+
+            if ($tiffin->is_customizable) {
+                $pool = \App\Models\Tiffin::customizableItemPool();
+                $grouped = [];
+                foreach ($pool as $entry) {
+                    $grouped[$entry['category']][] = $entry;
+                }
+                $tiffinArray['customizable_items'] = $pool;
+                $tiffinArray['customizable_items_grouped'] = (object) $grouped;
+            }
+
             return $tiffinArray;
         });
 
         return response()->json($formatted);
+    }
+
+    /**
+     * Dedicated endpoint for the Build-Your-Own tiffin: returns the single
+     * customizable plan plus the live pool of items pulled from today's other
+     * active tiffin plans. Price = sum of the items the customer picks.
+     */
+    public function getCustomizeTiffin(Request $request = null)
+    {
+        try {
+            $hasCustomizableColumn = \Illuminate\Support\Facades\Schema::hasTable('tiffins') 
+                && \Illuminate\Support\Facades\Schema::hasColumn('tiffins', 'is_customizable');
+
+            $tiffin = null;
+            if ($hasCustomizableColumn) {
+                $tiffin = Tiffin::where('is_customizable', true)
+                    ->where('status', 'Active')
+                    ->orderBy('id')
+                    ->first();
+
+                if (!$tiffin) {
+                    $tiffin = Tiffin::where('is_customizable', true)
+                        ->orderBy('id')
+                        ->first();
+                }
+            }
+
+            if (!$tiffin) {
+                $tiffin = Tiffin::where('name', 'like', '%custom%')->first();
+            }
+
+            if (!$tiffin) {
+                try {
+                    $createData = [
+                        'name' => 'Custom tiffin',
+                        'description' => 'Build your own tiffin from today\'s active menu items.',
+                        'price' => 0.00,
+                        'items' => [],
+                        'prep_time' => 30,
+                        'status' => 'Active',
+                    ];
+                    if ($hasCustomizableColumn) {
+                        $createData['is_customizable'] = true;
+                    }
+                    $tiffin = Tiffin::create($createData);
+                } catch (\Throwable $createEx) {
+                    // In case table or columns don't permit creation, continue with null
+                }
+            }
+
+            $pool = Tiffin::customizableItemPool();
+
+            // If pool is empty, populate from all active menu items
+            if (empty($pool)) {
+                try {
+                    $allItems = Item::with('category')->where('status', 'Active')->get();
+                    foreach ($allItems as $item) {
+                        $pool[] = [
+                            'id' => 'i:' . $item->id,
+                            'item_id' => $item->id,
+                            'name' => $item->name,
+                            'price' => round((float)$item->price, 2),
+                            'category' => $item->category->name ?? 'Other',
+                        ];
+                    }
+                } catch (\Throwable $itemEx) {
+                    // Fallback
+                }
+            }
+
+            $grouped = [];
+            foreach ($pool as $entry) {
+                $categoryName = $entry['category'] ?? 'Other';
+                $grouped[$categoryName][] = $entry;
+            }
+
+            $tiffinData = null;
+            if ($tiffin) {
+                $image = $tiffin->image;
+                if ($image && ! str_starts_with($image, 'http://') && ! str_starts_with($image, 'https://')) {
+                    $image = asset($image);
+                }
+                $tiffinData = [
+                    'id' => $tiffin->id,
+                    'name' => $tiffin->name,
+                    'description' => $tiffin->description ?? 'Build your own tiffin from today\'s active menu items.',
+                    'prep_time' => (string)($tiffin->prep_time ?? '30 mins'),
+                    'image' => $image,
+                    'pricing' => 'sum_of_selected_items',
+                    'status' => $tiffin->status ?? 'Active',
+                    'is_customizable' => true,
+                    'base_price' => 0.0,
+                    'price' => 0.0,
+                ];
+            } else {
+                $tiffinData = [
+                    'id' => 1,
+                    'name' => 'Custom tiffin',
+                    'description' => 'Build your own tiffin from today\'s active menu items.',
+                    'prep_time' => '30 mins',
+                    'image' => null,
+                    'pricing' => 'sum_of_selected_items',
+                    'status' => 'Active',
+                    'is_customizable' => true,
+                    'base_price' => 0.0,
+                    'price' => 0.0,
+                ];
+            }
+
+            $categories = [];
+            try {
+                $categories = Category::all()->map(function($cat) use ($grouped) {
+                    return [
+                        'id' => $cat->id,
+                        'name' => $cat->name,
+                        'items' => $grouped[$cat->name] ?? [],
+                    ];
+                });
+            } catch (\Throwable $catEx) {
+                $categories = [];
+            }
+
+            return response()->json([
+                'success' => true,
+                'available' => true,
+                'tiffin' => $tiffinData,
+                'data' => $tiffinData,
+                'items' => $pool,
+                'items_grouped' => (object) $grouped,
+                'categories' => $categories,
+                'source' => "today's active tiffin plans",
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load customizable tiffin: ' . $e->getMessage(),
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function getOrders()
@@ -1037,11 +1468,12 @@ class AdminPanelController extends Controller
     {
         $customer = Customer::findOrFail($id);
 
-        // Sync customer status based on unpaid invoices
-        $hasUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
-            ->where('status', 'Unpaid')
+        // Sync customer status based on unpaid overdue invoices
+        $hasOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->whereDate('due_date', '<', \Carbon\Carbon::now()->toDateString())
             ->exists();
-        $newStatus = $hasUnpaid ? 'Deactivated' : 'Active';
+        $newStatus = $hasOverdue ? 'Deactivated' : 'Active';
         if ($customer->status !== $newStatus) {
             $customer->status = $newStatus;
             $customer->save();
@@ -1081,14 +1513,26 @@ class AdminPanelController extends Controller
                 return $a['name'] . ' (x' . ($a['qty'] ?? 1) . ')';
             }, $addons);
 
+            $selections = is_array($order->selections) ? $order->selections : json_decode($order->selections, true);
+            $customItems = $selections['custom_items'] ?? [];
+            $choices = $selections['choices'] ?? [];
+            $summary = $selections['summary'] ?? '';
+
             return [
                 'id' => $order->id,
                 'date' => $order->date,
                 'tiffin' => $order->tiffin,
+                'quantity' => $order->quantity ?: 1,
                 'addons' => implode(', ', $addonNames) ?: 'None',
+                'choices' => $summary ?: 'None',
+                'custom_items' => $customItems,
+                'choices_list' => $choices,
+                'custom_summary' => $summary,
                 'amount' => (float)$order->amount,
                 'status' => $order->status,
-                'raw_addons' => $addons
+                'raw_addons' => $addons,
+                'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
+                'proof_of_delivery_signature' => $order->proof_of_delivery_signature,
             ];
         });
 
@@ -1129,54 +1573,79 @@ class AdminPanelController extends Controller
             $week = &$weeklyHistory[$i];
             $start = $week['start_date'];
             $end = $week['end_date'];
-            $isMostRecentWeek = ($i === $totalWeeks - 1);
+            $dtStart = Carbon::parse($start);
+            $wYear = $dtStart->year;
+            $wWeekNum = $dtStart->weekOfYear;
 
-            // Sum successful payments for this customer within this week
-            $weekPaymentsSum = $customer->payments()
-                ->where('status', 'Successful')
-                ->whereBetween('date', [$start, $end])
-                ->sum('amount');
+            // Find all orders in this week
+            $weekOrders = $customer->orders()->whereBetween('date', [$start, $end])->get();
+            $weekOrderIds = $weekOrders->pluck('id')->toArray();
+
+            // Find invoices corresponding to this week's orders or date range
+            $weekInvoices = Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($weekOrderIds, $start, $end, $wYear, $wWeekNum, $customer) {
+                    $prefix = 'INV-W' . $wYear . str_pad((string) $wWeekNum, 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
+                    $q->where('id', 'like', $prefix . '%');
+                    if (! empty($weekOrderIds)) {
+                        $q->orWhereIn('order_id', $weekOrderIds);
+                    }
+                    $q->orWhereBetween('due_date', [$start, $end])
+                        ->orWhereBetween('created_at', [
+                            Carbon::parse($start)->startOfDay(),
+                            Carbon::parse($end)->endOfDay(),
+                        ]);
+                })
+                ->get();
+
+            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $paidInvoices = $weekInvoices->where('status', 'Paid');
+
+            $primaryInvoice = $weekInvoices->first();
+            $week['id'] = $primaryInvoice ? $primaryInvoice->id : ('INV-W' . $wYear . str_pad((string) $wWeekNum, 2, '0', STR_PAD_LEFT) . '-' . $customer->id . '-001');
+            $week['invoice_id'] = $week['id'];
+            $week['bill_id'] = $week['id'];
+            $week['start_of_week'] = $start;
+            $week['end_of_week'] = $end;
+            $week['due_date'] = $end;
 
             $latestPayment = $customer->payments()
                 ->where('status', 'Successful')
-                ->whereBetween('date', [$start, $end])
                 ->orderBy('date', 'desc')
                 ->first();
 
-            if ($latestPayment) {
-                $dueDateObj = \Carbon\Carbon::parse($end);
-                $payDateObj = \Carbon\Carbon::parse($latestPayment->date);
-                if ($payDateObj->lt($dueDateObj)) {
-                    $offset = crc32($latestPayment->id) % 3;
-                    $week['paid_date'] = $dueDateObj->copy()->addDays(abs($offset))->toDateString();
-                } else {
-                    $week['paid_date'] = $latestPayment->date;
-                }
-            } else {
-                $week['paid_date'] = 'N/A';
-            }
-
-            if (!$isMostRecentWeek) {
-                // Preceding weeks are always Paid
+            if ($weekInvoices->isNotEmpty() && $unpaidInvoices->isEmpty()) {
+                // All invoices for this week are Paid!
                 $week['status'] = 'Paid';
-                if ($week['paid_date'] === 'N/A') {
-                    $dueDateObj = \Carbon\Carbon::parse($end);
-                    $offset = crc32($start) % 3;
-                    $week['paid_date'] = $dueDateObj->copy()->addDays(abs($offset))->toDateString();
-                }
+                $latestPaidTime = $paidInvoices->max('updated_at');
+                $week['paid_date'] = $latestPayment ? $latestPayment->date : ($latestPaidTime ? Carbon::parse($latestPaidTime)->toDateString() : $end);
+            } elseif ($unpaidInvoices->isNotEmpty()) {
+                // There are unpaid/pending invoices for this week
+                $isOverdue = Carbon::parse($end)->lt(Carbon::today());
+                $week['status'] = $isOverdue ? 'Unpaid' : 'Pending';
+                $week['paid_date'] = 'N/A';
             } else {
-                // For the most recent week, determine by actual payments
+                // Fallback: check if payments exist covering this week's orders
+                $weekPaymentsSum = $customer->payments()
+                    ->where('status', 'Successful')
+                    ->where(function ($q) use ($start, $end) {
+                        $q->whereBetween('date', [$start, $end])
+                            ->orWhere('date', '>=', $start);
+                    })
+                    ->sum('amount');
+
                 if ($weekPaymentsSum >= $week['amount'] && $week['amount'] > 0) {
                     $week['status'] = 'Paid';
+                    $week['paid_date'] = $latestPayment ? $latestPayment->date : $end;
                 } else {
-                    $week['status'] = 'Unpaid';
+                    $week['status'] = Carbon::parse($end)->lt(Carbon::today()) ? 'Unpaid' : 'Pending';
                     $week['paid_date'] = 'N/A';
                 }
             }
         }
+        unset($week);
 
         // Sort back to descending for display (newest first)
-        usort($weeklyHistory, function($a, $b) {
+        usort($weeklyHistory, function ($a, $b) {
             return strcmp($b['start_date'], $a['start_date']);
         });
 
@@ -1260,7 +1729,13 @@ class AdminPanelController extends Controller
                 'license_expiry' => $driver->license_expiry,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
                 'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
                 'status' => $driver->status,
+                'approval_status' => $driver->approval_status,
+                'rejection_reason' => $driver->rejection_reason,
+                'reviewed_at' => $driver->reviewed_at ? $driver->reviewed_at->toDateTimeString() : null,
+                'registered_at' => $driver->created_at ? $driver->created_at->toDateTimeString() : null,
+                'profile_image' => $driver->profile_image ? asset($driver->profile_image) : null,
                 'license_copy_front' => $driver->license_copy_front,
                 'license_copy_back' => $driver->license_copy_back,
             ],
@@ -1270,9 +1745,110 @@ class AdminPanelController extends Controller
         ]);
     }
 
+    /**
+     * Approve a pending driver registration. Only approved drivers can log in.
+     */
+    public function approveDriver(Request $request, $id)
+    {
+        $driver = Driver::findOrFail($id);
+
+        $driver->update([
+            'approval_status' => 'Approved',
+            'rejection_reason' => null,
+            'reviewed_at' => now(),
+            'reviewed_by' => optional($request->user())->id,
+            'status' => 'Active',
+        ]);
+
+        try {
+            \App\Models\Notification::create([
+                'title' => 'Driver Approved',
+                'message' => "Driver {$driver->name} has been approved and can now log in.",
+                'user_type' => 'admin',
+                'user_id' => null,
+                'read_status' => false,
+            ]);
+            FcmService::sendToDriver(
+                $driver->id,
+                'Driver Approved',
+                "Good news {$driver->name}! Your driver account has been approved. You can now log in to the KP's Kitchen driver app.",
+                ['type' => 'driver_approved']
+            );
+            if ($driver->email) {
+                \Illuminate\Support\Facades\Mail::to($driver->email)->send(new \App\Mail\KitchenAlertMail(
+                    "Your KP's Kitchen driver account is approved",
+                    "Good news {$driver->name}! Your driver account has been approved. You can now log in to the KP's Kitchen driver app."
+                ));
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning("Driver approval side-effects failed: " . $e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "{$driver->name} approved. The driver can now log in.",
+            'driver' => $driver,
+        ]);
+    }
+
+    /**
+     * Reject a pending driver registration.
+     */
+    public function rejectDriver(Request $request, $id)
+    {
+        $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $driver = Driver::findOrFail($id);
+
+        $driver->update([
+            'approval_status' => 'Rejected',
+            'rejection_reason' => $request->input('reason'),
+            'reviewed_at' => now(),
+            'reviewed_by' => optional($request->user())->id,
+            'status' => 'Inactive',
+            'api_token' => null,
+        ]);
+
+        // Drop any orders that were somehow assigned to this driver.
+        Order::where('driver_id', $driver->id)->update(['driver' => 'Unassigned', 'driver_id' => null]);
+
+        try {
+            \App\Models\Notification::create([
+                'title' => 'Driver Rejected',
+                'message' => "Driver {$driver->name} was rejected." . ($request->input('reason') ? " Reason: {$request->input('reason')}" : ''),
+                'user_type' => 'admin',
+                'user_id' => null,
+                'read_status' => false,
+            ]);
+            if ($driver->email) {
+                \Illuminate\Support\Facades\Mail::to($driver->email)->send(new \App\Mail\KitchenAlertMail(
+                    "Update on your KP's Kitchen driver application",
+                    "Hi {$driver->name}, unfortunately your driver application was not approved at this time."
+                    . ($request->input('reason') ? " Reason: {$request->input('reason')}." : '')
+                    . " Please contact KP's Kitchen if you have questions."
+                ));
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning("Driver rejection side-effects failed: " . $e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "{$driver->name} has been rejected.",
+            'driver' => $driver,
+        ]);
+    }
+
     public function getOrderDetails($id)
     {
         $order = Order::with('customerRelation', 'tiffinRelation')->findOrFail($id);
+
+        $selections = is_array($order->selections) ? $order->selections : json_decode($order->selections, true);
+        $customItems = $selections['custom_items'] ?? [];
+        $choices = $selections['choices'] ?? [];
+        $summary = $selections['summary'] ?? '';
 
         return response()->json([
             'success' => true,
@@ -1290,6 +1866,9 @@ class AdminPanelController extends Controller
                 'amount' => $order->amount,
                 'status' => $order->status,
                 'add_ons' => json_decode($order->add_ons, true) ?: [],
+                'selections' => $choices,
+                'custom_items' => $customItems,
+                'choices_summary' => $summary,
                 'note' => $order->note ?: 'No special instructions provided.',
                 'driver_name' => $order->driver ?: 'Unassigned',
                 'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
@@ -1303,9 +1882,68 @@ class AdminPanelController extends Controller
         return response()->json(Coupon::all());
     }
 
-    public function getInvoices()
+    public function getInvoices(Request $request = null)
     {
-        return response()->json(Invoice::with('customer')->orderBy('created_at', 'desc')->get());
+        $query = Invoice::with('customer');
+
+        if ($request) {
+            if ($request->filled('id')) {
+                $invoice = $query->find($request->id);
+                if (! $invoice) {
+                    return response()->json(['success' => false, 'message' => 'Invoice not found.'], 404);
+                }
+
+                return response()->json(['success' => true, 'invoice' => $invoice]);
+            }
+
+            if ($request->filled('customer_id')) {
+                $query->where('customer_id', $request->customer_id);
+            }
+
+            if ($request->filled('order_id')) {
+                $query->where('order_id', $request->order_id);
+            }
+
+            if ($request->filled('status')) {
+                $query->where('status', $request->status);
+            }
+
+            if ($request->filled('start_date')) {
+                $query->whereDate('due_date', '>=', $request->start_date);
+            }
+
+            if ($request->filled('end_date')) {
+                $query->whereDate('due_date', '<=', $request->end_date);
+            }
+
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->where('id', 'like', "%{$search}%")
+                        ->orWhere('order_id', 'like', "%{$search}%")
+                        ->orWhereHas('customer', function ($cq) use ($search) {
+                            $cq->where('name', 'like', "%{$search}%")
+                                ->orWhere('phone', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                        });
+                });
+            }
+        }
+
+        return response()->json($query->orderBy('created_at', 'desc')->get());
+    }
+
+    public function getInvoiceDetails($id)
+    {
+        $invoice = Invoice::with('customer')->find($id);
+        if (! $invoice) {
+            return response()->json(['success' => false, 'message' => 'Invoice not found.'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'invoice' => $invoice,
+        ]);
     }
 
     public function getUsers()
@@ -1381,7 +2019,7 @@ class AdminPanelController extends Controller
             $file = fopen('php://output', 'w');
 
             if ($type === 'sales') {
-                fputcsv($file, ['Order ID', 'Date', 'Customer', 'Tiffin Plan', 'Area / Postcode', 'Driver', 'Add-ons', 'Amount ($)', 'Status']);
+                fputcsv($file, ['Order ID', 'Date', 'Customer', 'Tiffin Plan', 'Choices', 'Area / Postcode', 'Driver', 'Add-ons', 'Amount ($)', 'Status']);
                 $orders = Order::orderBy('date', 'desc')->get();
                 foreach ($orders as $order) {
                     $addonsStr = '';
@@ -1393,11 +2031,15 @@ class AdminPanelController extends Controller
                             }, $addons));
                         }
                     }
+                    $choicesStr = (is_array($order->selections) && !empty($order->selections['summary']))
+                        ? $order->selections['summary']
+                        : '';
                     fputcsv($file, [
                         $order->id,
                         $order->date,
                         $order->customer,
                         $order->tiffin,
+                        $choicesStr,
                         $order->area,
                         $order->driver,
                         $addonsStr,
@@ -1499,7 +2141,11 @@ class AdminPanelController extends Controller
             ];
 
             if ($action === 'create') {
-                $driver = Driver::create($data);
+                $driver = Driver::create($data + [
+                    'approval_status' => 'Approved',
+                    'reviewed_at' => now(),
+                    'reviewed_by' => optional($request->user())->id,
+                ]);
 
                 return response()->json(['success' => true, 'driver' => $driver]);
             } else {
@@ -1507,11 +2153,9 @@ class AdminPanelController extends Controller
                 $oldName = $driver->name;
                 $driver->update($data);
 
-                // Reassign logic based on area and status
-                $driverZips = array_map('trim', explode(',', strtolower($driver->area)));
-                $assignedOrders = Order::where('driver', $oldName)->get();
+                $assignedOrders = Order::where('driver', $oldName)->orWhere('driver_id', $driver->id)->get();
                 foreach ($assignedOrders as $order) {
-                    if ($driver->status !== 'Active' || !in_array(strtolower(trim($order->area)), $driverZips)) {
+                    if ($driver->status !== 'Active') {
                         $order->update(['driver' => 'Unassigned', 'driver_id' => null]);
                     } else {
                         $order->update(['driver' => $driver->name, 'driver_id' => $driver->id]);
@@ -1578,6 +2222,7 @@ class AdminPanelController extends Controller
                 'status' => $request->status,
                 'image' => $imagePath,
                 'category_id' => $request->category_id ?: null,
+                'is_customizable' => filter_var($request->input('is_customizable', false), FILTER_VALIDATE_BOOLEAN),
             ];
 
             if ($action === 'create') {
@@ -1613,25 +2258,92 @@ class AdminPanelController extends Controller
      */
     public function updateOrder(Request $request)
     {
+        // Handle Batch Order Driver Assignments (e.g. for 100+ orders)
+        if ($request->has('batch') || $request->has('orders')) {
+            $batchList = $request->input('batch') ?? $request->input('orders') ?? [];
+            $updatedOrders = [];
+            $activeDrivers = Driver::where('status', 'Active')->get();
+
+            foreach ($batchList as $entry) {
+                $orderId = is_array($entry) ? ($entry['id'] ?? null) : null;
+                $driverName = is_array($entry) ? ($entry['driver'] ?? null) : null;
+
+                if (!$orderId) continue;
+
+                $order = Order::find($orderId);
+                if (!$order) continue;
+
+                if ($driverName && $driverName !== 'Unassigned') {
+                    // Allow any active driver to be assigned (regardless of preferred postcodes)
+                    $matchedDriver = $activeDrivers->firstWhere('name', $driverName);
+
+                    if ($matchedDriver) {
+                        $oldDriverId = $order->driver_id;
+                        $order->driver = $matchedDriver->name;
+                        $order->driver_id = $matchedDriver->id;
+                        $order->save();
+
+                        Trip::updateOrCreate(
+                            ['order_id' => $order->id],
+                            [
+                                'driver_id' => $order->driver_id,
+                                'status' => ($order->status === 'Out for Delivery') ? 'Out for Delivery' : 'Assigned',
+                                'started_at' => ($order->status === 'Out for Delivery') ? Carbon::now() : null,
+                            ]
+                        );
+
+                        if ($matchedDriver->id != $oldDriverId) {
+                            \App\Models\Notification::create([
+                                'title' => 'New Order Assigned',
+                                'message' => "Order #{$order->id} ({$order->tiffin}) for customer {$order->customer} in area {$order->area} has been assigned to you.",
+                                'user_type' => 'driver',
+                                'user_id' => $matchedDriver->id,
+                                'read_status' => false,
+                            ]);
+
+                            FcmService::sendToDriver(
+                                $matchedDriver->id,
+                                'New Order Assigned',
+                                "Order #{$order->id} ({$order->tiffin}) for customer {$order->customer} in area {$order->area} has been assigned to you.",
+                                ['order_id' => $order->id, 'type' => 'order_assigned']
+                            );
+                        }
+
+                        $updatedOrders[] = $order->id;
+                    }
+                } else {
+                    $order->driver = 'Unassigned';
+                    $order->driver_id = null;
+                    $order->save();
+                    Trip::where('order_id', $order->id)->delete();
+                    $updatedOrders[] = $order->id;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'updated_count' => count($updatedOrders),
+                'updated_orders' => $updatedOrders,
+                'message' => 'Successfully updated ' . count($updatedOrders) . ' orders.'
+            ]);
+        }
+
         $order = Order::findOrFail($request->id);
 
         if ($request->has('driver')) {
             $driverName = $request->driver;
+            $oldDriverId = $order->driver_id;
 
             if ($driverName !== 'Unassigned') {
+                // Allow any active driver to deliver out of their preferred postcodes
                 $driver = Driver::where('name', $driverName)
                     ->where('status', 'Active')
-                    ->get()
-                    ->filter(function($d) use ($order) {
-                        $zips = array_map('trim', explode(',', strtolower($d->area)));
-                        return in_array(strtolower(trim($order->area)), $zips);
-                    })
                     ->first();
 
                 if (! $driver) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'This driver is not active in the order area postcode.',
+                        'message' => 'Selected driver is not active.',
                     ]);
                 }
                 $order->driver = $driver->name;
@@ -1639,11 +2351,7 @@ class AdminPanelController extends Controller
             } else {
                 $order->driver = 'Unassigned';
                 $order->driver_id = null;
-            }
-
-            // Auto-advance status if driver is assigned
-            if ($order->driver !== 'Unassigned' && in_array($order->status, ['Pending', 'Confirmed', 'Preparing'])) {
-                $order->status = 'Out for Delivery';
+                Trip::where('order_id', $order->id)->delete();
             }
 
             $order->save();
@@ -1658,12 +2366,24 @@ class AdminPanelController extends Controller
                         'started_at' => ($order->status === 'Out for Delivery') ? Carbon::now() : null,
                     ]
                 );
-            }
 
-            Notification::create([
-                'title' => 'Delivery Assigned',
-                'message' => "Order {$order->id} assigned to {$order->driver} for postcode {$order->area}.",
-            ]);
+                if ($order->driver_id != $oldDriverId) {
+                    \App\Models\Notification::create([
+                        'title' => 'New Order Assigned',
+                        'message' => "Order #{$order->id} ({$order->tiffin}) for customer {$order->customer} in area {$order->area} has been assigned to you.",
+                        'user_type' => 'driver',
+                        'user_id' => $order->driver_id,
+                        'read_status' => false,
+                    ]);
+
+                    FcmService::sendToDriver(
+                        $order->driver_id,
+                        'New Order Assigned',
+                        "Order #{$order->id} ({$order->tiffin}) for customer {$order->customer} in area {$order->area} has been assigned to you.",
+                        ['order_id' => $order->id, 'type' => 'order_assigned']
+                    );
+                }
+            }
 
             return response()->json(['success' => true, 'order' => $order]);
         }
@@ -1683,10 +2403,105 @@ class AdminPanelController extends Controller
                 Trip::where('order_id', $order->id)->update(['status' => 'Out for Delivery', 'started_at' => Carbon::now()]);
             }
 
+            if ($order->customer_id && in_array($order->status, ['Out for Delivery', 'Delivered', 'Cancelled'])) {
+                FcmService::sendToCustomer(
+                    $order->customer_id,
+                    'Order Status Update',
+                    "Your order {$order->id} is now {$order->status}.",
+                    ['order_id' => $order->id, 'status' => $order->status, 'type' => 'order_status']
+                );
+            }
+
             return response()->json(['success' => true, 'order' => $order]);
         }
 
         return response()->json(['success' => false, 'message' => 'Invalid parameters.'], 400);
+    }
+
+    /**
+     * Dispatch Orders to Drivers (Sends notification to drivers at actual dispatch time)
+     */
+    public function dispatchOrders(Request $request)
+    {
+        $orderIds = $request->input('order_ids', []);
+        $query = Order::query();
+
+        if (!empty($orderIds) && is_array($orderIds)) {
+            $query->whereIn('id', $orderIds);
+        } else {
+            // Default to today's assigned orders that are not yet Delivered/Cancelled/Out for Delivery
+            $query->whereDate('date', Carbon::today()->toDateString());
+        }
+
+        $orders = $query->whereNotNull('driver_id')
+            ->where('driver', '!=', 'Unassigned')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No assigned orders ready for dispatch found.',
+            ], 422);
+        }
+
+        $dispatchedOrders = [];
+        $driversNotified = [];
+
+        foreach ($orders as $order) {
+            $order->status = 'Out for Delivery';
+            $order->save();
+
+            Trip::updateOrCreate(
+                ['order_id' => $order->id],
+                [
+                    'driver_id' => $order->driver_id,
+                    'status' => 'Out for Delivery',
+                    'started_at' => Carbon::now(),
+                ]
+            );
+
+            // Send notification to driver at exact dispatch time
+            Notification::create([
+                'title' => '📦 Orders Ready for Dispatch',
+                'message' => "Order {$order->id} ({$order->tiffin}) for customer {$order->customer} is ready for pickup & delivery in area {$order->area}.",
+                'user_type' => 'driver',
+                'user_id' => $order->driver_id,
+                'read_status' => false,
+            ]);
+
+            FcmService::sendToDriver(
+                $order->driver_id,
+                '📦 Orders Ready for Dispatch',
+                "Order {$order->id} ({$order->tiffin}) for customer {$order->customer} is ready for pickup & delivery in area {$order->area}.",
+                ['order_id' => $order->id, 'type' => 'order_dispatched']
+            );
+
+            if ($order->customer_id) {
+                FcmService::sendToCustomer(
+                    $order->customer_id,
+                    'Order Out for Delivery',
+                    "Your order {$order->id} is on the way with your driver!",
+                    ['order_id' => $order->id, 'status' => 'Out for Delivery', 'type' => 'order_status']
+                );
+            }
+
+            $dispatchedOrders[] = $order->id;
+            $driversNotified[$order->driver_id] = $order->driver;
+        }
+
+        Notification::create([
+            'title' => 'Orders Dispatched',
+            'message' => count($dispatchedOrders) . " orders marked as Out for Delivery and dispatched to " . count($driversNotified) . " drivers.",
+            'user_type' => 'admin',
+            'read_status' => false,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'dispatched_count' => count($dispatchedOrders),
+            'dispatched_orders' => $dispatchedOrders,
+            'message' => 'Successfully dispatched ' . count($dispatchedOrders) . ' orders. Assigned drivers have been notified.'
+        ]);
     }
 
     /**
@@ -1964,18 +2779,164 @@ class AdminPanelController extends Controller
     }
 
     /**
-     * Manage Invoice CRUD operations.
+     * Manage Invoice CRUD operations (Generate, Update, Delete).
      */
     public function manageInvoice(Request $request)
     {
-        $action = $request->input('action');
+        $action = $request->input('action', 'create');
 
-        if ($action === 'update_status') {
+        if ($action === 'create' || $action === 'generate') {
+            $request->validate([
+                'customer_id' => 'required|exists:customers,id',
+                'amount' => 'required|numeric|min:0',
+                'due_date' => 'nullable|date',
+                'status' => 'nullable|in:Pending,Paid,Unpaid',
+                'order_id' => 'nullable|string',
+            ]);
+
+            $invId = $request->input('id');
+            if (!$invId) {
+                $invId = 'INV-' . Carbon::now()->format('Ymd') . '-' . rand(1000, 9999);
+                while (Invoice::where('id', $invId)->exists()) {
+                    $invId = 'INV-' . Carbon::now()->format('Ymd') . '-' . rand(1000, 9999);
+                }
+            }
+
+            $orderId = $request->input('order_id');
+            if (!$orderId) {
+                $orderId = 'KP' . rand(1101, 9999);
+            }
+
+            $invoice = Invoice::create([
+                'id' => $invId,
+                'customer_id' => $request->customer_id,
+                'order_id' => $orderId,
+                'amount' => (float) $request->amount,
+                'status' => $request->input('status', 'Pending'),
+                'due_date' => $request->input('due_date', Carbon::now()->endOfWeek()->toDateString()),
+                'collected_photo' => $request->input('collected_photo', null),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Invoice generated successfully.',
+                'invoice' => $invoice->load('customer'),
+            ], 201);
+        }
+
+        if ($action === 'update' || $action === 'update_status') {
             $invoice = Invoice::findOrFail($request->id);
-            $invoice->status = $request->status;
+            if ($request->has('status')) {
+                $invoice->status = $request->status;
+            }
+            if ($request->has('amount')) {
+                $invoice->amount = (float) $request->amount;
+            }
+            if ($request->has('due_date')) {
+                $invoice->due_date = $request->due_date;
+            }
+            if ($request->has('collected_photo')) {
+                $invoice->collected_photo = $request->collected_photo;
+            }
             $invoice->save();
 
-            return response()->json(['success' => true, 'invoice' => $invoice]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Invoice updated successfully.',
+                'invoice' => $invoice->load('customer'),
+            ]);
+        }
+
+        if ($action === 'generate_weekly' || $action === 'weekly') {
+            $customerIds = $request->filled('customer_id') ? [$request->customer_id] : Customer::where('status', 'Active')->pluck('id')->toArray();
+            $startDate = $request->input('start_date', Carbon::now()->startOfWeek()->toDateString());
+            $endDate = $request->input('end_date', Carbon::now()->endOfWeek()->toDateString());
+            $dueDate = $request->input('due_date', Carbon::now()->endOfWeek()->toDateString());
+            $sendNotification = filter_var($request->input('send_notification', true), FILTER_VALIDATE_BOOLEAN);
+
+            $generatedInvoices = [];
+            $totalCustomersProcessed = 0;
+
+            foreach ($customerIds as $cId) {
+                $customer = Customer::find($cId);
+                if (!$customer) {
+                    continue;
+                }
+
+                // Find orders for this customer in this week range
+                $orders = Order::where('customer_id', $cId)
+                    ->whereBetween('date', [$startDate, $endDate])
+                    ->get();
+
+                if ($orders->isEmpty()) {
+                    continue;
+                }
+
+                $totalWeeklyAmount = (float) $orders->sum('amount');
+                if ($totalWeeklyAmount <= 0) {
+                    continue;
+                }
+
+                // Generate consolidated weekly invoice ID
+                $dt = Carbon::parse($startDate);
+                $weekNumber = $dt->weekOfYear;
+                $year = $dt->year;
+                $invId = 'INV-W' . $year . str_pad((string) $weekNumber, 2, '0', STR_PAD_LEFT) . '-' . $cId . '-' . rand(100, 999);
+
+                // If invoice already exists for this week & customer, update or retrieve it
+                $invoice = Invoice::where('customer_id', $cId)
+                    ->where('id', 'like', 'INV-W' . $year . str_pad((string) $weekNumber, 2, '0', STR_PAD_LEFT) . '-' . $cId . '%')
+                    ->first();
+
+                if (!$invoice) {
+                    $orderIds = $orders->pluck('id')->toArray();
+                    $orderIdString = count($orderIds) <= 3 ? implode(', ', $orderIds) : 'KP-W' . $year . '-' . count($orderIds) . 'orders';
+
+                    $invoice = Invoice::create([
+                        'id' => $invId,
+                        'customer_id' => $cId,
+                        'order_id' => $orderIdString,
+                        'amount' => $totalWeeklyAmount,
+                        'status' => 'Pending',
+                        'due_date' => $dueDate,
+                    ]);
+                } else {
+                    $invoice->amount = $totalWeeklyAmount;
+                    $invoice->due_date = $dueDate;
+                    $invoice->save();
+                }
+
+                if ($sendNotification) {
+                    Notification::create([
+                        'title' => 'Weekly Invoice Ready',
+                        'message' => "Your weekly invoice ({$invoice->id}) for AUD " . number_format($totalWeeklyAmount, 2) . " has been generated. Due on " . Carbon::parse($dueDate)->format('d M Y') . ".",
+                        'user_type' => 'customer',
+                        'user_id' => $customer->id,
+                        'read_status' => false,
+                    ]);
+                }
+
+                $generatedInvoices[] = $invoice->load('customer');
+                $totalCustomersProcessed++;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Weekly invoices generated successfully.',
+                'count' => count($generatedInvoices),
+                'customers_processed' => $totalCustomersProcessed,
+                'invoices' => $generatedInvoices,
+            ], 201);
+        }
+
+        if ($action === 'delete') {
+            $invoice = Invoice::findOrFail($request->id);
+            $invoice->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Invoice deleted successfully.',
+            ]);
         }
 
         return response()->json(['success' => false, 'message' => 'Invalid action.'], 400);
@@ -2049,4 +3010,47 @@ class AdminPanelController extends Controller
 
         return $dateTime->format('d M Y');
     }
+
+    /**
+     * Update Admin/Staff FCM Token.
+     */
+    public function updateAdminFcmToken(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            $user = Auth::user();
+        }
+
+        if (!$user) {
+            $token = $request->bearerToken();
+            if ($token) {
+                $user = User::where('api_token', $token)->first();
+            }
+        }
+
+        if (!$user) {
+            // Fallback to first active admin
+            $user = User::first();
+        }
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated or user not found.'
+            ], 401);
+        }
+
+        $request->validate([
+            'fcm_token' => 'required|string',
+        ]);
+
+        $user->update(['fcm_token' => $request->fcm_token]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Admin FCM token updated successfully.',
+            'fcm_token' => $user->fcm_token
+        ]);
+    }
 }
+

@@ -25,6 +25,7 @@ class User extends Authenticatable
         'api_token',
         'user_type',
         'profile_image',
+        'fcm_token',
     ];
 
     /**

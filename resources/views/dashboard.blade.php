@@ -7,8 +7,8 @@
 
 @section('content')
 <section class="kp_kitchen_admin_panel_page kp_kitchen_admin_panel_page_active" id="dashboardPage">
-  <!-- Key Metrics Stats Grid -->
-  <div class="kp_kitchen_admin_panel_stats_grid">
+  <!-- Key Metrics Stats Grid (3 Metrics) -->
+  <div class="kp_kitchen_admin_panel_stats_grid kp_kitchen_admin_panel_stats_grid_three">
     <article class="kp_kitchen_admin_panel_stat_card">
       <div class="kp_kitchen_admin_panel_stat_icon bg-primary-soft">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
@@ -31,22 +31,12 @@
     </article>
     <article class="kp_kitchen_admin_panel_stat_card">
       <div class="kp_kitchen_admin_panel_stat_icon bg-warning-soft">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F1C40F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F1C40F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
       </div>
       <div class="kp_kitchen_admin_panel_stat_content">
         <span class="kp_kitchen_admin_panel_stat_label">Tiffin Plans</span>
         <strong class="kp_kitchen_admin_panel_stat_value" id="statTiffins">{{ $tiffinsCount }}</strong>
         <span class="kp_kitchen_admin_panel_stat_hint">Active menu designs</span>
-      </div>
-    </article>
-    <article class="kp_kitchen_admin_panel_stat_card">
-      <div class="kp_kitchen_admin_panel_stat_icon bg-info-soft">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3498DB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-      </div>
-      <div class="kp_kitchen_admin_panel_stat_content">
-        <span class="kp_kitchen_admin_panel_stat_label">Revenue</span>
-        <strong class="kp_kitchen_admin_panel_stat_value" id="statRevenue">${{ number_format($totalRevenue, 2) }}</strong>
-        <span class="kp_kitchen_admin_panel_stat_hint">Collected today</span>
       </div>
     </article>
   </div>

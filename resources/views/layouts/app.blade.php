@@ -305,6 +305,12 @@
             name: "{{ Auth::user()->name ?? 'Admin' }}",
             email: "{{ Auth::user()->email ?? 'admin@kpkitchen.com' }}"
         };
+        // Server-rendered fallback so modal dropdowns are populated immediately,
+        // even before the async /api/data call resolves.
+        window.__kpBootstrap = {
+            categories: @json(isset($categories) ? $categories : []),
+            items: @json(isset($items) && $items instanceof \Illuminate\Support\Collection ? $items : [])
+        };
     </script>
     <script src="{{ asset('assets/js/app.js') }}?v={{ time() }}"></script>
 </body>

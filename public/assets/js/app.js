@@ -14,6 +14,19 @@
     let invoices = [];
     let users = [];
 
+    // Seed from the server-rendered bootstrap so modal dropdowns are populated
+    // even before the async /api/data call resolves. Refreshed by loadStateData().
+    try {
+        if (window.__kpBootstrap) {
+            if (Array.isArray(window.__kpBootstrap.categories) && window.__kpBootstrap.categories.length) {
+                categories = window.__kpBootstrap.categories;
+            }
+            if (Array.isArray(window.__kpBootstrap.items) && window.__kpBootstrap.items.length) {
+                items = window.__kpBootstrap.items;
+            }
+        }
+    } catch (e) { /* no-op */ }
+
     // Chart instances
     let ordersChartInstance = null;
     let itemsChartInstance = null;
@@ -56,6 +69,112 @@
             return tiffin.items.addons.map(id => Number(id));
         }
         return [];
+    };
+
+    // Normalised list of plan "slot" components (fixed items + "Or" choices).
+    // Falls back to seeding fixed slots from the legacy free-text basic list.
+    const getTiffinComponents = tiffin => {
+        const raw = tiffin && tiffin.items && !Array.isArray(tiffin.items)
+            ? tiffin.items.components
+            : null;
+
+        if (Array.isArray(raw) && raw.length) {
+            return raw.map(c => {
+                const options = (Array.isArray(c.options) ? c.options : []).map(o => ({
+                    name: o.name || '',
+                    item_id: (o.item_id !== undefined && o.item_id !== null) ? o.item_id : '',
+                    price_delta: Number(o.price_delta || 0),
+                    default: !!o.default,
+                })).filter(o => o.name);
+                return {
+                    label: c.label || '',
+                    type: (c.type === 'fixed' || options.length < 2) ? 'fixed' : 'single_choice',
+                    required: c.required !== undefined ? !!c.required : true,
+                    options,
+                };
+            }).filter(c => c.label && c.options.length);
+        }
+
+        return getTiffinBasicItems(tiffin).map(name => ({
+            label: name,
+            type: 'fixed',
+            required: true,
+            options: [{ name, item_id: '', price_delta: 0, default: true }],
+        }));
+    };
+
+    // Builds a menu-item <select>, grouped by category, for picking a slot option.
+    // Resolves the current option to a catalog item (by id, then by name); an
+    // option that matches no catalog item falls back to the "custom name" field.
+    const tiffinItemSelectHtml = opt => {
+        const o = opt || {};
+        const nameLc = String(o.name || '').trim().toLowerCase();
+
+        let matchedId = (o.item_id !== undefined && o.item_id !== null && o.item_id !== '')
+            ? Number(o.item_id)
+            : null;
+        if ((!matchedId || Number.isNaN(matchedId)) && nameLc) {
+            const m = items.find(i => String(i.name).toLowerCase() === nameLc);
+            matchedId = m ? Number(m.id) : null;
+        }
+        const isCustom = !matchedId && nameLc !== '';
+
+        const groups = {};
+        items
+            .filter(i => (i.status || 'Active') === 'Active')
+            .forEach(i => {
+                const cat = (i.category && i.category.name) ? i.category.name : 'Other';
+                (groups[cat] = groups[cat] || []).push(i);
+            });
+
+        const groupHtml = Object.keys(groups).sort((a, b) => a.localeCompare(b)).map(cat => {
+            const optionHtml = groups[cat]
+                .slice()
+                .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                .map(i => `<option value="${i.id}" data-name="${escapeHtml(i.name)}" data-price="${Number(i.price || 0)}" ${matchedId === Number(i.id) ? 'selected' : ''}>${escapeHtml(i.name)}</option>`)
+                .join('');
+            return `<optgroup label="${escapeHtml(cat)}">${optionHtml}</optgroup>`;
+        }).join('');
+
+        return `
+      <select class="kp-opt-name kp_kitchen_admin_panel_form_select" style="margin-bottom:0; flex:2; min-width:150px;">
+        <option value="" ${(!matchedId && !isCustom) ? 'selected' : ''}>&mdash; Select menu item &mdash;</option>
+        ${groupHtml}
+        <option value="__custom__" ${isCustom ? 'selected' : ''}>&#9998; Custom name&hellip;</option>
+      </select>
+      <input type="text" class="kp-opt-custom kp_kitchen_admin_panel_form_input" list="kpTiffinItemNames" value="${escapeHtml(isCustom ? (o.name || '') : '')}" placeholder="Custom item name" style="margin-bottom:0; flex:2; min-width:150px; ${isCustom ? '' : 'display:none;'}">`;
+    };
+
+    // Renders one option row inside a component card.
+    const tiffinOptionRowHtml = (opt, compUid) => {
+        const o = opt || {};
+        return `
+    <div class="kp-tiffin-opt" style="display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap;">
+      <input type="radio" name="kp_compdefault_${compUid}" class="kp-opt-default" ${o.default ? 'checked' : ''} title="Default / pre-selected option" style="width:auto; margin:0;">
+      ${tiffinItemSelectHtml(o)}
+      <input type="number" step="0.01" class="kp-opt-delta kp_kitchen_admin_panel_form_input" value="${Number(o.price_delta || 0).toFixed(2)}" title="Extra $ charged if this option is chosen" style="margin-bottom:0; width:84px;">
+      <button type="button" class="kp-opt-remove" title="Remove option" style="background:none; border:none; color:var(--danger-color, #e74c3c); cursor:pointer; font-size:1rem; line-height:1;">&times;</button>
+    </div>`;
+    };
+
+    // Renders one component ("slot") card.
+    const tiffinComponentCardHtml = comp => {
+        const c = comp || { label: '', required: true, options: [{ name: '', item_id: '', price_delta: 0, default: true }] };
+        const uid = Math.random().toString(36).slice(2, 9);
+        const opts = (c.options && c.options.length) ? c.options.slice() : [{ name: '', price_delta: 0, default: true }];
+        if (!opts.some(o => o.default)) opts[0].default = true;
+        return `
+    <div class="kp-tiffin-component" data-uid="${uid}" style="border:1px solid var(--panel-border); border-radius:8px; padding:10px 12px; margin-bottom:10px; background:var(--bg-color);">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <input type="text" class="kp-comp-label kp_kitchen_admin_panel_form_input" value="${escapeHtml(c.label || '')}" placeholder="Slot name e.g. Bread / Khichadi" style="margin-bottom:0; flex:1; font-weight:600;">
+        <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem; white-space:nowrap;"><input type="checkbox" class="kp-comp-required" ${c.required !== false ? 'checked' : ''} style="width:auto; margin:0;"> Required</label>
+        <button type="button" class="kp-comp-remove" title="Remove slot" style="background:none; border:none; color:var(--danger-color, #e74c3c); cursor:pointer; font-size:1.1rem; line-height:1;">&times;</button>
+      </div>
+      <div class="kp-comp-options">
+        ${opts.map(o => tiffinOptionRowHtml(o, uid)).join('')}
+      </div>
+      <button type="button" class="kp-comp-add-option kp_kitchen_admin_panel_small_button" style="padding:3px 10px; font-size:0.72rem;">+ Add "Or" alternative</button>
+    </div>`;
     };
 
     // Generic secure API request handler
@@ -255,7 +374,7 @@
     `;
         modal.classList.add('kp_kitchen_admin_panel_modal_visible');
         getElement('modalCancel').addEventListener('click', closeModal);
-        modalForm.onsubmit = function(e) {
+        modalForm.onsubmit = function (e) {
             const streetInput = modalForm.querySelector('input[name="add_customer_street"]');
             if (streetInput) {
                 const suburbInput = modalForm.querySelector('input[name="add_customer_suburb"]');
@@ -311,8 +430,40 @@
     </label>
   `;
 
+    // One "name + price" row for bulk item creation.
+    const itemNameRowHtml = isFirst => `
+    <div class="kp-item-name-row" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <input name="names[]" class="kp_kitchen_admin_panel_form_input kp-item-name" ${isFirst ? 'required' : ''} placeholder="e.g. Bhakhari" style="margin-bottom:0; flex:1;">
+      <input name="prices[]" type="number" step="0.01" min="0" class="kp_kitchen_admin_panel_form_input kp-item-price" ${isFirst ? 'required' : ''} placeholder="Price" style="margin-bottom:0; width:96px;">
+      <button type="button" class="kp-item-name-remove" title="Remove" style="background:none; border:none; color:var(--danger-color, #e74c3c); cursor:pointer; font-size:1rem; line-height:1;">&times;</button>
+    </div>`;
+
     const itemFields = item => {
+        const isEdit = !!(item && item.id);
         const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === item?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+
+        const nameBlock = isEdit
+            ? `
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Item Name</span>
+        <input name="name" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(item?.name || '')}" required placeholder="Garlic Bread">
+      </label>
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Price ($ AUD)</span>
+        <input name="price" type="number" step="0.01" class="kp_kitchen_admin_panel_form_input" value="${item?.price || ''}" required placeholder="12.50">
+      </label>`
+            : `
+      <div class="kp_kitchen_admin_panel_form_group">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom:0;">Item Name &amp; Price ($ AUD)</span>
+          <button type="button" id="addItemNameBtn" class="kp_kitchen_admin_panel_small_button" style="padding:4px 10px; font-size:0.75rem;">+ Add another</button>
+        </div>
+        <div id="itemNamesContainer">
+          ${itemNameRowHtml(true)}
+        </div>
+        <p style="font-size:0.72rem; opacity:0.7; margin:4px 0 0;">Add several rows to create multiple items at once, each with its own price. They share the category, description and status below.</p>
+      </div>`;
+
         return `
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Item Image</span>
@@ -321,22 +472,13 @@
         <div id="itemImagePreview" class="kp_kitchen_admin_panel_image_preview">${item?.image ? `<img src="${escapeHtml(item.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
       </label>
       <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Item Name</span>
-        <input name="name" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(item?.name || '')}" required placeholder="Garlic Bread, Butter Chicken">
+        <span class="kp_kitchen_admin_panel_form_label">Category</span>
+        <select name="category_id" class="kp_kitchen_admin_panel_form_select" required>
+          <option value="">Select Category</option>
+          ${catOptions}
+        </select>
       </label>
-      <div class="kp_kitchen_admin_panel_form_grid">
-        <label class="kp_kitchen_admin_panel_form_group">
-          <span class="kp_kitchen_admin_panel_form_label">Category</span>
-          <select name="category_id" class="kp_kitchen_admin_panel_form_select" required>
-            <option value="">Select Category</option>
-            ${catOptions}
-          </select>
-        </label>
-        <label class="kp_kitchen_admin_panel_form_group">
-          <span class="kp_kitchen_admin_panel_form_label">Price ($ AUD)</span>
-          <input name="price" type="number" step="0.01" class="kp_kitchen_admin_panel_form_input" value="${item?.price || ''}" required placeholder="12.50">
-        </label>
-      </div>
+      ${nameBlock}
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Description</span>
         <textarea name="description" class="kp_kitchen_admin_panel_form_textarea" placeholder="Describe the menu item">${escapeHtml(item?.description || '')}</textarea>
@@ -352,7 +494,6 @@
     };
 
     const tiffinFields = tiffin => {
-        const basicItems = getTiffinBasicItems(tiffin);
         const addonIds = getTiffinAddonIds(tiffin);
 
         const renderCheckboxGroup = (itemsToRender) => {
@@ -410,7 +551,7 @@
             ${catOptions}
           </select>
         </label>
-        <label class="kp_kitchen_admin_panel_form_group">
+        <label class="kp_kitchen_admin_panel_form_group" id="tiffinBasePriceField">
           <span class="kp_kitchen_admin_panel_form_label">Base Price ($ AUD)</span>
           <input name="price" type="number" step="0.01" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.price || ''}" required placeholder="19.90">
         </label>
@@ -419,24 +560,32 @@
         <span class="kp_kitchen_admin_panel_form_label">Prep Time (mins)</span>
         <input name="prep_time" type="number" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.prep_time || 30}" required>
       </label>
+
+      <div class="kp_kitchen_admin_panel_form_group" style="border:1px solid var(--panel-border); border-radius:8px; padding:12px 14px; background:var(--bg-color);">
+        <label style="display:flex; align-items:center; gap:8px; font-weight:600; cursor:pointer; margin-bottom:0;">
+          <input type="checkbox" name="is_customizable" id="tiffinIsCustomizable" value="1" ${tiffin?.is_customizable ? 'checked' : ''} style="width:auto; margin:0;">
+          Customize Tiffin (customer builds their own from today&#39;s menu items)
+        </label>
+        <p id="tiffinCustomizeNote" style="font-size:0.72rem; opacity:0.75; margin:10px 0 0 0; ${tiffin?.is_customizable ? '' : 'display:none;'}">
+          This becomes the single Customize Tiffin. It has <strong>no base price</strong> &mdash; the customer's total is the sum of the items they pick.
+          The item list is pulled automatically from every other Active tiffin plan, so it stays in sync with today's menu. Any other tiffin currently marked customizable will be unset when you save.
+        </p>
+      </div>
+
+      <div id="tiffinStandardBuilder" style="${tiffin?.is_customizable ? 'display:none;' : ''}">
       <div class="kp_kitchen_admin_panel_form_group">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 0;">Included Items (Basic Menu)</span>
-          <button type="button" id="addBasicMenuItemBtn" class="kp_kitchen_admin_panel_small_button" style="padding: 4px 10px; font-size: 0.75rem;">+ Add Item</button>
+          <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 0;">Plan Items &amp; &quot;Or&quot; Choices</span>
+          <button type="button" id="addTiffinComponentBtn" class="kp_kitchen_admin_panel_small_button" style="padding: 4px 10px; font-size: 0.75rem;">+ Add Slot</button>
         </div>
-        <div id="basicMenuItemsInputsContainer" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
-          ${(() => {
-                const defaultPlaceholders = ["enter the subzi", "enter the rice", "enter the breads", "enter the dal"];
-                const count = Math.max(4, basicItems.length);
-                let html = '';
-                for (let i = 0; i < count; i++) {
-                    const val = basicItems[i] || '';
-                    const ph = defaultPlaceholders[i] || "enter new item";
-                    html += `<input type="text" name="basic_menu_items[]" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(val)}" placeholder="${ph}" style="margin-bottom:0;">`;
-                }
-                return html;
-            })()}
+        <p style="font-size:0.72rem; opacity:0.7; margin:0 0 8px 0;">Each slot is one line of the plan. Pick an item from the menu list (grouped by category) or choose &quot;Custom name&hellip;&quot; to type one. Add a second option to a slot to turn it into an &quot;Or&quot; choice the customer picks. Enter a price only if that option costs extra; the radio marks the pre-selected default.</p>
+        <div id="tiffinComponentsContainer">
+          ${((getTiffinComponents(tiffin).length ? getTiffinComponents(tiffin) : [null, null, null, null]).map(c => tiffinComponentCardHtml(c)).join(''))}
         </div>
+        <input type="hidden" name="components_json" id="tiffinComponentsJson">
+        <datalist id="kpTiffinItemNames">
+          ${items.map(i => `<option value="${escapeHtml(i.name)}"></option>`).join('')}
+        </datalist>
       </div>
       <div class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 6px; display: block;">Extra Add-Ons (Increases Plan Price)</span>
@@ -447,6 +596,7 @@
       <div class="tiffin-modal-total-price-bar" style="background: var(--primary-color-light, rgba(255, 107, 107, 0.1)); border: 1px solid var(--primary-color); border-radius: 8px; padding: 12px 16px; margin: 16px 0; display: flex; justify-content: space-between; align-items: center;">
         <strong style="color: var(--text-primary); font-size: 0.9rem;">Total Plan Price (Base + Options):</strong>
         <strong id="tiffinModalTotalPrice" style="font-size: 1.25rem; color: var(--primary-color); font-weight:800;">$0.00</strong>
+      </div>
       </div>
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Description</span>
@@ -673,29 +823,83 @@
     function setupItemImagePreview() { setupImagePreview('itemImageInput', 'itemImageData', 'itemImagePreview'); }
     function setupTiffinImagePreview() { setupImagePreview('tiffinImageInput', 'tiffinImageData', 'tiffinImagePreview'); }
 
+    // Item modal: image preview + "add another name" rows for bulk creation.
+    function setupItemFormListeners() {
+        setupItemImagePreview();
+
+        const addBtn = getElement('addItemNameBtn');
+        const container = getElement('itemNamesContainer');
+        if (!addBtn || !container) return;
+
+        addBtn.addEventListener('click', () => {
+            const rows = container.querySelectorAll('.kp-item-name-row');
+            const lastPrice = rows.length
+                ? (rows[rows.length - 1].querySelector('.kp-item-price')?.value || '')
+                : '';
+            container.insertAdjacentHTML('beforeend', itemNameRowHtml(false));
+            const newRow = container.lastElementChild;
+            if (lastPrice) newRow.querySelector('.kp-item-price').value = lastPrice;
+            newRow.querySelector('.kp-item-name').focus();
+        });
+
+        container.addEventListener('click', event => {
+            const rm = event.target.closest('.kp-item-name-remove');
+            if (rm && container.querySelectorAll('.kp-item-name-row').length > 1) {
+                rm.closest('.kp-item-name-row').remove();
+            }
+        });
+
+        const form = getElement('modalForm');
+        if (form) {
+            form.addEventListener('submit', () => {
+                const rows = [...container.querySelectorAll('.kp-item-name-row')];
+                rows.forEach(r => {
+                    const name = (r.querySelector('.kp-item-name')?.value || '').trim();
+                    const price = (r.querySelector('.kp-item-price')?.value || '').trim();
+                    if (!name && !price && rows.length > 1) r.remove();
+                });
+            });
+        }
+    }
+
     function setupTiffinFormListeners() {
         setupTiffinImagePreview();
         const form = getElement('modalForm');
         if (!form) return;
 
-        // Dynamically append basic menu item inputs
-        const addBtn = getElement('addBasicMenuItemBtn');
-        const inputsContainer = getElement('basicMenuItemsInputsContainer');
-        if (addBtn && inputsContainer) {
-            addBtn.addEventListener('click', () => {
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.name = 'basic_menu_items[]';
-                input.className = 'kp_kitchen_admin_panel_form_input';
-                input.placeholder = 'enter new item';
-                input.style.marginBottom = '0';
-                inputsContainer.appendChild(input);
-            });
+        // Customize Tiffin toggle: hide the slot builder + base price (no base price).
+        const customizeToggle = getElement('tiffinIsCustomizable');
+        const customizeNote = getElement('tiffinCustomizeNote');
+        const standardBuilder = getElement('tiffinStandardBuilder');
+        const basePriceField = getElement('tiffinBasePriceField');
+        if (customizeToggle) {
+            const priceInput = form.querySelector('input[name="price"]');
+            const applyCustomizeMode = () => {
+                const on = customizeToggle.checked;
+                if (customizeNote) customizeNote.style.display = on ? '' : 'none';
+                if (standardBuilder) standardBuilder.style.display = on ? 'none' : '';
+                if (basePriceField) basePriceField.style.display = on ? 'none' : '';
+                if (priceInput) {
+                    if (on) {
+                        priceInput.dataset.prev = priceInput.value || priceInput.dataset.prev || '';
+                        priceInput.value = '0';
+                    } else if (priceInput.value === '0' && priceInput.dataset.prev) {
+                        priceInput.value = priceInput.dataset.prev;
+                    }
+                }
+            };
+            customizeToggle.addEventListener('change', applyCustomizeMode);
+            applyCustomizeMode();
         }
+
+        const componentsContainer = getElement('tiffinComponentsContainer');
+        const addComponentBtn = getElement('addTiffinComponentBtn');
+        const componentsJsonInput = getElement('tiffinComponentsJson');
 
         const basePriceInput = form.querySelector('input[name="price"]');
         const checkboxes = form.querySelectorAll('input[name="tiffin_addons[]"]');
         const totalDisplay = getElement('tiffinModalTotalPrice');
+
         const updateCalculatedTotal = () => {
             if (!totalDisplay) return;
             const basePrice = Number(basePriceInput?.value || 0);
@@ -705,8 +909,126 @@
                     selectedSum += Number(cb.dataset.price || 0);
                 }
             });
+            if (componentsContainer) {
+                componentsContainer.querySelectorAll('.kp-tiffin-component').forEach(card => {
+                    const optRows = [...card.querySelectorAll('.kp-tiffin-opt')];
+                    if (optRows.length < 2) return; // fixed slot -> no price delta
+                    const picked = optRows.find(r => r.querySelector('.kp-opt-default')?.checked) || optRows[0];
+                    selectedSum += Number(picked.querySelector('.kp-opt-delta')?.value || 0);
+                });
+            }
             totalDisplay.textContent = `$${(basePrice + selectedSum).toFixed(2)}`;
         };
+
+        // Serialise the slot/option cards into the hidden components_json field.
+        const serializeComponents = () => {
+            if (!componentsContainer || !componentsJsonInput) return;
+            const out = [];
+            componentsContainer.querySelectorAll('.kp-tiffin-component').forEach(card => {
+                const label = (card.querySelector('.kp-comp-label')?.value || '').trim();
+                const required = card.querySelector('.kp-comp-required')?.checked ?? true;
+                const options = [...card.querySelectorAll('.kp-tiffin-opt')].map(r => {
+                    const sel = r.querySelector('.kp-opt-name');
+                    const customEl = r.querySelector('.kp-opt-custom');
+                    let name = '';
+                    let itemId = '';
+                    if (sel && sel.value === '__custom__') {
+                        name = (customEl?.value || '').trim();
+                        const match = items.find(i => String(i.name).toLowerCase() === name.toLowerCase());
+                        if (match) itemId = Number(match.id);
+                    } else if (sel && sel.value) {
+                        itemId = Number(sel.value);
+                        const picked = sel.options[sel.selectedIndex];
+                        name = (picked?.dataset.name || picked?.textContent || '').trim();
+                    }
+                    return {
+                        name,
+                        item_id: itemId === '' ? '' : Number(itemId),
+                        price_delta: Number(r.querySelector('.kp-opt-delta')?.value || 0),
+                        default: r.querySelector('.kp-opt-default')?.checked || false,
+                    };
+                }).filter(o => o.name);
+                if (!label || !options.length) return;
+                if (!options.some(o => o.default)) options[0].default = true;
+                out.push({
+                    label,
+                    type: options.length > 1 ? 'single_choice' : 'fixed',
+                    required,
+                    options,
+                });
+            });
+            componentsJsonInput.value = JSON.stringify(out);
+        };
+
+        if (addComponentBtn && componentsContainer) {
+            addComponentBtn.addEventListener('click', () => {
+                componentsContainer.insertAdjacentHTML('beforeend', tiffinComponentCardHtml(null));
+                updateCalculatedTotal();
+            });
+        }
+
+        if (componentsContainer) {
+            componentsContainer.addEventListener('click', event => {
+                const addOptBtn = event.target.closest('.kp-comp-add-option');
+                if (addOptBtn) {
+                    const card = addOptBtn.closest('.kp-tiffin-component');
+                    card.querySelector('.kp-comp-options')
+                        .insertAdjacentHTML('beforeend', tiffinOptionRowHtml(null, card.dataset.uid));
+                    updateCalculatedTotal();
+                    return;
+                }
+                const optRemove = event.target.closest('.kp-opt-remove');
+                if (optRemove) {
+                    const card = optRemove.closest('.kp-tiffin-component');
+                    if (card.querySelectorAll('.kp-tiffin-opt').length > 1) {
+                        optRemove.closest('.kp-tiffin-opt').remove();
+                    } else {
+                        card.remove();
+                    }
+                    updateCalculatedTotal();
+                    return;
+                }
+                const compRemove = event.target.closest('.kp-comp-remove');
+                if (compRemove) {
+                    compRemove.closest('.kp-tiffin-component').remove();
+                    updateCalculatedTotal();
+                }
+            });
+
+            componentsContainer.addEventListener('change', event => {
+                if (event.target.classList.contains('kp-opt-default')) {
+                    updateCalculatedTotal();
+                }
+                if (event.target.classList.contains('kp-opt-name')) {
+                    const row = event.target.closest('.kp-tiffin-opt');
+                    const customEl = row.querySelector('.kp-opt-custom');
+                    const isCustom = event.target.value === '__custom__';
+                    if (customEl) {
+                        customEl.style.display = isCustom ? '' : 'none';
+                        if (isCustom) customEl.focus();
+                    }
+                    // Auto-name the slot from the picked item's category, if still blank.
+                    if (!isCustom && event.target.value) {
+                        const card = event.target.closest('.kp-tiffin-component');
+                        const labelEl = card.querySelector('.kp-comp-label');
+                        const picked = items.find(i => Number(i.id) === Number(event.target.value));
+                        if (labelEl && !labelEl.value.trim() && picked && picked.category && picked.category.name) {
+                            labelEl.value = picked.category.name;
+                        }
+                    }
+                    updateCalculatedTotal();
+                }
+            });
+
+            componentsContainer.addEventListener('input', event => {
+                if (event.target.classList.contains('kp-opt-delta')) {
+                    updateCalculatedTotal();
+                }
+            });
+        }
+
+        form.addEventListener('submit', serializeComponents);
+
         if (basePriceInput) basePriceInput.addEventListener('input', updateCalculatedTotal);
         checkboxes.forEach(cb => cb.addEventListener('change', updateCalculatedTotal));
         updateCalculatedTotal();
@@ -725,7 +1047,7 @@
     }
     if (getElement('addItemButton')) {
         getElement('addItemButton').addEventListener('click', () => {
-            openModal('Add Menu Item', itemFields(), 'Create Item', getBaseUrl() + '/items/save', setupItemImagePreview);
+            openModal('Add Menu Item', itemFields(), 'Create Item', getBaseUrl() + '/items/save', setupItemFormListeners);
         });
     }
     if (getElement('addTiffinButton')) {
@@ -780,7 +1102,7 @@
                 status: itemBtn.dataset.status,
                 image: itemBtn.dataset.image
             };
-            openModal('Edit Menu Item', itemFields(item) + `<input type="hidden" name="id" value="${item.id}">`, 'Save Changes', getBaseUrl() + '/items/save', setupItemImagePreview);
+            openModal('Edit Menu Item', itemFields(item) + `<input type="hidden" name="id" value="${item.id}">`, 'Save Changes', getBaseUrl() + '/items/save', setupItemFormListeners);
             return;
         }
 
@@ -796,6 +1118,7 @@
                 status: tiffinBtn.dataset.status,
                 description: tiffinBtn.dataset.description,
                 image: tiffinBtn.dataset.image,
+                is_customizable: tiffinBtn.dataset.is_customizable === '1',
                 items: JSON.parse(tiffinBtn.dataset.items || '[]')
             };
             openModal('Edit Tiffin Plan', tiffinFields(tiffin) + `<input type="hidden" name="id" value="${tiffin.id}">`, 'Save Changes', getBaseUrl() + '/tiffins/save', setupTiffinFormListeners);
@@ -827,7 +1150,7 @@
 
                 // Populate inputs
                 getElement('editDriverId').value = d.id;
-                
+
                 // Split Name
                 const fullName = d.name || '';
                 const nameParts = fullName.trim().split(/\s+/);
@@ -1001,6 +1324,27 @@
         function printOrderInvoice(order, customer) {
             const printWindow = window.open('', '_blank');
 
+            // Resolve custom items or selections
+            let customItemsSummary = '';
+            if (order.custom_items && order.custom_items.length > 0) {
+                customItemsSummary = order.custom_items.map(ci => (ci.name || ci) + (ci.price ? ` ($${Number(ci.price).toFixed(2)})` : '')).join(', ');
+            } else if (order.choices_list && order.choices_list.length > 0) {
+                customItemsSummary = order.choices_list.map(c => `${c.component}: ${c.chosen}`).join(', ');
+            } else if (order.choices && order.choices !== 'None') {
+                customItemsSummary = order.choices;
+            } else if (order.choices_summary) {
+                customItemsSummary = order.choices_summary;
+            }
+
+            let customItemsHtml = '';
+            if (customItemsSummary) {
+                customItemsHtml = `
+                    <div style="margin-top: 6px; padding: 6px 10px; background: #f4fbf6; border-left: 3px solid #2ecc71; border-radius: 4px; font-size: 0.82rem; color: #27ae60; line-height: 1.4;">
+                        <strong>Customized Meal Items:</strong> ${escapeHtml(customItemsSummary)}
+                    </div>
+                `;
+            }
+
             let addonsHtml = '';
             if (order.raw_addons && order.raw_addons.length > 0) {
                 addonsHtml = `
@@ -1009,7 +1353,7 @@
           </tr>
           ${order.raw_addons.map(addon => `
             <tr class="item">
-              <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: left;">${escapeHtml(addon.name)}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: left;">${escapeHtml(addon.name)} (x${addon.qty || 1})</td>
               <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${Number(addon.price).toFixed(2)}</td>
             </tr>
           `).join('')}
@@ -1081,8 +1425,9 @@
               </tr>
               <tr class="item">
                 <td style="text-align: left; padding: 12px 10px;">
-                  <strong>${escapeHtml(order.tiffin)}</strong><br>
-                  <span style="font-size: 0.75rem; color: #777;">Daily Subscription Plan Combo</span>
+                  <strong style="font-size: 1rem; color: #222;">${escapeHtml(order.tiffin)}</strong> (Qty: <strong>${order.quantity || 1}</strong>)<br>
+                  <span style="font-size: 0.75rem; color: #777;">Daily Subscription Plan Meal</span>
+                  ${customItemsHtml}
                 </td>
                 <td style="text-align: right; padding: 12px 10px; font-weight: 600;">
                   $${(Number(order.amount) - (order.raw_addons ? order.raw_addons.reduce((sum, a) => sum + Number(a.price), 0) : 0)).toFixed(2)}
@@ -1111,13 +1456,18 @@
         }
 
         function printWeeklyInvoice(inv, orders, customer) {
-            const weekOrders = orders.filter(o => {
-                return o.date >= inv.start_of_week && o.date <= inv.end_of_week;
+            const startDate = inv.start_of_week || inv.start_date;
+            const endDate = inv.end_of_week || inv.end_date;
+            const weekOrders = (orders || []).filter(o => {
+                if (startDate && endDate) {
+                    return o.date >= startDate && o.date <= endDate;
+                }
+                return true;
             });
 
             // Fallback if no orders mapped inside the week range
             if (weekOrders.length === 0) {
-                const singleOrder = orders.find(o => String(o.id) === String(inv.order_id));
+                const singleOrder = (orders || []).find(o => String(o.id) === String(inv.order_id));
                 if (singleOrder) {
                     weekOrders.push(singleOrder);
                 } else {
@@ -1137,6 +1487,26 @@
 
             let ordersHtml = '';
             weekOrders.forEach((order, index) => {
+                let customItemsSummary = '';
+                if (order.custom_items && order.custom_items.length > 0) {
+                    customItemsSummary = order.custom_items.map(ci => (ci.name || ci) + (ci.price ? ` ($${Number(ci.price).toFixed(2)})` : '')).join(', ');
+                } else if (order.choices_list && order.choices_list.length > 0) {
+                    customItemsSummary = order.choices_list.map(c => `${c.component}: ${c.chosen}`).join(', ');
+                } else if (order.choices && order.choices !== 'None') {
+                    customItemsSummary = order.choices;
+                } else if (order.choices_summary) {
+                    customItemsSummary = order.choices_summary;
+                }
+
+                let customItemsHtml = '';
+                if (customItemsSummary) {
+                    customItemsHtml = `
+            <div style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #2ecc71; font-size: 0.8rem; color: #27ae60;">
+              <strong>Custom Items:</strong> ${escapeHtml(customItemsSummary)}
+            </div>
+          `;
+                }
+
                 let addonsListHtml = '';
                 if (order.raw_addons && order.raw_addons.length > 0) {
                     addonsListHtml = `
@@ -1150,7 +1520,8 @@
           <tr class="item ${index === weekOrders.length - 1 ? 'last' : ''}">
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: middle;">
               <strong style="color: #333;">Order #${escapeHtml(order.id)}</strong> <span style="font-size: 0.8rem; color: #888; margin-left: 8px;">(${escapeHtml(formatDateDMY(order.date))})</span>
-              <div style="font-size: 0.85rem; color: #555; margin-top: 4px;"><strong>Tiffin:</strong> ${escapeHtml(order.tiffin)}</div>
+              <div style="font-size: 0.85rem; color: #555; margin-top: 4px;"><strong>Tiffin:</strong> ${escapeHtml(order.tiffin)} (Qty: <strong>${order.quantity || 1}</strong>)</div>
+              ${customItemsHtml}
               ${addonsListHtml}
             </td>
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; vertical-align: middle; font-weight: 600;">
@@ -1421,19 +1792,20 @@
                   <table class="kp_kitchen_admin_panel_table" style="margin: 0;">
                     <thead class="kp_kitchen_admin_panel_table_head">
                       <tr class="kp_kitchen_admin_panel_table_row">
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%;">Order ID</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%;">Date</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 20%;">Tiffin Plan</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%;">Quantity</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 20%;">Add-ons ordered</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 14%;">Order ID</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 12%;">Date</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 22%;">Tiffin Plan</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 8%; text-align: center;">Quantity</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 18%;">Add-ons ordered</th>
                         <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%;">Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 6%; text-align: center;">Details</th>
                         <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%; text-align: right;">Invoices</th>
                       </tr>
                     </thead>
                     <tbody class="kp_kitchen_admin_panel_table_body">
                       ${orders.length === 0 ? `
                         <tr class="kp_kitchen_admin_panel_table_row">
-                          <td colspan="7" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No past orders found.</td>
+                          <td colspan="8" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No past orders found.</td>
                         </tr>
                       ` : orders.map((order, idx) => `
                         <tr class="kp_kitchen_admin_panel_table_row">
@@ -1441,12 +1813,38 @@
                             <strong class="kp_kitchen_admin_panel_table_primary">${escapeHtml(order.id)}</strong>
                           </td>
                           <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(formatDateDMY(order.date))}</td>
-                          <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.tiffin)}</td>
-                          <td class="kp_kitchen_admin_panel_table_cell">${escapeHtml(order.quantity || 1)}</td>
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            <strong style="color: var(--text-primary);">${escapeHtml(order.tiffin)}</strong>
+                            ${(order.choices && order.choices !== 'None') ? `
+                              <div style="font-size: 0.78rem; color: #27ae60; margin-top: 3px; font-weight: 500;">
+                                ${escapeHtml(order.choices)}
+                              </div>
+                            ` : ''}
+                          </td>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;"><strong>${escapeHtml(order.quantity || 1)}</strong></td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(order.addons)}</td>
                           <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(order.amount).toFixed(2)}</strong></td>
-                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: right;">
-                            <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view print-invoice-btn" data-idx="${idx}" style="padding: 4px 10px; font-size: 0.75rem;">🖨️ Print Receipt</button>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">
+                            <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view view-order-details-btn"
+                              style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.2); color: #3498DB; width: 32px; height: 32px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;"
+                              title="View Order Details"
+                              data-id="${escapeHtml(order.id)}">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8zM1.173 8a13.133 13.133 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5c2.12 0 3.879 1.168 5.168 2.457A13.133 13.133 0 0 1 14.828 8c-.058.087-.122.183-.195.288-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5c-2.12 0-3.879-1.168-5.168-2.457A13.134 13.134 0 0 1 1.172 8z"/>
+                                <path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0z"/>
+                              </svg>
+                            </button>
+                          </td>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">
+                            <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view print-invoice-btn"
+                              style="background: rgba(46, 204, 113, 0.1); border: 1px solid rgba(46, 204, 113, 0.2); color: #2ECC71; width: 32px; height: 32px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;"
+                              title="Print Receipt"
+                              data-idx="${idx}">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="pointer-events: none;">
+                                <path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/>
+                                <path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/>
+                              </svg>
+                            </button>
                           </td>
                         </tr>
                       `).join('')}
@@ -1462,9 +1860,33 @@
 
                         document.querySelectorAll('#customerPaymentGridSection .print-invoice-btn').forEach(btn => {
                             btn.addEventListener('click', e => {
-                                const idx = parseInt(e.target.dataset.idx);
+                                const targetBtn = e.target.closest('.print-invoice-btn');
+                                if (!targetBtn) return;
+                                const idx = parseInt(targetBtn.dataset.idx);
                                 const selectedOrder = orders[idx];
-                                printOrderInvoice(selectedOrder, customer);
+                                const ordDate = selectedOrder.date;
+                                const matchedCycle = (weeklyBilling || []).find(w => ordDate >= w.start_date && ordDate <= w.end_date);
+                                if (matchedCycle) {
+                                    printWeeklyInvoice(matchedCycle, orders, customer);
+                                } else {
+                                    const d = new Date(ordDate);
+                                    const day = d.getDay();
+                                    const diffToMon = d.getDate() - day + (day === 0 ? -6 : 1);
+                                    const monDate = new Date(d.setDate(diffToMon));
+                                    const sunDate = new Date(monDate);
+                                    sunDate.setDate(monDate.getDate() + 6);
+                                    const mon = monDate.toISOString().split('T')[0];
+                                    const sun = sunDate.toISOString().split('T')[0];
+                                    printWeeklyInvoice({
+                                        id: 'INV-W' + mon.replace(/-/g, '') + '-' + customer.id,
+                                        start_of_week: mon,
+                                        end_of_week: sun,
+                                        due_date: sun,
+                                        paid_date: 'N/A',
+                                        status: 'Pending',
+                                        amount: selectedOrder.amount
+                                    }, orders, customer);
+                                }
                             });
                         });
                     }
@@ -1665,8 +2087,37 @@
                         ? `<img src="${getBaseUrl()}/${driver.license_copy_back}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Back">`
                         : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
 
+                    const appr = driver.approval_status || 'Approved';
+                    const apprMeta = {
+                        Pending: { bg: 'rgba(241,196,15,0.12)', color: '#B7950B', label: 'Pending Approval' },
+                        Approved: { bg: 'rgba(46,204,113,0.12)', color: '#2ECC71', label: 'Approved' },
+                        Rejected: { bg: 'rgba(231,76,60,0.12)', color: '#E74C3C', label: 'Rejected' }
+                    }[appr] || { bg: 'rgba(52,152,219,0.12)', color: '#3498DB', label: appr };
+
+                    const approvalPanel = `
+              <div style="background-color: var(--bg-color); border: 1px solid ${appr === 'Pending' ? '#F1C40F' : 'var(--panel-border)'}; border-radius: 12px; padding: 18px 20px; display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between;">
+                <div>
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <h4 style="margin:0; color: var(--primary-color); font-size:1.05rem; font-weight:600;">🔎 Registration Review</h4>
+                    <span style="display:inline-block; font-size:0.78rem; font-weight:700; padding:3px 12px; border-radius:20px; background:${apprMeta.bg}; color:${apprMeta.color};">${apprMeta.label}</span>
+                  </div>
+                  <p style="margin:8px 0 0 0; font-size:0.82rem; color: var(--text-secondary);">
+                    Registered: <strong style="color:var(--text-primary);">${escapeHtml(driver.registered_at || 'N/A')}</strong>
+                    ${driver.reviewed_at ? ` &nbsp;·&nbsp; Reviewed: <strong style="color:var(--text-primary);">${escapeHtml(driver.reviewed_at)}</strong>` : ''}
+                    ${appr === 'Rejected' && driver.rejection_reason ? `<br>Reason: <em>${escapeHtml(driver.rejection_reason)}</em>` : ''}
+                  </p>
+                  ${appr === 'Pending' ? `<p style="margin:8px 0 0 0; font-size:0.8rem; color:#B7950B;">This driver cannot log in until you approve the profile below.</p>` : ''}
+                </div>
+                <div style="display:flex; gap:10px;">
+                  ${appr !== 'Approved' ? `<button type="button" class="approve-driver-btn kp_kitchen_admin_panel_primary_button" data-id="${driver.id}" data-name="${escapeHtml(driver.name)}" style="padding:8px 18px;">✔ Approve</button>` : ''}
+                  ${appr !== 'Rejected' ? `<button type="button" class="reject-driver-btn kp_kitchen_admin_panel_danger_button" data-id="${driver.id}" data-name="${escapeHtml(driver.name)}" style="padding:8px 18px;">✖ Reject</button>` : ''}
+                </div>
+              </div>
+            `;
+
                     const html = `
             <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
+              ${approvalPanel}
               <!-- Top Profiles & Performance stats Grid -->
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
                 <!-- Profile card -->
@@ -1738,6 +2189,51 @@
               </div>
             `;
                     }
+                }
+            })();
+            return;
+        }
+
+        // Approve a pending driver registration
+        const approveDriverBtn = event.target.closest('.approve-driver-btn');
+        if (approveDriverBtn) {
+            const driverId = approveDriverBtn.dataset.id;
+            const driverName = approveDriverBtn.dataset.name || 'this driver';
+            if (!confirm(`Approve ${driverName}? They will be able to log in to the driver app.`)) return;
+            approveDriverBtn.disabled = true;
+            approveDriverBtn.textContent = 'Approving...';
+            (async () => {
+                try {
+                    const res = await apiRequest(`api/drivers/${driverId}/approve`, 'POST', {});
+                    showToast(res.message || 'Driver approved.');
+                    setTimeout(() => window.location.reload(), 600);
+                } catch (err) {
+                    showToast(err.message || 'Could not approve driver.');
+                    approveDriverBtn.disabled = false;
+                    approveDriverBtn.textContent = '✔ Approve';
+                }
+            })();
+            return;
+        }
+
+        // Reject a pending driver registration
+        const rejectDriverBtn = event.target.closest('.reject-driver-btn');
+        if (rejectDriverBtn) {
+            const driverId = rejectDriverBtn.dataset.id;
+            const driverName = rejectDriverBtn.dataset.name || 'this driver';
+            const reason = prompt(`Reject ${driverName}? Optionally add a reason (shown to the driver):`, '');
+            if (reason === null) return;
+            rejectDriverBtn.disabled = true;
+            rejectDriverBtn.textContent = 'Rejecting...';
+            (async () => {
+                try {
+                    const res = await apiRequest(`api/drivers/${driverId}/reject`, 'POST', { reason });
+                    showToast(res.message || 'Driver rejected.');
+                    setTimeout(() => window.location.reload(), 600);
+                } catch (err) {
+                    showToast(err.message || 'Could not reject driver.');
+                    rejectDriverBtn.disabled = false;
+                    rejectDriverBtn.textContent = '✖ Reject';
                 }
             })();
             return;
@@ -1854,28 +2350,53 @@
         if (viewOrderDetailsBtn) {
             const orderId = viewOrderDetailsBtn.dataset.id;
 
-            const listSec = getElement('ordersListSection');
-            const detailsSec = getElement('orderDetailsGridSection');
-            const detailsContent = getElement('orderDetailsGridContent');
+            // Check if we are inside Customer Management or Orders Page
+            const custDetailsSec = getElement('customerOrderDetailGridSection');
+            const custDetailsContent = getElement('customerOrderDetailGridContent');
+            const custPaymentSec = getElement('customerPaymentGridSection');
 
-            if (listSec && detailsSec && detailsContent) {
-                listSec.style.display = 'none';
-                detailsSec.style.display = 'block';
-                detailsContent.innerHTML = `
+            const ordersListSec = getElement('ordersListSection');
+            const ordersDetailsSec = getElement('orderDetailsGridSection');
+            const ordersDetailsContent = getElement('orderDetailsGridContent');
+
+            let activeDetailsSec = null;
+            let activeContentSec = null;
+
+            if (custDetailsSec && custDetailsContent && custPaymentSec && custPaymentSec.style.display !== 'none') {
+                custPaymentSec.style.display = 'none';
+                custDetailsSec.style.display = 'block';
+                activeDetailsSec = custDetailsSec;
+                activeContentSec = custDetailsContent;
+
+                const backBtn = getElement('backToCustomerPaymentFromOrderDetailsBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        custDetailsSec.style.display = 'none';
+                        custPaymentSec.style.display = 'block';
+                    };
+                }
+            } else if (ordersListSec && ordersDetailsSec && ordersDetailsContent) {
+                ordersListSec.style.display = 'none';
+                ordersDetailsSec.style.display = 'block';
+                activeDetailsSec = ordersDetailsSec;
+                activeContentSec = ordersDetailsContent;
+
+                const backBtn = getElement('backToOrdersListBtn');
+                if (backBtn) {
+                    backBtn.onclick = () => {
+                        ordersDetailsSec.style.display = 'none';
+                        ordersListSec.style.display = 'block';
+                    };
+                }
+            }
+
+            if (activeContentSec) {
+                activeContentSec.innerHTML = `
           <div style="padding: 40px; text-align: center; color: var(--text-secondary); background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
             <div style="display: inline-block; width: 36px; height: 36px; border: 3px solid rgba(52, 152, 219, 0.2); border-radius: 50%; border-top-color: #3498DB; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
             <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">Loading order details...</p>
           </div>
         `;
-
-                // Bind Back Button
-                const backBtn = getElement('backToOrdersListBtn');
-                if (backBtn) {
-                    backBtn.onclick = () => {
-                        detailsSec.style.display = 'none';
-                        listSec.style.display = 'block';
-                    };
-                }
             }
 
             (async () => {
@@ -1887,110 +2408,155 @@
 
                     const order = response.order;
 
+                    // Build custom items / selections html
+                    let customItemsHtml = '';
+                    if (order.custom_items && order.custom_items.length > 0) {
+                        customItemsHtml = `
+              <div style="margin-top: 14px; margin-bottom: 14px;">
+                <span style="font-size: 0.85rem; color: #27ae60; display: block; margin-bottom: 8px; font-weight: 600;">Customized Meal Items:</span>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  ${order.custom_items.map(ci => `
+                    <span style="background: rgba(46, 204, 113, 0.12); color: #27ae60; border: 1px solid rgba(46, 204, 113, 0.3); border-radius: 6px; padding: 5px 12px; font-size: 0.85rem; font-weight: 600;">
+                      ${escapeHtml(ci.name || ci)} ${ci.price ? `<span style="font-weight: normal; color: #555;">($${Number(ci.price).toFixed(2)})</span>` : ''}
+                    </span>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+                    } else if (order.selections && order.selections.length > 0) {
+                        customItemsHtml = `
+              <div style="margin-top: 14px; margin-bottom: 14px;">
+                <span style="font-size: 0.85rem; color: #2980b9; display: block; margin-bottom: 8px; font-weight: 600;">Selected Meal Choices:</span>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  ${order.selections.map(sel => `
+                    <span style="background: rgba(52, 152, 219, 0.12); color: #2980b9; border: 1px solid rgba(52, 152, 219, 0.3); border-radius: 6px; padding: 5px 12px; font-size: 0.85rem; font-weight: 600;">
+                      ${escapeHtml(sel.component)}: ${escapeHtml(sel.chosen)}
+                    </span>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+                    } else if (order.choices_summary) {
+                        customItemsHtml = `
+              <div style="margin-top: 10px; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+                <strong style="color: #27ae60;">Custom Items:</strong> ${escapeHtml(order.choices_summary)}
+              </div>
+            `;
+                    }
+
                     // Build addons list html
                     let addonsHtml = '';
                     if (order.add_ons && order.add_ons.length > 0) {
                         addonsHtml = `
               <ul style="margin: 0; padding-left: 20px; font-size: 0.9rem; line-height: 1.6; color: var(--text-secondary);">
                 ${order.add_ons.map(addon => `
-                  <li><strong>${escapeHtml(addon.name)}</strong> (Quantity: ${addon.qty}) - $${Number(addon.price).toFixed(2)}</li>
+                  <li><strong>${escapeHtml(addon.name)}</strong> (Quantity: <strong>${addon.qty || 1}</strong>) - $${Number(addon.price).toFixed(2)}</li>
                 `).join('')}
               </ul>
             `;
                     } else {
-                        addonsHtml = `<p style="margin: 0; font-size: 0.9rem; font-style: italic; color: var(--text-secondary);">No addons ordered.</p>`;
+                        addonsHtml = `<p style="margin: 0; font-size: 0.9rem; font-style: italic; color: var(--text-secondary);">No extra addons ordered.</p>`;
                     }
 
-                    // Build POD photos html
-                    let podHtml = '';
-                    if (order.proof_of_delivery_photo || order.proof_of_delivery_signature) {
-                        podHtml = `
-              <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); grid-column: span 2;">
-                <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📦 Proof of Delivery</h4>
-                <div style="display: flex; gap: 24px; flex-wrap: wrap;">
-                  ${order.proof_of_delivery_photo ? `
-                    <div>
-                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">Drop Photo:</span>
-                      <a href="${getBaseUrl()}/${order.proof_of_delivery_photo}" target="_blank">
-                        <img src="${getBaseUrl()}/${order.proof_of_delivery_photo}" style="max-height: 150px; border-radius: 8px; border: 1px solid var(--panel-border);">
-                      </a>
-                    </div>
-                  ` : ''}
-                  ${order.proof_of_delivery_signature ? `
-                    <div>
-                      <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">Customer Signature:</span>
-                      <a href="${getBaseUrl()}/${order.proof_of_delivery_signature}" target="_blank">
-                        <img src="${getBaseUrl()}/${order.proof_of_delivery_signature}" style="max-height: 150px; border-radius: 8px; border: 1px solid var(--panel-border);">
-                      </a>
-                    </div>
-                  ` : ''}
+                    // Build Proof of Delivery / Drop Photo Card
+                    const podHtml = `
+                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column;">
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
+                    <span>📸 Proof of Delivery</span>
+                    <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${(order.status || 'Pending').toLowerCase().replace(/ /g, '')}">${escapeHtml(order.status)}</span>
+                  </h4>
+                  <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px;">
+                    ${order.proof_of_delivery_photo ? `
+                      <div style="background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; width: 100%; display: flex; flex-direction: column; gap: 10px; align-items: center; box-sizing: border-box;">
+                        <span style="font-size: 0.85rem; color: #27ae60; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                          ✅ Drop Photo Uploaded (${escapeHtml(order.driver_name || 'Driver')})
+                        </span>
+                        <a href="${getBaseUrl()}/${order.proof_of_delivery_photo}" target="_blank" title="Click to view full resolution drop photo" style="display: block; width: 100%; max-width: 280px; text-align: center;">
+                          <img src="${getBaseUrl()}/${order.proof_of_delivery_photo}" alt="Drop-off Photo" style="max-height: 200px; width: 100%; border-radius: 8px; border: 1px solid var(--panel-border); object-fit: cover; display: block; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                        </a>
+                        <span style="font-size: 0.78rem; color: var(--text-secondary); text-align: center;">🔍 Click photo to open full resolution</span>
+                      </div>
+                    ` : `
+                      <div style="padding: 30px 20px; text-align: center; background: rgba(255, 255, 255, 0.02); border: 1px dashed var(--panel-border); border-radius: 10px; width: 100%; box-sizing: border-box;">
+                        <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary); font-style: italic;">📷 No drop photo uploaded yet by driver for this order.</p>
+                      </div>
+                    `}
+                    ${order.proof_of_delivery_signature ? `
+                      <div style="background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 12px; width: 100%; display: flex; flex-direction: column; gap: 8px; align-items: center; box-sizing: border-box;">
+                        <span style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 700;">✍️ Customer Signature:</span>
+                        <a href="${getBaseUrl()}/${order.proof_of_delivery_signature}" target="_blank" title="Click to view signature">
+                          <img src="${getBaseUrl()}/${order.proof_of_delivery_signature}" alt="Customer Signature" style="max-height: 80px; border-radius: 6px; border: 1px solid var(--panel-border); background: #fff; padding: 4px; display: block;">
+                        </a>
+                      </div>
+                    ` : ''}
+                  </div>
                 </div>
-              </div>
-            `;
-                    }
+              `;
 
                     const html = `
-            <div style="display: flex; flex-direction: column; gap: 28px; font-family: var(--font-family); color: var(--text-primary);">
-              <!-- Top Row: Customer & Order Details Grid -->
+            <div style="display: flex; flex-direction: column; gap: 24px; font-family: var(--font-family); color: var(--text-primary);">
+              <!-- Top Row (2 Cards): Customer & Order Details Grid -->
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
-                <!-- Customer Details Card -->
+                <!-- Card 1: Customer Details Card -->
                 <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
                   <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">👤 Customer Information</h4>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Name: <strong style="color: var(--text-primary);">${escapeHtml(order.customer_name)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Phone: <strong style="color: var(--text-primary);">${escapeHtml(order.customer_phone)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Email: <strong style="color: var(--text-primary);">${escapeHtml(order.customer_email)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Delivery Address: <span style="color: var(--text-secondary); font-weight: 600;">${escapeHtml(order.customer_address)}</span></p>
-                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Postcode: <strong style="color: var(--primary-color);">${escapeHtml(order.customer_pincode)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Postcode / Area: <strong style="color: var(--primary-color);">${escapeHtml(order.customer_pincode)}</strong></p>
                 </div>
 
-                <!-- Order Information Card -->
+                <!-- Card 2: Order Information Card -->
                 <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
                   <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📋 Order Metadata</h4>
-                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Order ID: <strong style="color: var(--text-primary);">${escapeHtml(order.id)}</strong></p>
-                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Date Placed: <strong style="color: var(--text-primary);">${escapeHtml(order.date)}</strong></p>
-                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Total Amount: <strong style="color: var(--text-primary); font-size: 1.1rem; color: #2ECC71;">$${Number(order.amount).toFixed(2)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Order ID: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.id)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Date Placed: <strong style="color: var(--text-primary);">${escapeHtml(formatDateDMY(order.date))}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Total Amount: <strong style="color: #2ECC71; font-size: 1.15rem;">$${Number(order.amount).toFixed(2)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Assigned Driver: <strong style="color: var(--text-primary);">${escapeHtml(order.driver_name)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">
                     Current Status:
-                    <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${order.status.toLowerCase().replace(/ /g, '')}">${escapeHtml(order.status)}</span>
+                    <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${(order.status || 'Pending').toLowerCase().replace(/ /g, '')}">${escapeHtml(order.status)}</span>
                   </p>
                 </div>
               </div>
 
-              <!-- Bottom Row: Order Content & Preparation Instructions Notes -->
+              <!-- Bottom Row (2 Cards): Tiffin Plan & Notes (Merged) and Proof of Delivery -->
               <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px;">
-                <!-- Tiffin & Addons Card -->
-                <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
-                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">🍱 Subscription Details</h4>
-                  <p style="margin: 8px 0 16px 0; font-size: 0.95rem; line-height: 1.5;">Tiffin Plan: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.tiffin_name)}</strong> (Quantity: <strong>${order.quantity}</strong>) ($${Number(order.tiffin_price).toFixed(2)} each)</p>
-
-                  <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">Ordered Add-ons:</span>
-                  ${addonsHtml}
-                </div>
-
-                <!-- Preparation Note / Special Instructions Card -->
+                <!-- Card 3: Tiffin & Addons + Notes Card (Merged) -->
                 <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column;">
-                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📝 Preparation & Chef Notes</h4>
-                  <div style="flex-grow: 1; padding: 14px; background: rgba(230, 126, 34, 0.05); border: 1px dashed rgba(230, 126, 34, 0.2); border-radius: 8px; color: var(--text-secondary); font-size: 0.95rem; line-height: 1.6; min-height: 100px; display: flex; align-items: center; justify-content: center; text-align: center;">
-                    <p style="margin: 0; font-weight: 600; color: #E67E22; font-style: italic;">
-                      "${escapeHtml(order.note)}"
-                    </p>
+                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">🍱 Subscription / Tiffin Plan</h4>
+                  <p style="margin: 8px 0 10px 0; font-size: 0.95rem; line-height: 1.5;">Tiffin Plan: <strong style="color: var(--text-primary); font-size: 1.05rem;">${escapeHtml(order.tiffin_name)}</strong></p>
+                  <p style="margin: 6px 0; font-size: 0.9rem; color: var(--text-secondary);">Ordered Quantity: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.quantity)}</strong></p>
+                  <p style="margin: 6px 0; font-size: 0.9rem; color: var(--text-secondary);">Plan Unit Price: <strong style="color: var(--text-primary);">$${Number(order.tiffin_price || 0).toFixed(2)}</strong> each</p>
+
+                  ${customItemsHtml}
+
+                  <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-top: 14px; margin-bottom: 8px; font-weight: 600;">Ordered Add-ons:</span>
+                  ${addonsHtml}
+
+                  <!-- Merged Preparation & Delivery Notes (Chef Note) -->
+                  <div style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--panel-border);">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 8px; font-weight: 600;">📝 Preparation & Delivery Notes:</span>
+                    <div style="padding: 10px 14px; background: rgba(230, 126, 34, 0.08); border: 1px dashed rgba(230, 126, 34, 0.3); border-radius: 8px; color: #E67E22; font-size: 0.9rem; line-height: 1.5; font-style: italic; font-weight: 500;">
+                      "${escapeHtml(order.note || 'No special notes provided.')}"
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <!-- POD photos -->
-              ${podHtml}
+                <!-- Card 4: Proof of Delivery Card -->
+                ${podHtml}
+              </div>
             </div>
           `;
 
-                    if (detailsContent) {
-                        detailsContent.innerHTML = html;
+                    if (activeContentSec) {
+                        activeContentSec.innerHTML = html;
                     }
 
                 } catch (err) {
-                    if (detailsContent) {
-                        detailsContent.innerHTML = `
+                    if (activeContentSec) {
+                        activeContentSec.innerHTML = `
               <div style="padding: 30px; text-align: center; color: #E74C3C; background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px;">
                 <p style="font-weight: 600; margin: 0 0 10px 0; font-size: 1.05rem;">Error Loading Details</p>
                 <p style="margin: 0; font-size: 0.85rem;">${escapeHtml(err.message)}</p>
@@ -2167,8 +2733,17 @@
         });
     }
 
-    // --- Batch Driver Assignment ---
+    // --- Batch & Single Driver Assignment with Confirmation Modal ---
     function initOrderBatchAssignment() {
+        const modal = document.getElementById('driverAssignModal');
+        const modalTitle = document.getElementById('driverAssignModalTitle');
+        const modalPrompt = document.getElementById('driverAssignModalPrompt');
+        const modalSubtext = document.getElementById('driverAssignModalSubtext');
+        const modalList = document.getElementById('driverAssignModalList');
+        const modalClose = document.getElementById('driverAssignModalClose');
+        const cancelBtn = document.getElementById('driverAssignCancelBtn');
+        const confirmBtn = document.getElementById('driverAssignConfirmBtn');
+
         const selectAllCheckbox = document.getElementById('selectAllOrdersCheckbox');
         const rowCheckboxes = document.querySelectorAll('.order-batch-checkbox');
         const driverSelects = document.querySelectorAll('.order-driver-select');
@@ -2177,51 +2752,114 @@
             return;
         }
 
-        // Helper function to assign driver to an order via AJAX
-        async function assignDriverToOrder(orderId, driverName, selectEl, checkboxEl) {
-            try {
-                if (selectEl) selectEl.disabled = true;
-                if (checkboxEl) checkboxEl.disabled = true;
+        let pendingAssignments = [];
+        let onCancelAction = null;
 
-                const response = await fetch(`${getBaseUrl()}/api/orders`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                    },
-                    body: JSON.stringify({
-                        id: orderId,
-                        driver: driverName
-                    })
-                });
+        function openDriverModal(title, prompt, subtext, assignments, confirmButtonText, onConfirm, onCancel) {
+            if (!modal) return;
 
-                const result = await response.json();
+            modalTitle.textContent = title || 'Driver Assignment Confirmation';
+            modalPrompt.textContent = prompt || 'Do you want to continue with the selected drivers?';
+            modalSubtext.textContent = subtext || 'Please review the driver assignment details below before proceeding:';
+            confirmBtn.textContent = confirmButtonText || 'Assign Drivers';
+            confirmBtn.disabled = false;
 
-                if (!result.success) {
-                    showToast(result.message || 'Failed to update order assignment.');
-                    if (checkboxEl) checkboxEl.checked = !checkboxEl.checked;
-                } else {
-                    showToast(`Order ${orderId} successfully assigned to ${driverName}.`);
-                    if (selectEl) {
-                        const option = Array.from(selectEl.options).find(opt => opt.getAttribute('data-driver-name') === driverName);
-                        if (option) {
-                            selectEl.value = option.value;
-                        }
-                    }
-                    if (checkboxEl) {
-                        checkboxEl.checked = (driverName !== 'Unassigned');
-                    }
+            // Render table rows
+            modalList.innerHTML = assignments.map(item => `
+                <tr class="kp_kitchen_admin_panel_table_row">
+                    <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                        <strong style="color: var(--primary-color);">${item.orderId}</strong>
+                    </td>
+                    <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                        <strong>${item.customer || '-'}</strong>
+                    </td>
+                    <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                        <span style="background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.8rem;">
+                            ${item.area || '-'}
+                        </span>
+                    </td>
+                    <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                        <strong style="color: ${item.driverName === 'Unassigned' ? '#e74c3c' : '#2ecc71'};">
+                            ${item.driverName}
+                        </strong>
+                    </td>
+                </tr>
+            `).join('');
+
+            pendingAssignments = assignments;
+            onCancelAction = onCancel;
+
+            confirmBtn.onclick = async () => {
+                confirmBtn.disabled = true;
+                const originalText = confirmBtn.textContent;
+                confirmBtn.innerHTML = '<span class="kp_kitchen_admin_panel_spinner" style="display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;margin-right:6px;"></span> Processing...';
+                try {
+                    await onConfirm();
+                    closeDriverModal(false);
+                } catch (err) {
+                    console.error(err);
+                    showToast('An error occurred during assignment.');
+                } finally {
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = originalText;
                 }
-            } catch (err) {
-                console.error(err);
-                showToast('An error occurred while assigning driver.');
-                if (checkboxEl) checkboxEl.checked = !checkboxEl.checked;
-            } finally {
-                if (selectEl) selectEl.disabled = false;
-                if (checkboxEl) checkboxEl.disabled = false;
-                updateSelectAllState();
+            };
+
+            modal.classList.add('kp_kitchen_admin_panel_modal_visible');
+        }
+
+        function closeDriverModal(triggerCancel = true) {
+            if (!modal) return;
+            modal.classList.remove('kp_kitchen_admin_panel_modal_visible');
+            if (triggerCancel && typeof onCancelAction === 'function') {
+                onCancelAction();
             }
+            onCancelAction = null;
+            pendingAssignments = [];
+        }
+
+        if (modalClose) modalClose.addEventListener('click', () => closeDriverModal(true));
+        if (cancelBtn) cancelBtn.addEventListener('click', () => closeDriverModal(true));
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    closeDriverModal(true);
+                }
+            });
+        }
+
+        // Helper function to assign driver to single order or batch of orders via AJAX
+        async function assignDriverApi(orderId, driverName) {
+            const response = await fetch(`${getBaseUrl()}/api/orders`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({
+                    id: orderId,
+                    driver: driverName
+                })
+            });
+
+            return await response.json();
+        }
+
+        async function assignBatchDriversApi(batchEntries) {
+            const response = await fetch(`${getBaseUrl()}/api/orders`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                },
+                body: JSON.stringify({
+                    batch: batchEntries
+                })
+            });
+
+            return await response.json();
         }
 
         function updateSelectAllState() {
@@ -2234,66 +2872,431 @@
             }
             selectAllCheckbox.disabled = false;
             const allChecked = enabledCheckboxes.every(cb => cb.checked);
+            const someChecked = enabledCheckboxes.some(cb => cb.checked);
             selectAllCheckbox.checked = allChecked;
+            selectAllCheckbox.indeterminate = (!allChecked && someChecked);
         }
 
         updateSelectAllState();
 
+        // Initialize driver select previous values
+        driverSelects.forEach(sel => {
+            sel.dataset.prevValue = sel.value;
+            const selectedOpt = sel.options[sel.selectedIndex];
+            sel.dataset.prevDriverName = selectedOpt ? (selectedOpt.getAttribute('data-driver-name') || 'Unassigned') : 'Unassigned';
+        });
+
+        // 1. Single Row Checkbox Click (Simply toggles selection without popup)
+        rowCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', () => {
+                updateSelectAllState();
+            });
+        });
+
+        // 2. Main (Select All) Checkbox Click (Toggles all row selections without popup)
         if (selectAllCheckbox) {
-            selectAllCheckbox.addEventListener('change', async (e) => {
-                const isChecked = e.target.checked;
-                const enabledCheckboxes = Array.from(rowCheckboxes).filter(cb => !cb.disabled);
-
-                for (const checkbox of enabledCheckboxes) {
-                    if (checkbox.checked !== isChecked) {
-                        checkbox.checked = isChecked;
-                        const orderId = checkbox.getAttribute('data-order-id');
-                        const row = checkbox.closest('tr');
-                        const selectEl = row.querySelector('.order-driver-select');
-                        let driverName = 'Unassigned';
-
-                        if (isChecked) {
-                            const firstDriverOption = selectEl.querySelector('option[data-driver-name]:not([data-driver-name="Unassigned"])');
-                            if (firstDriverOption) {
-                                driverName = firstDriverOption.getAttribute('data-driver-name');
-                            }
-                        }
-
-                        await assignDriverToOrder(orderId, driverName, selectEl, checkbox);
+            selectAllCheckbox.addEventListener('change', () => {
+                const isChecked = selectAllCheckbox.checked;
+                rowCheckboxes.forEach(cb => {
+                    if (!cb.disabled) {
+                        cb.checked = isChecked;
                     }
-                }
+                });
+                updateSelectAllState();
             });
         }
 
-        rowCheckboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', async (e) => {
-                const isChecked = e.target.checked;
-                const orderId = checkbox.getAttribute('data-order-id');
-                const row = checkbox.closest('tr');
-                const selectEl = row.querySelector('.order-driver-select');
-                let driverName = 'Unassigned';
+        // 3. Driver Dropdown Selection Changed (Triggers confirmation popup with selected driver)
+        driverSelects.forEach(selectEl => {
+            selectEl.addEventListener('change', () => {
+                const row = selectEl.closest('tr');
+                const orderId = row.getAttribute('data-order-id');
+                const checkboxEl = row.querySelector('.order-batch-checkbox');
+                const customerName = row.children[2]?.innerText?.trim() || '';
+                const area = row.children[5]?.innerText?.trim() || '';
+                const selectedOption = selectEl.options[selectEl.selectedIndex];
+                const newDriverName = selectedOption ? (selectedOption.getAttribute('data-driver-name') || 'Unassigned') : 'Unassigned';
+                const prevValue = selectEl.dataset.prevValue || '';
+                const prevDriverName = selectEl.dataset.prevDriverName || 'Unassigned';
 
-                if (isChecked) {
-                    const firstDriverOption = selectEl.querySelector('option[data-driver-name]:not([data-driver-name="Unassigned"])');
-                    if (firstDriverOption) {
-                        driverName = firstDriverOption.getAttribute('data-driver-name');
-                    }
+                if (newDriverName === prevDriverName) {
+                    return; // No change made
                 }
 
-                await assignDriverToOrder(orderId, driverName, selectEl, checkbox);
+                // Check if multiple checkboxes are checked
+                const checkedBoxes = Array.from(document.querySelectorAll('.order-batch-checkbox:checked'));
+                const isBatch = checkedBoxes.length > 1;
+
+                let targetList = [];
+
+                if (isBatch) {
+                    const targetRows = checkedBoxes.map(cb => cb.closest('tr')).filter(Boolean);
+                    if (!targetRows.includes(row)) {
+                        targetRows.push(row);
+                    }
+
+                    targetList = targetRows.map(r => {
+                        const rOrderId = r.getAttribute('data-order-id');
+                        const rSelectEl = r.querySelector('.order-driver-select');
+                        const rCbEl = r.querySelector('.order-batch-checkbox');
+                        const rCustomer = r.children[2]?.innerText?.trim() || '';
+                        const rArea = r.children[5]?.innerText?.trim() || '';
+                        return {
+                            orderId: rOrderId,
+                            customer: rCustomer,
+                            area: rArea,
+                            driverName: newDriverName,
+                            selectEl: rSelectEl,
+                            checkboxEl: rCbEl
+                        };
+                    });
+                } else {
+                    targetList = [{
+                        orderId,
+                        customer: customerName,
+                        area,
+                        driverName: newDriverName,
+                        selectEl,
+                        checkboxEl
+                    }];
+                }
+
+                const isUnassigning = (newDriverName === 'Unassigned');
+
+                let title = 'Driver Assignment Confirmation';
+                let prompt = 'Do you want to continue with the selected drivers?';
+                let subtext = `Assigning driver for order ${orderId}:`;
+                let btnText = isUnassigning ? 'Unassign Driver' : 'Assign Driver';
+
+                if (isBatch) {
+                    title = isUnassigning ? 'Batch Driver Unassignment' : 'Batch Driver Assignment';
+                    prompt = isUnassigning 
+                        ? `Do you want to unassign drivers from all ${targetList.length} selected orders?`
+                        : `Do you want to continue with the selected drivers?`;
+                    subtext = isUnassigning 
+                        ? `Unassigning drivers from ${targetList.length} selected orders:`
+                        : `Assigning all ${targetList.length} orders to driver "${newDriverName}":`;
+                    btnText = isUnassigning 
+                        ? `Unassign All (${targetList.length} Orders)` 
+                        : `Assign All (${targetList.length} Orders)`;
+                } else if (isUnassigning) {
+                    title = 'Unassign Driver Confirmation';
+                    prompt = `Do you want to unassign driver from order ${orderId}?`;
+                    subtext = `Order ${orderId} driver assignment update:`;
+                }
+
+                openDriverModal(
+                    title,
+                    prompt,
+                    subtext,
+                    targetList,
+                    btnText,
+                    async () => {
+                        if (isBatch) {
+                            const batchPayload = targetList.map(item => ({
+                                id: item.orderId,
+                                driver: item.driverName
+                            }));
+
+                            const res = await assignBatchDriversApi(batchPayload);
+                            if (res.success) {
+                                targetList.forEach(item => {
+                                    if (item.selectEl) {
+                                        // Set matching option by driver name
+                                        const matchingOption = Array.from(item.selectEl.options).find(
+                                            opt => (opt.getAttribute('data-driver-name') || 'Unassigned') === newDriverName
+                                        );
+                                        if (matchingOption) {
+                                            item.selectEl.value = matchingOption.value;
+                                        } else {
+                                            item.selectEl.value = isUnassigning ? '' : item.selectEl.value;
+                                        }
+                                        item.selectEl.dataset.prevValue = item.selectEl.value;
+                                        item.selectEl.dataset.prevDriverName = newDriverName;
+                                    }
+                                    if (item.checkboxEl) {
+                                        item.checkboxEl.checked = !isUnassigning;
+                                    }
+                                    const r = item.selectEl ? item.selectEl.closest('tr') : null;
+                                    if (r) {
+                                        const hintEl = r.querySelector('.kp_kitchen_admin_panel_assignment_hint');
+                                        if (hintEl) {
+                                            hintEl.innerHTML = isUnassigning 
+                                                ? 'Select any available driver'
+                                                : `<span style="color: #2ecc71; font-weight: 600;">✓ Assigned: ${escapeHtml(newDriverName)}</span>`;
+                                        }
+                                    }
+                                });
+                                showToast(isUnassigning ? `Successfully unassigned ${targetList.length} orders.` : `Successfully assigned ${targetList.length} orders to ${newDriverName}.`);
+                                updateSelectAllState();
+                            } else {
+                                targetList.forEach(item => {
+                                    if (item.selectEl) item.selectEl.value = item.selectEl.dataset.prevValue || '';
+                                });
+                                showToast(res.message || 'Failed to update assignment.');
+                            }
+                        } else {
+                            const res = await assignDriverApi(orderId, newDriverName);
+                            if (res.success) {
+                                selectEl.dataset.prevValue = selectEl.value;
+                                selectEl.dataset.prevDriverName = newDriverName;
+                                if (checkboxEl) {
+                                    checkboxEl.checked = !isUnassigning;
+                                }
+                                const hintEl = row.querySelector('.kp_kitchen_admin_panel_assignment_hint');
+                                if (hintEl) {
+                                    hintEl.innerHTML = isUnassigning 
+                                        ? 'Select any available driver'
+                                        : `<span style="color: #2ecc71; font-weight: 600;">✓ Assigned: ${escapeHtml(newDriverName)}</span>`;
+                                }
+                                showToast(isUnassigning ? `Order ${orderId} is now unassigned.` : `Order ${orderId} successfully assigned to ${newDriverName}.`);
+                                updateSelectAllState();
+                            } else {
+                                selectEl.value = prevValue;
+                                showToast(res.message || 'Failed to update assignment.');
+                            }
+                        }
+                    },
+                    () => {
+                        // Revert dropdown on cancel
+                        selectEl.value = prevValue;
+                    }
+                );
             });
         });
 
-        driverSelects.forEach(selectEl => {
-            selectEl.addEventListener('change', async (e) => {
-                const orderId = selectEl.closest('tr').getAttribute('data-order-id');
-                const checkboxEl = selectEl.closest('tr').querySelector('.order-batch-checkbox');
-                const selectedOption = selectEl.options[selectEl.selectedIndex];
-                const driverName = selectedOption.getAttribute('data-driver-name') || 'Unassigned';
+        // 4. Bulk Driver Assignment Dropdown (in Top Toolbar)
+        const bulkDriverSelect = document.getElementById('bulkDriverSelect');
+        if (bulkDriverSelect) {
+            bulkDriverSelect.addEventListener('change', () => {
+                const selectedOption = bulkDriverSelect.options[bulkDriverSelect.selectedIndex];
+                const newDriverName = selectedOption ? (selectedOption.getAttribute('data-driver-name') || selectedOption.value) : '';
+                if (!newDriverName) return;
 
-                await assignDriverToOrder(orderId, driverName, selectEl, checkboxEl);
+                const visibleRows = Array.from(document.querySelectorAll('#ordersTableBody tr.kp_kitchen_admin_panel_table_row'));
+                if (visibleRows.length === 0) {
+                    showToast('No orders found on this page to assign.');
+                    bulkDriverSelect.selectedIndex = 0;
+                    return;
+                }
+
+                // Gather checked rows or all visible rows if none are explicitly checked
+                const checkedBoxes = Array.from(document.querySelectorAll('.order-batch-checkbox:checked'));
+                let targetRows = [];
+                if (checkedBoxes.length > 0) {
+                    targetRows = checkedBoxes.map(cb => cb.closest('tr')).filter(Boolean);
+                } else {
+                    targetRows = visibleRows;
+                }
+
+                const targetList = targetRows.map(r => {
+                    const rOrderId = r.getAttribute('data-order-id');
+                    const rSelectEl = r.querySelector('.order-driver-select');
+                    const rCbEl = r.querySelector('.order-batch-checkbox');
+                    const rCustomer = r.children[2]?.innerText?.trim() || '';
+                    const rArea = r.children[5]?.innerText?.trim() || '';
+                    return {
+                        orderId: rOrderId,
+                        customer: rCustomer,
+                        area: rArea,
+                        driverName: newDriverName,
+                        selectEl: rSelectEl,
+                        checkboxEl: rCbEl
+                    };
+                });
+
+                const isUnassigning = (newDriverName === 'Unassigned');
+                const title = isUnassigning ? 'Batch Driver Unassignment' : 'Batch Driver Assignment';
+                const prompt = isUnassigning 
+                    ? `Do you want to unassign drivers from all ${targetList.length} selected orders?`
+                    : `Do you want to continue with assigning driver "${newDriverName}" to ${targetList.length} orders?`;
+                const subtext = isUnassigning 
+                    ? `Unassigning drivers from ${targetList.length} selected orders:`
+                    : `Assigning all ${targetList.length} orders to driver "${newDriverName}":`;
+                const btnText = isUnassigning 
+                    ? `Unassign All (${targetList.length} Orders)` 
+                    : `Assign All (${targetList.length} Orders)`;
+
+                openDriverModal(
+                    title,
+                    prompt,
+                    subtext,
+                    targetList,
+                    btnText,
+                    async () => {
+                        const batchPayload = targetList.map(item => ({
+                            id: item.orderId,
+                            driver: item.driverName
+                        }));
+
+                        const res = await assignBatchDriversApi(batchPayload);
+                        if (res.success) {
+                            targetList.forEach(item => {
+                                if (item.selectEl) {
+                                    const matchingOption = Array.from(item.selectEl.options).find(
+                                        opt => (opt.getAttribute('data-driver-name') || opt.text.trim()) === newDriverName
+                                    );
+                                    if (matchingOption) {
+                                        item.selectEl.value = matchingOption.value;
+                                    } else {
+                                        item.selectEl.value = isUnassigning ? '' : item.selectEl.value;
+                                    }
+                                    item.selectEl.dataset.prevValue = item.selectEl.value;
+                                    item.selectEl.dataset.prevDriverName = newDriverName;
+                                }
+                                if (item.checkboxEl) {
+                                    item.checkboxEl.checked = !isUnassigning;
+                                }
+                                const r = item.selectEl ? item.selectEl.closest('tr') : null;
+                                if (r) {
+                                    const hintEl = r.querySelector('.kp_kitchen_admin_panel_assignment_hint');
+                                    if (hintEl) {
+                                        hintEl.innerHTML = isUnassigning 
+                                            ? 'Select any available driver'
+                                            : `<span style="color: #2ecc71; font-weight: 600;">✓ Assigned: ${escapeHtml(newDriverName)}</span>`;
+                                    }
+                                }
+                            });
+                            showToast(isUnassigning ? `Successfully unassigned ${targetList.length} orders.` : `Successfully assigned ${targetList.length} orders to ${newDriverName}.`);
+                            bulkDriverSelect.selectedIndex = 0;
+                            updateSelectAllState();
+                        } else {
+                            showToast(res.message || 'Failed to update assignment.');
+                            bulkDriverSelect.selectedIndex = 0;
+                        }
+                    },
+                    () => {
+                        // Reset bulk selector on cancel
+                        bulkDriverSelect.selectedIndex = 0;
+                    }
+                );
             });
-        });
+        }
+
+        // 5. "Orders Ready for Dispatch" Workflow
+        const dispatchBtn = document.getElementById('dispatchOrdersBtn');
+        const dispatchModal = document.getElementById('dispatchModal');
+        const dispatchModalList = document.getElementById('dispatchModalList');
+        const dispatchModalClose = document.getElementById('dispatchModalClose');
+        const dispatchCancelBtn = document.getElementById('dispatchCancelBtn');
+        const dispatchConfirmBtn = document.getElementById('dispatchConfirmBtn');
+        const dispatchModalPrompt = document.getElementById('dispatchModalPrompt');
+
+        if (dispatchBtn && dispatchModal) {
+            function closeDispatchModal() {
+                dispatchModal.classList.remove('kp_kitchen_admin_panel_modal_visible');
+            }
+
+            if (dispatchModalClose) dispatchModalClose.addEventListener('click', closeDispatchModal);
+            if (dispatchCancelBtn) dispatchCancelBtn.addEventListener('click', closeDispatchModal);
+            dispatchModal.addEventListener('click', (e) => {
+                if (e.target === dispatchModal) closeDispatchModal();
+            });
+
+            dispatchBtn.addEventListener('click', () => {
+                // Collect orders ready for dispatch
+                const rows = document.querySelectorAll('#ordersTableBody tr.kp_kitchen_admin_panel_table_row');
+                const checkedBoxes = Array.from(document.querySelectorAll('.order-batch-checkbox:checked'));
+
+                let targetRows = [];
+
+                if (checkedBoxes.length > 0) {
+                    // If specific checkboxes are checked, use checked rows with assigned drivers
+                    targetRows = checkedBoxes.map(cb => cb.closest('tr')).filter(Boolean);
+                } else {
+                    // Otherwise, gather all rows that have an assigned driver
+                    targetRows = Array.from(rows);
+                }
+
+                const dispatchableOrders = [];
+                targetRows.forEach(row => {
+                    const orderId = row.getAttribute('data-order-id');
+                    const selectEl = row.querySelector('.order-driver-select');
+                    const customerName = row.children[2]?.innerText?.trim() || '';
+                    const area = row.children[5]?.innerText?.trim() || '';
+                    const selectedOption = selectEl ? selectEl.options[selectEl.selectedIndex] : null;
+                    const driverName = selectedOption ? (selectedOption.getAttribute('data-driver-name') || 'Unassigned') : 'Unassigned';
+
+                    if (orderId && driverName !== 'Unassigned') {
+                        dispatchableOrders.push({
+                            orderId,
+                            customer: customerName,
+                            area,
+                            driverName
+                        });
+                    }
+                });
+
+                if (dispatchableOrders.length === 0) {
+                    showToast('Please assign drivers to orders before clicking Ready for Dispatch.');
+                    return;
+                }
+
+                if (dispatchModalPrompt) {
+                    dispatchModalPrompt.textContent = `Are you ready to dispatch ${dispatchableOrders.length} assigned ${dispatchableOrders.length === 1 ? 'order' : 'orders'} now?`;
+                }
+
+                if (dispatchModalList) {
+                    dispatchModalList.innerHTML = dispatchableOrders.map(item => `
+                        <tr class="kp_kitchen_admin_panel_table_row">
+                            <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                                <strong style="color: var(--primary-color);">${escapeHtml(item.orderId)}</strong>
+                            </td>
+                            <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                                <strong>${escapeHtml(item.customer || '-')}</strong>
+                            </td>
+                            <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                                <span style="background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.8rem;">
+                                    ${escapeHtml(item.area || '-')}
+                                </span>
+                            </td>
+                            <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
+                                <strong style="color: #2ecc71;">
+                                    🚚 ${escapeHtml(item.driverName)}
+                                </strong>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+
+                dispatchConfirmBtn.onclick = async () => {
+                    dispatchConfirmBtn.disabled = true;
+                    const origText = dispatchConfirmBtn.innerHTML;
+                    dispatchConfirmBtn.innerHTML = '<span class="kp_kitchen_admin_panel_spinner" style="display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;margin-right:6px;"></span> Dispatching...';
+
+                    try {
+                        const response = await fetch(`${getBaseUrl()}/api/orders/dispatch`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                            },
+                            body: JSON.stringify({
+                                order_ids: dispatchableOrders.map(o => o.orderId)
+                            })
+                        });
+
+                        const res = await response.json();
+                        if (res.success) {
+                            showToast(res.message || `Successfully dispatched ${dispatchableOrders.length} orders! Drivers have been notified.`);
+                            closeDispatchModal();
+                            setTimeout(() => window.location.reload(), 800);
+                        } else {
+                            showToast(res.message || 'Failed to dispatch orders.');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        showToast('An error occurred during dispatch.');
+                    } finally {
+                        dispatchConfirmBtn.disabled = false;
+                        dispatchConfirmBtn.innerHTML = origText;
+                    }
+                };
+
+                dispatchModal.classList.add('kp_kitchen_admin_panel_modal_visible');
+            });
+        }
     }
 
     // --- Initialise ---

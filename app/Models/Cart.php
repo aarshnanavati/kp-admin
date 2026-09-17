@@ -14,6 +14,11 @@ class Cart extends Model
         'tiffin_id',
         'item_id',
         'quantity',
+        'selections',
+    ];
+
+    protected $casts = [
+        'selections' => 'array',
     ];
 
     public function customer()

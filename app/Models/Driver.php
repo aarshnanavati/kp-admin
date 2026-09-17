@@ -23,15 +23,29 @@ class Driver extends Model
         'assigned_zip',
         'area',
         'status',
+        'approval_status',
+        'rejection_reason',
+        'reviewed_at',
+        'reviewed_by',
         'api_token',
         'user_type',
         'profile_image',
+        'fcm_token',
     ];
 
     protected $hidden = [
         'password',
         'api_token',
     ];
+
+    protected $casts = [
+        'reviewed_at' => 'datetime',
+    ];
+
+    public function isApproved(): bool
+    {
+        return $this->approval_status === 'Approved';
+    }
 
     protected $appends = [
         'first_name',

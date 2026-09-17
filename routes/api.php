@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
+Route::post('/forgot-password', [AuthController::class, 'forgetPassword']);
 Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 
@@ -17,6 +18,7 @@ Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
+    Route::post('/forgot-password', [AuthController::class, 'forgetPassword']);
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
     Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 });
@@ -25,6 +27,7 @@ Route::prefix('auth')->group(function () {
 Route::post('/customer/register', [AuthController::class, 'customerRegister']);
 Route::post('/customer/login', [AuthController::class, 'customerLogin']);
 Route::post('/customer/forget-password', [AuthController::class, 'customerForgetPassword']);
+Route::post('/customer/forgot-password', [AuthController::class, 'customerForgetPassword']);
 Route::post('/customer/verify-otp', [AuthController::class, 'customerVerifyOtp']);
 Route::post('/customer/reset-password', [AuthController::class, 'customerResetPassword']);
 
@@ -32,11 +35,16 @@ Route::post('/customer/reset-password', [AuthController::class, 'customerResetPa
 Route::post('/driver/register', [AuthController::class, 'driverRegister']);
 Route::post('/driver/login', [AuthController::class, 'driverLogin']);
 Route::post('/driver/forget-password', [AuthController::class, 'driverForgetPassword']);
+Route::post('/driver/forgot-password', [AuthController::class, 'driverForgetPassword']);
 Route::post('/driver/verify-otp', [AuthController::class, 'driverVerifyOtp']);
 Route::post('/driver/reset-password', [AuthController::class, 'driverResetPassword']);
 
 // --- Customer Guest Catalog & Cart Routes ---
 Route::get('/customer/tiffins', [AdminPanelController::class, 'getTiffins']);
+Route::get('/customer/customize-tiffin', [AdminPanelController::class, 'getCustomizeTiffin']);
+Route::get('/customer/custom-tiffin', [AdminPanelController::class, 'getCustomizeTiffin']);
+Route::get('/customer/customize', [AdminPanelController::class, 'getCustomizeTiffin']);
+Route::get('/customer/custom', [AdminPanelController::class, 'getCustomizeTiffin']);
 Route::get('/customer/categories', [AdminPanelController::class, 'getCategories']);
 Route::get('/customer/items', [AdminPanelController::class, 'getItems']);
 Route::get('/customer/cart', [AuthController::class, 'getCart']);
@@ -65,8 +73,14 @@ Route::middleware('customer.auth')->group(function () {
     Route::post('/customer/weekly-bills/{billId}/create-payment-intent', [AuthController::class, 'createBillPaymentIntent']);
     Route::post('/customer/weekly-bills/{billId}/confirm-payment', [AuthController::class, 'confirmBillPayment']);
     Route::get('/customer/invoices', [AuthController::class, 'customerInvoices']);
+    Route::get('/customer/invoices/{id}', [AuthController::class, 'customerInvoiceDetails']);
+    Route::get('/customer/weekly-bills', [AuthController::class, 'customerInvoices']);
+    Route::get('/customer/weekly-bills/{billId}', [AuthController::class, 'customerInvoiceDetails']);
+    Route::get('/customer/weekly-billing', [AuthController::class, 'customerInvoices']);
+    Route::get('/customer/weekly-billing/{billId}', [AuthController::class, 'customerInvoiceDetails']);
     Route::get('/customer/notifications', [AuthController::class, 'customerNotifications']);
     Route::post('/customer/notifications/clear-all', [AuthController::class, 'clearCustomerNotifications']);
+    Route::post('/customer/fcm-token', [AuthController::class, 'updateCustomerFcmToken']);
     Route::post('/customer/pay-weekly-bill', [AuthController::class, 'payWeeklyBill']);
     Route::post('/customer/pay-weekly-bill/confirm', [AuthController::class, 'confirmWeeklyBillPayment']);
 });
@@ -80,7 +94,9 @@ Route::middleware('driver.auth')->group(function () {
     Route::post('/driver/profile-image', [AuthController::class, 'uploadDriverProfileImage']);
     Route::get('/driver/assigned-orders', [AuthController::class, 'getDriverAssignedOrders']);
     Route::post('/driver/orders/{id}/status', [AuthController::class, 'updateDriverOrderStatus']);
+    Route::get('/driver/notifications', [AuthController::class, 'getDriverNotifications']);
     Route::post('/driver/notifications/clear-all', [AuthController::class, 'clearDriverNotifications']);
+    Route::post('/driver/fcm-token', [AuthController::class, 'updateDriverFcmToken']);
 });
 
 // --- Admin Dashboard & Operational API Routes (Session & Bearer Token Protected) ---
@@ -96,10 +112,14 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/driver', [AdminPanelController::class, 'getDrivers']);
     Route::post('/drivers', [AdminPanelController::class, 'manageDriver']);
     Route::post('/driver', [AdminPanelController::class, 'manageDriver']);
+    Route::post('/drivers/{id}/approve', [AdminPanelController::class, 'approveDriver']);
+    Route::post('/drivers/{id}/reject', [AdminPanelController::class, 'rejectDriver']);
 
     // Tiffins API
     Route::get('/tiffins', [AdminPanelController::class, 'getTiffins']);
     Route::get('/tiffin', [AdminPanelController::class, 'getTiffins']);
+    Route::get('/customize-tiffin', [AdminPanelController::class, 'getCustomizeTiffin']);
+    Route::get('/custom-tiffin', [AdminPanelController::class, 'getCustomizeTiffin']);
     Route::post('/tiffins', [AdminPanelController::class, 'manageTiffin']);
     Route::post('/tiffin', [AdminPanelController::class, 'manageTiffin']);
 
@@ -110,6 +130,8 @@ Route::middleware('api.or.session')->group(function () {
     Route::post('/order', [AdminPanelController::class, 'updateOrder']);
     Route::post('/orders/update', [AdminPanelController::class, 'updateOrder']);
     Route::post('/order/update', [AdminPanelController::class, 'updateOrder']);
+    Route::post('/orders/dispatch', [AdminPanelController::class, 'dispatchOrders']);
+    Route::post('/order/dispatch', [AdminPanelController::class, 'dispatchOrders']);
 
     // Payments API
     Route::get('/payments', [AdminPanelController::class, 'getPayments']);
@@ -148,7 +170,9 @@ Route::middleware('api.or.session')->group(function () {
 
     // Invoices API
     Route::get('/invoices', [AdminPanelController::class, 'getInvoices']);
+    Route::get('/invoices/{id}', [AdminPanelController::class, 'getInvoiceDetails']);
     Route::post('/invoices', [AdminPanelController::class, 'manageInvoice']);
+    Route::post('/invoices/weekly', [AdminPanelController::class, 'manageInvoice']);
 
     // Users API
     Route::get('/users', [AdminPanelController::class, 'getUsers']);
@@ -162,4 +186,6 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/admin/profile', [AuthController::class, 'adminProfile']);
     Route::post('/admin/profile/edit', [AuthController::class, 'editAdminProfile']);
     Route::post('/admin/notifications/clear-all', [AdminPanelController::class, 'clearAdminNotifications']);
+    Route::post('/admin/fcm-token', [AdminPanelController::class, 'updateAdminFcmToken']);
+    Route::post('/fcm-token', [AdminPanelController::class, 'updateAdminFcmToken']);
 });

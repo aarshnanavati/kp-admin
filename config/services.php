@@ -40,4 +40,10 @@ return [
         'secret' => env('STRIPE_SECRET'),
     ],
 
+    'fcm' => [
+        'server_key' => env('FCM_SERVER_KEY'),
+        'project_id' => env('FIREBASE_PROJECT_ID'),
+        'credentials_path' => env('FIREBASE_CREDENTIALS'),
+    ],
+
 ];

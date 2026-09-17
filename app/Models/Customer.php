@@ -22,6 +22,7 @@ class Customer extends Authenticatable
         'login_count',
         'profile_image',
         'status',
+        'fcm_token',
     ];
 
     protected $appends = [

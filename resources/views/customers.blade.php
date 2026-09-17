@@ -153,6 +153,18 @@
     <div id="customerPaymentGridContent"></div>
   </div>
 
+  <!-- Customer Order Detailed Grid Section (Hidden by Default) -->
+  <div id="customerOrderDetailGridSection" style="display: none;">
+    <div class="kp_kitchen_admin_panel_section_toolbar" style="margin-bottom: 24px;">
+      <div>
+        <button id="backToCustomerPaymentFromOrderDetailsBtn" class="kp_kitchen_admin_panel_secondary_button" style="padding: 6px 14px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 8px; background: transparent; border: 1px solid var(--panel-border); color: var(--text-primary); cursor: pointer; border-radius: 6px;">
+          ← Back to Order History
+        </button>
+      </div>
+    </div>
+    <div id="customerOrderDetailGridContent"></div>
+  </div>
+
   <!-- Customer Invoices Grid Section (Hidden by Default) -->
   <div id="customerInvoicesGridSection" style="display: none;">
     <div class="kp_kitchen_admin_panel_section_toolbar" style="margin-bottom: 24px;">

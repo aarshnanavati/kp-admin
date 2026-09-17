@@ -19,11 +19,24 @@
 
     <div class="kp_kitchen_admin_panel_cards_grid" id="driversGrid">
       @forelse ($drivers as $driver)
-        <article class="kp_kitchen_admin_panel_driver_card">
+        <article class="kp_kitchen_admin_panel_driver_card" @if(($driver->approval_status ?? 'Approved') === 'Pending') style="border:1px solid #F1C40F;" @endif>
           <div class="kp_kitchen_admin_panel_driver_top">
             <div class="kp_kitchen_admin_panel_driver_avatar">{{ strtoupper(substr($driver->name, 0, 1)) }}</div>
-            <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_{{ strtolower(str_replace(' ', '_', $driver->status)) }}">{{ $driver->status }}</span>
+            <div style="display:flex; gap:6px; align-items:center;">
+              @php $appr = $driver->approval_status ?? 'Approved'; @endphp
+              @if ($appr === 'Pending')
+                <span class="kp_kitchen_admin_panel_status" style="background:rgba(241,196,15,0.15); color:#F1C40F;">Pending approval</span>
+              @elseif ($appr === 'Rejected')
+                <span class="kp_kitchen_admin_panel_status" style="background:rgba(231,76,60,0.12); color:#E74C3C;">Rejected</span>
+              @endif
+              <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_{{ strtolower(str_replace(' ', '_', $driver->status)) }}">{{ $driver->status }}</span>
+            </div>
           </div>
+          @if ($appr === 'Pending')
+            <div style="background:rgba(241,196,15,0.1); border:1px solid rgba(241,196,15,0.25); color:#B7950B; border-radius:8px; padding:8px 10px; font-size:0.78rem; margin:10px 0;">
+              This driver self-registered and is waiting for review. Open <strong>Driver Details</strong> to approve or reject.
+            </div>
+          @endif
           <h3 class="kp_kitchen_admin_panel_driver_name">{{ $driver->name }}</h3>
           <p class="kp_kitchen_admin_panel_driver_meta">📞 {{ $driver->phone }}</p>
           <p class="kp_kitchen_admin_panel_driver_meta">✉️ {{ $driver->email ?? 'No email' }}</p>
