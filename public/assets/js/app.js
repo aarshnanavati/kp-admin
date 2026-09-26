@@ -34,6 +34,26 @@
     const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]').getAttribute('content');
     const getBaseUrl = () => (window.AppConfig && window.AppConfig.baseUrl) ? window.AppConfig.baseUrl : '';
 
+    const resolveMediaUrl = (path) => {
+        if (!path || typeof path !== 'string') return null;
+        if (path.startsWith('data:')) return path;
+
+        let cleanPath = path.replace(/^\/+/, '');
+
+        if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://')) {
+            return cleanPath;
+        }
+
+        const base = getBaseUrl().replace(/\/+$/, '');
+
+        // Prepend public/ root for uploads and assets if not already prefixed
+        if (!cleanPath.startsWith('public/')) {
+            cleanPath = 'public/' + cleanPath;
+        }
+
+        return base ? `${base}/${cleanPath}` : `/${cleanPath}`;
+    };
+
     const formatDateStr = (str) => {
         if (!str || str === 'N/A') return 'N/A';
         const date = new Date(str);
@@ -375,16 +395,27 @@
         modal.classList.add('kp_kitchen_admin_panel_modal_visible');
         getElement('modalCancel').addEventListener('click', closeModal);
         modalForm.onsubmit = function (e) {
-            const streetInput = modalForm.querySelector('input[name="add_customer_street"]');
-            if (streetInput) {
-                const suburbInput = modalForm.querySelector('input[name="add_customer_suburb"]');
-                const pincodeInput = modalForm.querySelector('input[name="pincode"]');
-                const addressHiddenInput = modalForm.querySelector('input[name="address"]');
-                if (addressHiddenInput && suburbInput && pincodeInput) {
-                    const street = streetInput.value.trim();
-                    const suburb = suburbInput.value.trim();
-                    const pincode = pincodeInput.value.trim();
-                    addressHiddenInput.value = `${street}, ${suburb}, ${pincode}`;
+            const passwordInput = modalForm.querySelector('input[name="password"]');
+            const confirmPasswordInput = modalForm.querySelector('input[name="confirm_password"]') || modalForm.querySelector('input[name="password_confirmation"]');
+            if (passwordInput && confirmPasswordInput && passwordInput.value) {
+                if (passwordInput.value !== confirmPasswordInput.value) {
+                    alert('Password and Confirm Password do not match.');
+                    confirmPasswordInput.focus();
+                    e.preventDefault();
+                    return false;
+                }
+            }
+
+            const streetInput = modalForm.querySelector('input[name="street_address"]') || modalForm.querySelector('input[name="add_customer_street"]');
+            const suburbInput = modalForm.querySelector('input[name="city"]') || modalForm.querySelector('input[name="suburbs"]') || modalForm.querySelector('input[name="suburb"]') || modalForm.querySelector('input[name="add_customer_suburb"]');
+            const pincodeInput = modalForm.querySelector('input[name="pincode"]') || modalForm.querySelector('input[name="postcode"]') || modalForm.querySelector('input[name="assigned_zip"]');
+            const addressHiddenInput = modalForm.querySelector('input[name="address"]');
+            if (streetInput || suburbInput || pincodeInput) {
+                const street = streetInput ? streetInput.value.trim() : '';
+                const suburb = suburbInput ? suburbInput.value.trim() : '';
+                const pincode = pincodeInput ? pincodeInput.value.trim() : '';
+                if (addressHiddenInput) {
+                    addressHiddenInput.value = [street, suburb, pincode].filter(Boolean).join('\n');
                 }
             }
             return true;
@@ -469,7 +500,7 @@
         <span class="kp_kitchen_admin_panel_form_label">Item Image</span>
         <input id="itemImageInput" name="image_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
         <input id="itemImageData" name="image" type="hidden" value="${escapeHtml(item?.image || '')}">
-        <div id="itemImagePreview" class="kp_kitchen_admin_panel_image_preview">${item?.image ? `<img src="${escapeHtml(item.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
+        <div id="itemImagePreview" class="kp_kitchen_admin_panel_image_preview">${item?.image ? `<img src="${resolveMediaUrl(item.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
       </label>
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Category</span>
@@ -537,7 +568,7 @@
         <span class="kp_kitchen_admin_panel_form_label">Tiffin Plan Image</span>
         <input id="tiffinImageInput" name="image_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
         <input id="tiffinImageData" name="image" type="hidden" value="${escapeHtml(tiffin?.image || '')}">
-        <div id="tiffinImagePreview" class="kp_kitchen_admin_panel_image_preview">${tiffin?.image ? `<img src="${getBaseUrl()}/${escapeHtml(tiffin.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
+        <div id="tiffinImagePreview" class="kp_kitchen_admin_panel_image_preview">${tiffin?.image ? `<img src="${resolveMediaUrl(tiffin.image)}" alt="Preview">` : '<span>Image preview</span>'}</div>
       </label>
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Tiffin Plan Name</span>
@@ -556,10 +587,6 @@
           <input name="price" type="number" step="0.01" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.price || ''}" required placeholder="19.90">
         </label>
       </div>
-      <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Prep Time (mins)</span>
-        <input name="prep_time" type="number" class="kp_kitchen_admin_panel_form_input" value="${tiffin?.prep_time || 30}" required>
-      </label>
 
       <div class="kp_kitchen_admin_panel_form_group" style="border:1px solid var(--panel-border); border-radius:8px; padding:12px 14px; background:var(--bg-color);">
         <label style="display:flex; align-items:center; gap:8px; font-weight:600; cursor:pointer; margin-bottom:0;">
@@ -627,10 +654,17 @@
         <input name="email" type="email" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.email || '')}" placeholder="driver@email.com">
       </label>
     </div>
-    <label class="kp_kitchen_admin_panel_form_group">
-      <span class="kp_kitchen_admin_panel_form_label">Address</span>
-      <input name="address" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.address || '')}" placeholder="45 Elizabeth St, Melbourne VIC">
-    </label>
+    <div class="kp_kitchen_admin_panel_form_grid">
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Street Address</span>
+        <input name="street_address" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.street_address || '')}" placeholder="45 Elizabeth St">
+      </label>
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Suburbs</span>
+        <input name="city" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.city || d?.suburb || d?.suburbs || '')}" placeholder="Melbourne">
+      </label>
+    </div>
+    <input name="address" type="hidden" value="${escapeHtml(d?.address || '')}">
     <div class="kp_kitchen_admin_panel_form_grid">
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">License Number</span>
@@ -647,8 +681,8 @@
         <input name="vehicle_reg_no" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.vehicle_reg_no || '')}" placeholder="1AB-2CD">
       </label>
       <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Assigned Delivery Postcode</span>
-        <input name="assigned_zip" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.assigned_zip || '')}" placeholder="3000">
+        <span class="kp_kitchen_admin_panel_form_label">Postcode</span>
+        <input name="assigned_zip" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(d?.assigned_zip || d?.postcode || d?.pincode || '')}" placeholder="3000">
       </label>
     </div>
     <div class="kp_kitchen_admin_panel_form_grid">
@@ -656,6 +690,12 @@
         <span class="kp_kitchen_admin_panel_form_label">Password ${d ? '(leave blank to keep current)' : ''}</span>
         <input name="password" type="password" class="kp_kitchen_admin_panel_form_input" placeholder="********" ${d ? '' : 'required'}>
       </label>
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Confirm Password ${d ? '(leave blank to keep current)' : ''}</span>
+        <input name="confirm_password" type="password" class="kp_kitchen_admin_panel_form_input" placeholder="********" ${d ? '' : 'required'}>
+      </label>
+    </div>
+    <div class="kp_kitchen_admin_panel_form_grid">
       <label class="kp_kitchen_admin_panel_form_group">
         <span class="kp_kitchen_admin_panel_form_label">Status</span>
         <select name="status" class="kp_kitchen_admin_panel_form_select">
@@ -669,13 +709,19 @@
       <span class="kp_kitchen_admin_panel_form_label">License Copy (Front side)</span>
       <input id="driverLicenseFrontInput" name="license_copy_front_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
       <input id="driverLicenseFrontData" name="license_copy_front" type="hidden" value="${escapeHtml(d?.license_copy_front || '')}">
-      <div id="driverLicenseFrontPreview" class="kp_kitchen_admin_panel_image_preview">${d?.license_copy_front ? `<img src="${escapeHtml(d.license_copy_front)}" alt="Front">` : '<span>Image preview</span>'}</div>
+      <div id="driverLicenseFrontPreview" class="kp_kitchen_admin_panel_image_preview">${d?.license_copy_front ? `<img src="${resolveMediaUrl(d.license_copy_front)}" alt="Front">` : '<span>Image preview</span>'}</div>
     </label>
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">License Copy (Back side)</span>
       <input id="driverLicenseBackInput" name="license_copy_back_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
       <input id="driverLicenseBackData" name="license_copy_back" type="hidden" value="${escapeHtml(d?.license_copy_back || '')}">
-      <div id="driverLicenseBackPreview" class="kp_kitchen_admin_panel_image_preview">${d?.license_copy_back ? `<img src="${escapeHtml(d.license_copy_back)}" alt="Back">` : '<span>Image preview</span>'}</div>
+      <div id="driverLicenseBackPreview" class="kp_kitchen_admin_panel_image_preview">${d?.license_copy_back ? `<img src="${resolveMediaUrl(d.license_copy_back)}" alt="Back">` : '<span>Image preview</span>'}</div>
+    </label>
+    <label class="kp_kitchen_admin_panel_form_group">
+      <span class="kp_kitchen_admin_panel_form_label">Vehicle Registration Document</span>
+      <input id="driverVehicleRegInput" name="vehicle_reg_image_file" class="kp_kitchen_admin_panel_form_input" type="file" accept="image/*">
+      <input id="driverVehicleRegData" name="vehicle_reg_image" type="hidden" value="${escapeHtml(d?.vehicle_reg_image || '')}">
+      <div id="driverVehicleRegPreview" class="kp_kitchen_admin_panel_image_preview">${d?.vehicle_reg_image ? `<img src="${resolveMediaUrl(d.vehicle_reg_image)}" alt="Vehicle Rego">` : '<span>Image preview</span>'}</div>
     </label>
   `;
 
@@ -696,23 +742,21 @@
     </div>
     <div class="kp_kitchen_admin_panel_form_grid">
       <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Password ${c ? '(leave blank to keep current)' : ''}</span>
-        <input name="password" type="password" class="kp_kitchen_admin_panel_form_input" placeholder="********" ${c ? '' : 'required'}>
+        <span class="kp_kitchen_admin_panel_form_label">Street Address</span>
+        <input name="street_address" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.street_address || '')}" required placeholder="e.g. 12 Spring St">
       </label>
       <label class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label">Default Delivery Postcode</span>
-        <input name="pincode" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.pincode || '')}" required placeholder="3000">
+        <span class="kp_kitchen_admin_panel_form_label">Suburbs</span>
+        <input name="city" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.city || c?.suburb || c?.suburbs || '')}" required placeholder="e.g. Melbourne">
       </label>
     </div>
-    <label class="kp_kitchen_admin_panel_form_group">
-      <span class="kp_kitchen_admin_panel_form_label">Street Address</span>
-      <input name="add_customer_street" class="kp_kitchen_admin_panel_form_input" required placeholder="e.g. 12 Spring St">
-    </label>
-    <label class="kp_kitchen_admin_panel_form_group">
-      <span class="kp_kitchen_admin_panel_form_label">Town/Suburbs</span>
-      <input name="add_customer_suburb" class="kp_kitchen_admin_panel_form_input" required placeholder="e.g. Melbourne">
-    </label>
-    <input name="address" type="hidden">
+    <div class="kp_kitchen_admin_panel_form_grid">
+      <label class="kp_kitchen_admin_panel_form_group">
+        <span class="kp_kitchen_admin_panel_form_label">Postcode</span>
+        <input name="pincode" class="kp_kitchen_admin_panel_form_input" value="${escapeHtml(c?.pincode || c?.postcode || '')}" required placeholder="3000">
+      </label>
+    </div>
+    <input name="address" type="hidden" value="${escapeHtml(c?.address || '')}">
   `;
 
     const couponFields = c => `
@@ -1037,6 +1081,7 @@
     function setupDriverFormListeners() {
         setupImagePreview('driverLicenseFrontInput', 'driverLicenseFrontData', 'driverLicenseFrontPreview');
         setupImagePreview('driverLicenseBackInput', 'driverLicenseBackData', 'driverLicenseBackPreview');
+        setupImagePreview('driverVehicleRegInput', 'driverVehicleRegData', 'driverVehicleRegPreview');
     }
 
     // --- Add Button Trigger Bindings ---
@@ -1114,7 +1159,6 @@
                 name: tiffinBtn.dataset.name,
                 price: tiffinBtn.dataset.price,
                 category_id: tiffinBtn.dataset.category_id ? Number(tiffinBtn.dataset.category_id) : null,
-                prep_time: Number(tiffinBtn.dataset.prep_time),
                 status: tiffinBtn.dataset.status,
                 description: tiffinBtn.dataset.description,
                 image: tiffinBtn.dataset.image,
@@ -1167,9 +1211,50 @@
                 getElement('editDriverPostcode').value = d.assigned_zip === 'null' || !d.assigned_zip ? '' : d.assigned_zip;
                 getElement('editDriverLicense').value = d.license_no === 'null' || !d.license_no ? '' : d.license_no;
                 getElement('editDriverLicenseExpiry').value = d.license_expiry === 'null' || !d.license_expiry ? '' : d.license_expiry;
-                getElement('editDriverAddress').value = d.address === 'null' || !d.address ? '' : d.address;
+                // Populate Street and City
+                const driverStreet = driverBtn.dataset.street || '';
+                const driverCity = driverBtn.dataset.city || '';
+                let rawAddress = driverBtn.dataset.address === 'null' || !driverBtn.dataset.address ? '' : driverBtn.dataset.address;
+                if (!driverStreet && rawAddress) {
+                    const parts = rawAddress.split('\n').map(p => p.trim()).filter(Boolean);
+                    if (parts.length >= 2) {
+                        if (getElement('editDriverStreet')) getElement('editDriverStreet').value = parts[0] || '';
+                        if (getElement('editDriverCity')) getElement('editDriverCity').value = parts[1] || '';
+                    } else {
+                        const commaParts = rawAddress.split(',').map(p => p.trim()).filter(Boolean);
+                        if (getElement('editDriverStreet')) getElement('editDriverStreet').value = commaParts[0] || '';
+                        if (getElement('editDriverCity')) getElement('editDriverCity').value = commaParts[1] || '';
+                    }
+                } else {
+                    if (getElement('editDriverStreet')) getElement('editDriverStreet').value = driverStreet;
+                    if (getElement('editDriverCity')) getElement('editDriverCity').value = driverCity;
+                }
+                getElement('editDriverAddress').value = rawAddress;
                 getElement('editDriverStatus').value = d.status || 'Active';
                 getElement('editDriverPassword').value = '';
+
+                // Populate Document Paths and Previews
+                const licFront = driverBtn.dataset.license_copy_front || '';
+                const licBack = driverBtn.dataset.license_copy_back || '';
+                const vehReg = driverBtn.dataset.vehicle_reg_image || '';
+
+                if (getElement('editDriverLicenseFrontData')) getElement('editDriverLicenseFrontData').value = licFront;
+                if (getElement('editDriverLicenseBackData')) getElement('editDriverLicenseBackData').value = licBack;
+                if (getElement('editDriverVehicleRegData')) getElement('editDriverVehicleRegData').value = vehReg;
+
+                if (getElement('editDriverLicenseFrontPreview')) {
+                    getElement('editDriverLicenseFrontPreview').innerHTML = licFront ? `<img src="${resolveMediaUrl(licFront)}" alt="Front">` : '<span>No document uploaded</span>';
+                }
+                if (getElement('editDriverLicenseBackPreview')) {
+                    getElement('editDriverLicenseBackPreview').innerHTML = licBack ? `<img src="${resolveMediaUrl(licBack)}" alt="Back">` : '<span>No document uploaded</span>';
+                }
+                if (getElement('editDriverVehicleRegPreview')) {
+                    getElement('editDriverVehicleRegPreview').innerHTML = vehReg ? `<img src="${resolveMediaUrl(vehReg)}" alt="Vehicle Rego">` : '<span>No document uploaded</span>';
+                }
+
+                setupImagePreview('editDriverLicenseFrontInput', 'editDriverLicenseFrontData', 'editDriverLicenseFrontPreview');
+                setupImagePreview('editDriverLicenseBackInput', 'editDriverLicenseBackData', 'editDriverLicenseBackPreview');
+                setupImagePreview('editDriverVehicleRegInput', 'editDriverVehicleRegData', 'editDriverVehicleRegPreview');
 
                 // Bind back/cancel actions
                 const backToList = () => {
@@ -1218,12 +1303,24 @@
                 }
 
                 // Split Address (format: street, town/suburbs, postcode)
+                const custStreet = customerBtn.dataset.street || '';
+                const custCity = customerBtn.dataset.city || '';
                 const rawAddress = customerBtn.dataset.address || '';
-                const addressParts = rawAddress.split(',').map(p => p.trim());
-                const street = addressParts[0] || '';
-                const suburb = addressParts[1] || '';
-                getElement('editCustomerStreet').value = street;
-                getElement('editCustomerSuburb').value = suburb;
+
+                if (!custStreet && rawAddress) {
+                    const lines = rawAddress.split('\n').map(p => p.trim()).filter(Boolean);
+                    if (lines.length >= 2) {
+                        getElement('editCustomerStreet').value = lines[0] || '';
+                        getElement('editCustomerSuburb').value = lines[1] || '';
+                    } else {
+                        const addressParts = rawAddress.split(',').map(p => p.trim());
+                        getElement('editCustomerStreet').value = addressParts[0] || '';
+                        getElement('editCustomerSuburb').value = addressParts[1] || '';
+                    }
+                } else {
+                    getElement('editCustomerStreet').value = custStreet;
+                    getElement('editCustomerSuburb').value = custCity;
+                }
                 getElement('editCustomerAddress').value = rawAddress;
 
                 editSec.style.display = 'block';
@@ -1683,6 +1780,7 @@
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Name: <strong style="color: var(--text-primary);">${escapeHtml(customer.name)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Phone: <strong style="color: var(--text-primary);">${escapeHtml(customer.phone)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Email: <strong style="color: var(--text-primary);">${escapeHtml(customer.email)}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Account Status: <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${(customer.status || 'Active').toLowerCase()}" style="${customer.status === 'Deactivated' ? 'background: rgba(231, 76, 60, 0.15) !important; color: #E74C3C !important; border: 1px solid rgba(231, 76, 60, 0.35) !important;' : 'background: rgba(46, 204, 113, 0.15) !important; color: #2ECC71 !important; border: 1px solid rgba(46, 204, 113, 0.35) !important;'} font-size: 0.78rem; font-weight: 700; padding: 3px 10px; border-radius: 12px; display: inline-block;">${escapeHtml(customer.status || 'Active')}</span></p>
                 </div>
 
                 <!-- Billing Account Stats Card -->
@@ -1794,18 +1892,19 @@
                       <tr class="kp_kitchen_admin_panel_table_row">
                         <th class="kp_kitchen_admin_panel_table_heading" style="width: 14%;">Order ID</th>
                         <th class="kp_kitchen_admin_panel_table_heading" style="width: 12%;">Date</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 22%;">Tiffin Plan</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 8%; text-align: center;">Quantity</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 18%;">Add-ons ordered</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%;">Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 20%;">Tiffin Plan</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 7%; text-align: center;">Quantity</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 15%;">Add-ons ordered</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 9%;">Amount</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 11%; text-align: center;">Status</th>
                         <th class="kp_kitchen_admin_panel_table_heading" style="width: 6%; text-align: center;">Details</th>
-                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 10%; text-align: right;">Invoices</th>
+                        <th class="kp_kitchen_admin_panel_table_heading" style="width: 8%; text-align: right;">Invoices</th>
                       </tr>
                     </thead>
                     <tbody class="kp_kitchen_admin_panel_table_body">
                       ${orders.length === 0 ? `
                         <tr class="kp_kitchen_admin_panel_table_row">
-                          <td colspan="8" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No past orders found.</td>
+                          <td colspan="9" class="kp_kitchen_admin_panel_table_cell" style="text-align: center; opacity: 0.6; padding: 20px;">No past orders found.</td>
                         </tr>
                       ` : orders.map((order, idx) => `
                         <tr class="kp_kitchen_admin_panel_table_row">
@@ -1824,6 +1923,11 @@
                           <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;"><strong>${escapeHtml(order.quantity || 1)}</strong></td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(order.addons)}</td>
                           <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(order.amount).toFixed(2)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">
+                            <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${(order.status || 'Pending').toLowerCase().replace(/ /g, '_')}">
+                              ${escapeHtml(order.status || 'Pending')}
+                            </span>
+                          </td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">
                             <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_view view-order-details-btn"
                               style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.2); color: #3498DB; width: 32px; height: 32px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;"
@@ -2080,11 +2184,15 @@
                     const totalOrders = response.total_orders;
 
                     const frontImgHtml = driver.license_copy_front
-                        ? `<img src="${getBaseUrl()}/${driver.license_copy_front}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Front">`
+                        ? `<img src="${resolveMediaUrl(driver.license_copy_front)}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Front">`
                         : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
 
                     const backImgHtml = driver.license_copy_back
-                        ? `<img src="${getBaseUrl()}/${driver.license_copy_back}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Back">`
+                        ? `<img src="${resolveMediaUrl(driver.license_copy_back)}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Back">`
+                        : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
+
+                    const vehicleRegImgHtml = driver.vehicle_reg_image
+                        ? `<img src="${resolveMediaUrl(driver.vehicle_reg_image)}" style="width:100%; height:180px; object-fit:contain; border-radius:8px; background-color:#fafafa; border:1px solid var(--panel-border);" alt="Vehicle Registration">`
                         : `<div style="height:180px; display:flex; align-items:center; justify-content:center; background:var(--bg-color); border:2px dashed var(--panel-border); border-radius:8px; opacity:0.6;">No Document Uploaded</div>`;
 
                     const appr = driver.approval_status || 'Approved';
@@ -2161,7 +2269,7 @@
 
               <!-- Documents previews section -->
               <div>
-                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">📁 Uploaded Identity Documents</h4>
+                <h4 style="margin: 0 0 14px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600;">📁 Uploaded Identity &amp; Vehicle Documents</h4>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
                   <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
                     <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 10px; font-weight: 600; text-align: center;">License Copy (Front)</span>
@@ -2170,6 +2278,10 @@
                   <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
                     <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 10px; font-weight: 600; text-align: center;">License Copy (Back)</span>
                     ${backImgHtml}
+                  </div>
+                  <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 10px; font-weight: 600; text-align: center;">Vehicle Registration Document</span>
+                    ${vehicleRegImgHtml}
                   </div>
                 </div>
               </div>
@@ -2310,8 +2422,8 @@
                           <td class="kp_kitchen_admin_panel_table_cell" style="font-size: 0.85rem; max-width: 280px; white-space: normal; line-height: 1.4;">${escapeHtml(order.customer_address || 'No address')}</td>
                           <td class="kp_kitchen_admin_panel_table_cell">
                             ${order.proof_of_delivery_photo ? `
-                              <a href="${getBaseUrl()}/${order.proof_of_delivery_photo}" target="_blank">
-                                <img src="${getBaseUrl()}/${order.proof_of_delivery_photo}" style="max-height: 40px; border-radius: 4px; border: 1px solid var(--panel-border);">
+                              <a href="${resolveMediaUrl(order.proof_of_delivery_photo_url || order.proof_of_delivery_photo)}" target="_blank" title="View POD Image">
+                                <img src="${resolveMediaUrl(order.proof_of_delivery_photo_url || order.proof_of_delivery_photo)}" style="max-height: 40px; border-radius: 4px; border: 1px solid var(--panel-border); object-fit: cover;">
                               </a>
                             ` : `<span style="font-size: 0.8rem; color: var(--text-secondary); opacity: 0.7;">No Photo</span>`}
                           </td>
@@ -2459,36 +2571,69 @@
                     }
 
                     // Build Proof of Delivery / Drop Photo Card
+                    const podPhotoUrl = resolveMediaUrl(order.proof_of_delivery_photo_url || order.proof_of_delivery_photo);
+                    const podSigUrl = resolveMediaUrl(order.proof_of_delivery_signature_url || order.proof_of_delivery_signature);
+
                     const podHtml = `
                 <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column;">
-                  <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
-                    <span>📸 Proof of Delivery</span>
+                  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--panel-border); padding-bottom: 12px; margin-bottom: 16px;">
+                    <h4 style="margin: 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                      <span>📸 Proof of Delivery</span>
+                    </h4>
                     <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${(order.status || 'Pending').toLowerCase().replace(/ /g, '')}">${escapeHtml(order.status)}</span>
-                  </h4>
+                  </div>
                   <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px;">
-                    ${order.proof_of_delivery_photo ? `
-                      <div style="background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; width: 100%; display: flex; flex-direction: column; gap: 10px; align-items: center; box-sizing: border-box;">
-                        <span style="font-size: 0.85rem; color: #27ae60; font-weight: 700; display: flex; align-items: center; gap: 6px;">
-                          ✅ Drop Photo Uploaded (${escapeHtml(order.driver_name || 'Driver')})
-                        </span>
-                        <a href="${getBaseUrl()}/${order.proof_of_delivery_photo}" target="_blank" title="Click to view full resolution drop photo" style="display: block; width: 100%; max-width: 280px; text-align: center;">
-                          <img src="${getBaseUrl()}/${order.proof_of_delivery_photo}" alt="Drop-off Photo" style="max-height: 200px; width: 100%; border-radius: 8px; border: 1px solid var(--panel-border); object-fit: cover; display: block; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                    ${podPhotoUrl ? `
+                      <div style="background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; width: 100%; display: flex; flex-direction: column; gap: 12px; align-items: center; box-sizing: border-box;">
+                        <div style="width: 100%; display: flex; align-items: center; justify-content: space-between;">
+                          <span style="font-size: 0.85rem; color: #27ae60; font-weight: 700; display: inline-flex; align-items: center; gap: 6px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/></svg>
+                            Delivered by: ${escapeHtml(order.driver_name || 'Driver')}
+                          </span>
+                          <span style="font-size: 0.78rem; color: var(--text-secondary);">
+                            ${order.date ? escapeHtml(order.date) : ''}
+                          </span>
+                        </div>
+                        <a href="${podPhotoUrl}" target="_blank" title="Click to view full resolution drop photo" style="display: block; width: 100%; max-width: 320px; text-align: center; position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--panel-border); box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                          <img src="${podPhotoUrl}"
+                               alt="Drop-off Proof of Delivery"
+                               onerror="if (!this.dataset.retry) { this.dataset.retry = '1'; this.src = this.src.includes('/public/uploads/') ? this.src.replace('/public/uploads/', '/uploads/') : this.src.replace('/uploads/', '/public/uploads/'); }"
+                               style="max-height: 220px; width: 100%; object-fit: cover; display: block; margin: 0 auto; transition: transform 0.2s;"
+                               onmouseover="this.style.transform='scale(1.03)'"
+                               onmouseout="this.style.transform='scale(1)'">
                         </a>
                         <span style="font-size: 0.78rem; color: var(--text-secondary); text-align: center;">🔍 Click photo to open full resolution</span>
                       </div>
                     ` : `
-                      <div style="padding: 30px 20px; text-align: center; background: rgba(255, 255, 255, 0.02); border: 1px dashed var(--panel-border); border-radius: 10px; width: 100%; box-sizing: border-box;">
-                        <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary); font-style: italic;">📷 No drop photo uploaded yet by driver for this order.</p>
+                      <div style="padding: 28px 16px; text-align: center; background: rgba(255, 255, 255, 0.02); border: 1.5px dashed var(--panel-border); border-radius: 12px; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+                        <div style="width: 44px; height: 44px; border-radius: 50%; background: rgba(230, 126, 34, 0.1); color: #E67E22; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
+                          📷
+                        </div>
+                        <p style="margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--text-primary);">No Delivery Proof Photo Yet</p>
+                        <p style="margin: 0; font-size: 0.8rem; color: var(--text-secondary); max-width: 260px; line-height: 1.4;">
+                          When driver (${escapeHtml(order.driver_name || 'Driver')}) delivers this tiffin and takes a photo, it will appear here.
+                        </p>
                       </div>
                     `}
-                    ${order.proof_of_delivery_signature ? `
+                    ${podSigUrl ? `
                       <div style="background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 12px; width: 100%; display: flex; flex-direction: column; gap: 8px; align-items: center; box-sizing: border-box;">
                         <span style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 700;">✍️ Customer Signature:</span>
-                        <a href="${getBaseUrl()}/${order.proof_of_delivery_signature}" target="_blank" title="Click to view signature">
-                          <img src="${getBaseUrl()}/${order.proof_of_delivery_signature}" alt="Customer Signature" style="max-height: 80px; border-radius: 6px; border: 1px solid var(--panel-border); background: #fff; padding: 4px; display: block;">
+                        <a href="${podSigUrl}" target="_blank" title="Click to view signature">
+                          <img src="${podSigUrl}"
+                               alt="Customer Signature"
+                               onerror="if (!this.dataset.retry) { this.dataset.retry = '1'; this.src = this.src.includes('/public/uploads/') ? this.src.replace('/public/uploads/', '/uploads/') : this.src.replace('/uploads/', '/public/uploads/'); }"
+                               style="max-height: 80px; border-radius: 6px; border: 1px solid var(--panel-border); background: #fff; padding: 4px; display: block;">
                         </a>
                       </div>
                     ` : ''}
+
+                    <!-- Manual Proof Photo Upload for Admin -->
+                    <div style="width: 100%; display: flex; justify-content: flex-end; margin-top: 4px;">
+                      <label style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 500; border-radius: 6px; background: transparent; border: 1px solid var(--panel-border); color: var(--text-secondary); cursor: pointer;">
+                        <span>📤 ${podPhotoUrl ? 'Update Proof Photo' : 'Upload Proof Photo'}</span>
+                        <input type="file" accept="image/*" class="admin-pod-upload-input" data-order-id="${escapeHtml(order.id)}" style="display: none;">
+                      </label>
+                    </div>
                   </div>
                 </div>
               `;
@@ -2552,6 +2697,51 @@
 
                     if (activeContentSec) {
                         activeContentSec.innerHTML = html;
+
+                        // Bind admin POD upload handler
+                        const podUploadInput = activeContentSec.querySelector('.admin-pod-upload-input');
+                        if (podUploadInput) {
+                            podUploadInput.addEventListener('change', async (e) => {
+                                const file = e.target.files[0];
+                                if (!file) return;
+
+                                const formData = new FormData();
+                                formData.append('proof_photo', file);
+                                formData.append('id', orderId);
+
+                                const uploadLabel = e.target.closest('label');
+                                const origText = uploadLabel ? uploadLabel.innerHTML : '';
+                                if (uploadLabel) {
+                                    uploadLabel.innerHTML = '<span>⏳ Uploading...</span>';
+                                }
+
+                                try {
+                                    const csrfToken = getCsrfToken();
+                                    const res = await fetch(`${getBaseUrl()}/api/orders/${orderId}/upload-pod`, {
+                                        method: 'POST',
+                                        headers: {
+                                            'Accept': 'application/json',
+                                            'X-CSRF-TOKEN': csrfToken
+                                        },
+                                        body: formData
+                                    });
+                                    const data = await res.json();
+                                    if (data.success) {
+                                        showToast(data.message || 'Proof of delivery image uploaded successfully!');
+                                        if (viewOrderDetailsBtn) {
+                                            viewOrderDetailsBtn.click();
+                                        }
+                                    } else {
+                                        showToast(data.message || 'Failed to upload proof photo.');
+                                        if (uploadLabel) uploadLabel.innerHTML = origText;
+                                    }
+                                } catch (err) {
+                                    console.error(err);
+                                    showToast('Error uploading proof of delivery.');
+                                    if (uploadLabel) uploadLabel.innerHTML = origText;
+                                }
+                            });
+                        }
                     }
 
                 } catch (err) {
@@ -2676,7 +2866,7 @@
     // --- Client-side Customer Edit Form Concatenation ---
     const customerEditForm = getElement('customerEditForm');
     if (customerEditForm) {
-        customerEditForm.addEventListener('submit', () => {
+        customerEditForm.addEventListener('submit', (e) => {
             const firstName = getElement('editCustomerFirstName')?.value.trim() || '';
             const lastName = getElement('editCustomerLastName')?.value.trim() || '';
             const nameInput = getElement('editCustomerName');
@@ -2689,7 +2879,7 @@
             const postcode = getElement('editCustomerPincode')?.value.trim() || '';
             const addressInput = getElement('editCustomerAddress');
             if (addressInput) {
-                addressInput.value = `${street}, ${suburb}, ${postcode}`;
+                addressInput.value = [street, suburb, postcode].filter(Boolean).join('\n');
             }
         });
     }
@@ -2697,12 +2887,29 @@
     // --- Client-side Driver Edit Form Concatenation ---
     const inlineDriverEditForm = getElement('inlineDriverEditForm');
     if (inlineDriverEditForm) {
-        inlineDriverEditForm.addEventListener('submit', () => {
+        inlineDriverEditForm.addEventListener('submit', (e) => {
+            const pass = getElement('editDriverPassword')?.value;
+            const confirmPass = getElement('editDriverConfirmPassword')?.value;
+            if (pass && pass !== confirmPass) {
+                alert('Password and Confirm Password do not match.');
+                getElement('editDriverConfirmPassword')?.focus();
+                e.preventDefault();
+                return false;
+            }
+
             const firstName = getElement('editDriverFirstName')?.value.trim() || '';
             const lastName = getElement('editDriverLastName')?.value.trim() || '';
             const nameInput = getElement('editDriverName');
             if (nameInput) {
                 nameInput.value = (firstName + ' ' + lastName).trim();
+            }
+
+            const street = getElement('editDriverStreet')?.value.trim() || '';
+            const city = getElement('editDriverCity')?.value.trim() || '';
+            const postcode = getElement('editDriverPostcode')?.value.trim() || '';
+            const addressInput = getElement('editDriverAddress');
+            if (addressInput) {
+                addressInput.value = [street, city, postcode].filter(Boolean).join('\n');
             }
         });
     }
@@ -2862,6 +3069,16 @@
             return await response.json();
         }
 
+        function updateRowStatusBadge(row, statusText) {
+            if (!row) return;
+            const badge = row.querySelector('.order-status-badge');
+            if (badge) {
+                const slug = statusText.toLowerCase().replace(/ /g, '_');
+                badge.className = `kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${slug} order-status-badge`;
+                badge.textContent = statusText;
+            }
+        }
+
         function updateSelectAllState() {
             if (!selectAllCheckbox) return;
             const enabledCheckboxes = Array.from(rowCheckboxes).filter(cb => !cb.disabled);
@@ -2970,14 +3187,14 @@
 
                 if (isBatch) {
                     title = isUnassigning ? 'Batch Driver Unassignment' : 'Batch Driver Assignment';
-                    prompt = isUnassigning 
+                    prompt = isUnassigning
                         ? `Do you want to unassign drivers from all ${targetList.length} selected orders?`
                         : `Do you want to continue with the selected drivers?`;
-                    subtext = isUnassigning 
+                    subtext = isUnassigning
                         ? `Unassigning drivers from ${targetList.length} selected orders:`
                         : `Assigning all ${targetList.length} orders to driver "${newDriverName}":`;
-                    btnText = isUnassigning 
-                        ? `Unassign All (${targetList.length} Orders)` 
+                    btnText = isUnassigning
+                        ? `Unassign All (${targetList.length} Orders)`
                         : `Assign All (${targetList.length} Orders)`;
                 } else if (isUnassigning) {
                     title = 'Unassign Driver Confirmation';
@@ -3021,10 +3238,11 @@
                                     if (r) {
                                         const hintEl = r.querySelector('.kp_kitchen_admin_panel_assignment_hint');
                                         if (hintEl) {
-                                            hintEl.innerHTML = isUnassigning 
+                                            hintEl.innerHTML = isUnassigning
                                                 ? 'Select any available driver'
                                                 : `<span style="color: #2ecc71; font-weight: 600;">✓ Assigned: ${escapeHtml(newDriverName)}</span>`;
                                         }
+                                        updateRowStatusBadge(r, isUnassigning ? 'Pending' : 'Out for Delivery');
                                     }
                                 });
                                 showToast(isUnassigning ? `Successfully unassigned ${targetList.length} orders.` : `Successfully assigned ${targetList.length} orders to ${newDriverName}.`);
@@ -3045,10 +3263,11 @@
                                 }
                                 const hintEl = row.querySelector('.kp_kitchen_admin_panel_assignment_hint');
                                 if (hintEl) {
-                                    hintEl.innerHTML = isUnassigning 
+                                    hintEl.innerHTML = isUnassigning
                                         ? 'Select any available driver'
                                         : `<span style="color: #2ecc71; font-weight: 600;">✓ Assigned: ${escapeHtml(newDriverName)}</span>`;
                                 }
+                                updateRowStatusBadge(row, isUnassigning ? 'Pending' : 'Out for Delivery');
                                 showToast(isUnassigning ? `Order ${orderId} is now unassigned.` : `Order ${orderId} successfully assigned to ${newDriverName}.`);
                                 updateSelectAllState();
                             } else {
@@ -3107,14 +3326,14 @@
 
                 const isUnassigning = (newDriverName === 'Unassigned');
                 const title = isUnassigning ? 'Batch Driver Unassignment' : 'Batch Driver Assignment';
-                const prompt = isUnassigning 
+                const prompt = isUnassigning
                     ? `Do you want to unassign drivers from all ${targetList.length} selected orders?`
                     : `Do you want to continue with assigning driver "${newDriverName}" to ${targetList.length} orders?`;
-                const subtext = isUnassigning 
+                const subtext = isUnassigning
                     ? `Unassigning drivers from ${targetList.length} selected orders:`
                     : `Assigning all ${targetList.length} orders to driver "${newDriverName}":`;
-                const btnText = isUnassigning 
-                    ? `Unassign All (${targetList.length} Orders)` 
+                const btnText = isUnassigning
+                    ? `Unassign All (${targetList.length} Orders)`
                     : `Assign All (${targetList.length} Orders)`;
 
                 openDriverModal(
@@ -3151,10 +3370,11 @@
                                 if (r) {
                                     const hintEl = r.querySelector('.kp_kitchen_admin_panel_assignment_hint');
                                     if (hintEl) {
-                                        hintEl.innerHTML = isUnassigning 
+                                        hintEl.innerHTML = isUnassigning
                                             ? 'Select any available driver'
                                             : `<span style="color: #2ecc71; font-weight: 600;">✓ Assigned: ${escapeHtml(newDriverName)}</span>`;
                                     }
+                                    updateRowStatusBadge(r, isUnassigning ? 'Pending' : 'Out for Delivery');
                                 }
                             });
                             showToast(isUnassigning ? `Successfully unassigned ${targetList.length} orders.` : `Successfully assigned ${targetList.length} orders to ${newDriverName}.`);

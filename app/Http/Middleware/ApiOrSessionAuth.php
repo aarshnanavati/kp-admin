@@ -18,19 +18,27 @@ class ApiOrSessionAuth
      */
     public function handle(Request $request, Closure $next)
     {
-        // 1. Check if authenticated via Session (Dashboard browser session)
-        if (Auth::check()) {
-            return $next($request);
-        }
-
-        // 2. Check if authenticated via Bearer Token (Postman / mobile client)
         $token = $request->bearerToken();
+
+        // 1. If explicit Bearer Token is provided, strictly validate admin API token
         if ($token) {
             $user = User::where('api_token', $token)->first();
             if ($user) {
-                Auth::login($user);
+                $request->setUserResolver(function () use ($user) {
+                    return $user;
+                });
                 return $next($request);
             }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated. Invalid Bearer Token.'
+            ], 401);
+        }
+
+        // 2. Check if authenticated via Session (Dashboard browser session)
+        if (Auth::check()) {
+            return $next($request);
         }
 
         // 3. Return clean JSON unauthorized response for API routes, redirect otherwise

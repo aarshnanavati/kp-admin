@@ -19,7 +19,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use App\Services\FcmService;
-
+use App\Helpers\AddressHelper;
+use App\Helpers\ImageUploadHelper;
 class AdminPanelController extends Controller
 {
     // --- Page Views ---
@@ -28,11 +29,8 @@ class AdminPanelController extends Controller
     {
         $todayStr = now()->toDateString();
 
-        // Count active drivers with assigned orders today
-        $driversCount = Driver::where('status', 'Active')
-            ->whereHas('orders', function($query) use ($todayStr) {
-                $query->where('date', $todayStr);
-            })->count();
+        // Count total drivers from the drivers tab
+        $driversCount = Driver::count();
 
         // Count orders placed today
         $ordersCount = Order::where('date', $todayStr)->count();
@@ -169,6 +167,14 @@ class AdminPanelController extends Controller
             }
         }
 
+        if ($request->filled('status') && $request->status !== 'all') {
+            if ($request->status === 'Pending') {
+                $query->whereIn('status', ['Pending', 'Payment Pending', 'Placed', 'Confirmed']);
+            } else {
+                $query->where('status', $request->status);
+            }
+        }
+
         $search = $request->query('search');
         if ($search) {
             $query->where(function($q) use ($search) {
@@ -214,18 +220,7 @@ class AdminPanelController extends Controller
                   ->orWhere('pincode', 'like', "%{$search}%")
                   ->orWhere('address', 'like', "%{$search}%");
         }
-        $customers = $query->orderBy('created_at', 'desc')->get();
-        foreach ($customers as $customer) {
-            $hasOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->whereIn('status', ['Pending', 'Unpaid'])
-                ->whereDate('due_date', '<', \Carbon\Carbon::now()->toDateString())
-                ->exists();
-            $newStatus = $hasOverdue ? 'Deactivated' : 'Active';
-            if ($customer->status !== $newStatus) {
-                $customer->status = $newStatus;
-                $customer->save();
-            }
-        }
+        $customers = $query->with(['addresses', 'orders'])->orderBy('created_at', 'desc')->get();
         return view('customers', compact('customers'));
     }
 
@@ -308,12 +303,478 @@ class AdminPanelController extends Controller
         return view('users', compact('users'));
     }
 
-    public function reports()
+    public function reports(Request $request)
     {
+        $kitchenPrep = $this->calculateKitchenPrepReport($request);
         $trips = Trip::with(['driver', 'order'])->orderBy('created_at', 'desc')->get();
         $drivers = Driver::all();
         $customers = Customer::all();
-        return view('reports', compact('trips', 'drivers', 'customers'));
+        return view('reports', compact('kitchenPrep', 'trips', 'drivers', 'customers'));
+    }
+
+    public function getKitchenPrepJson(Request $request)
+    {
+        $data = $this->calculateKitchenPrepReport($request);
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * Calculate item-by-item food preparation estimates for kitchen operations.
+     */
+    public function calculateKitchenPrepReport(Request $request)
+    {
+        $filterType = $request->input('filter_type', 'today'); // today, yesterday, this_week, last_week, month, custom, single_date
+        $selectedDate = $request->input('selected_date', Carbon::today()->toDateString());
+        $selectedMonth = $request->input('selected_month', Carbon::now()->format('Y-m'));
+        $selectedWeek = $request->input('selected_week', 'all'); // 'all', 1, 2, 3, 4, 5
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date');
+        $categoryFilter = $request->input('category', 'all');
+        $searchQuery = trim((string)$request->input('search', ''));
+        $statusFilter = $request->input('status', 'all');
+
+        $now = Carbon::now();
+        $dateRangeLabel = 'Today (' . Carbon::today()->format('d M Y') . ')';
+        $queryStartDate = Carbon::today()->toDateString();
+        $queryEndDate = Carbon::today()->toDateString();
+
+        // Month weeks setup
+        $monthDt = Carbon::parse($selectedMonth . '-01');
+        $startOfMonth = $monthDt->copy()->startOfMonth();
+        $endOfMonth = $monthDt->copy()->endOfMonth();
+
+        // Construct 4-5 weeks within the selected month
+        $monthWeeks = [];
+        $wCursor = $startOfMonth->copy();
+        $wIdx = 1;
+        while ($wCursor->lte($endOfMonth)) {
+            $wEndCursor = $wCursor->copy()->addDays(6);
+            if ($wEndCursor->gt($endOfMonth)) {
+                $wEndCursor = $endOfMonth->copy();
+            }
+            $monthWeeks[$wIdx] = [
+                'week_number' => $wIdx,
+                'label' => "Week {$wIdx}",
+                'date_range_label' => $wCursor->format('d M') . ' - ' . $wEndCursor->format('d M Y'),
+                'start_date' => $wCursor->toDateString(),
+                'end_date' => $wEndCursor->toDateString(),
+                'total_orders' => 0,
+                'total_tiffins' => 0,
+                'total_rotis' => 0,
+                'total_curries' => 0,
+                'total_rice' => 0,
+                'total_salads' => 0,
+                'total_desserts' => 0,
+            ];
+            $wCursor = $wEndCursor->copy()->addDay();
+            $wIdx++;
+        }
+
+        // Determine effective query date range based on filterType
+        switch ($filterType) {
+            case 'today':
+                $queryStartDate = Carbon::today()->toDateString();
+                $queryEndDate = Carbon::today()->toDateString();
+                $dateRangeLabel = 'Today (' . Carbon::today()->format('d M Y') . ')';
+                break;
+
+            case 'yesterday':
+                $queryStartDate = Carbon::yesterday()->toDateString();
+                $queryEndDate = Carbon::yesterday()->toDateString();
+                $dateRangeLabel = 'Yesterday (' . Carbon::yesterday()->format('d M Y') . ')';
+                break;
+
+            case 'this_week':
+                $queryStartDate = $now->copy()->startOfWeek()->toDateString();
+                $queryEndDate = $now->copy()->endOfWeek()->toDateString();
+                $dateRangeLabel = 'This Week (' . Carbon::parse($queryStartDate)->format('d M') . ' - ' . Carbon::parse($queryEndDate)->format('d M Y') . ')';
+                break;
+
+            case 'last_week':
+                $queryStartDate = $now->copy()->subWeek()->startOfWeek()->toDateString();
+                $queryEndDate = $now->copy()->subWeek()->endOfWeek()->toDateString();
+                $dateRangeLabel = 'Last Week (' . Carbon::parse($queryStartDate)->format('d M') . ' - ' . Carbon::parse($queryEndDate)->format('d M Y') . ')';
+                break;
+
+            case 'single_date':
+                $dt = Carbon::parse($selectedDate);
+                $queryStartDate = $dt->toDateString();
+                $queryEndDate = $dt->toDateString();
+                $dateRangeLabel = $dt->format('d M Y');
+                break;
+
+            case 'month':
+            case 'this_month':
+                if ($selectedWeek !== 'all' && isset($monthWeeks[(int)$selectedWeek])) {
+                    $chosenWk = $monthWeeks[(int)$selectedWeek];
+                    $queryStartDate = $chosenWk['start_date'];
+                    $queryEndDate = $chosenWk['end_date'];
+                    $dateRangeLabel = $startOfMonth->format('F Y') . ' - ' . $chosenWk['label'] . ' (' . $chosenWk['date_range_label'] . ')';
+                } else {
+                    $queryStartDate = $startOfMonth->toDateString();
+                    $queryEndDate = $endOfMonth->toDateString();
+                    $dateRangeLabel = $startOfMonth->format('F Y') . ' (Full Month - ' . count($monthWeeks) . ' Weeks)';
+                }
+                break;
+
+            case 'custom':
+                $queryStartDate = $startDate ?: Carbon::today()->toDateString();
+                $queryEndDate = $endDate ?: Carbon::today()->toDateString();
+                $dateRangeLabel = Carbon::parse($queryStartDate)->format('d M Y') . ' to ' . Carbon::parse($queryEndDate)->format('d M Y');
+                break;
+
+            default:
+                $queryStartDate = Carbon::today()->toDateString();
+                $queryEndDate = Carbon::today()->toDateString();
+                $dateRangeLabel = 'Today (' . Carbon::today()->format('d M Y') . ')';
+                break;
+        }
+
+        // Fetch Orders for the date range
+        $ordersQuery = Order::whereBetween('date', [$queryStartDate, $queryEndDate]);
+        if ($statusFilter !== 'all') {
+            $ordersQuery->where('status', $statusFilter);
+        } else {
+            $ordersQuery->where('status', '!=', 'Cancelled');
+        }
+        $orders = $ordersQuery->orderBy('date', 'asc')->get();
+
+        // Also fetch month orders if we are in month view or to populate week comparison
+        $monthOrders = Order::whereBetween('date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+            ->where('status', '!=', 'Cancelled')
+            ->get();
+
+        $allItems = Item::with('category')->get()->keyBy('id');
+        $allTiffins = Tiffin::with('category')->get()->keyBy('id');
+
+        $itemTotals = [];
+        $totalOrdersCount = $orders->count();
+        $totalTiffinsCount = 0;
+        $totalRotisCount = 0;
+        $totalCurriesCount = 0;
+        $totalRiceCount = 0;
+        $totalSaladsCount = 0;
+        $totalDessertsCount = 0;
+
+        foreach ($orders as $order) {
+            $orderQty = (int)($order->quantity ?: 1);
+            $totalTiffinsCount += $orderQty;
+            $orderDate = $order->date;
+
+            // 1. Resolve selections / choices / custom items / base tiffin
+            $selections = $order->selections;
+            if (is_string($selections)) {
+                $selections = json_decode($selections, true);
+            }
+
+            $resolvedItems = [];
+
+            if (is_array($selections) && !empty($selections['choices'])) {
+                foreach ($selections['choices'] as $choice) {
+                    $name = trim($choice['chosen'] ?? $choice['name'] ?? '');
+                    $component = trim($choice['component'] ?? '');
+                    if (!$name) continue;
+                    $resolvedItems[] = [
+                        'name' => $name,
+                        'component' => $component,
+                        'qty' => 1,
+                    ];
+                }
+            } elseif (is_array($selections) && !empty($selections['custom_items'])) {
+                foreach ($selections['custom_items'] as $cItem) {
+                    $name = trim($cItem['name'] ?? '');
+                    if (!$name) continue;
+                    $resolvedItems[] = [
+                        'name' => $name,
+                        'component' => 'Custom Choice',
+                        'qty' => (int)($cItem['qty'] ?? 1),
+                    ];
+                }
+            } else {
+                // Fallback to base tiffin components / items
+                $tiffin = $allTiffins->get($order->tiffin_id);
+                if (!$tiffin && $order->tiffin) {
+                    $tiffin = $allTiffins->firstWhere('name', $order->tiffin);
+                }
+
+                if ($tiffin) {
+                    if (!empty($tiffin->components)) {
+                        foreach ($tiffin->components as $comp) {
+                            $def = null;
+                            foreach ($comp['options'] as $opt) {
+                                if (!empty($opt['default'])) {
+                                    $def = $opt;
+                                    break;
+                                }
+                            }
+                            if (!$def && !empty($comp['options'])) {
+                                $def = $comp['options'][0];
+                            }
+                            if ($def && !empty($def['name'])) {
+                                $resolvedItems[] = [
+                                    'name' => $def['name'],
+                                    'component' => $comp['label'],
+                                    'qty' => 1,
+                                ];
+                            }
+                        }
+                    } elseif (!empty($tiffin->items)) {
+                        $rawItems = is_array($tiffin->items) ? $tiffin->items : json_decode($tiffin->items, true);
+                        if (is_array($rawItems)) {
+                            $itemList = isset($rawItems['basic']) ? $rawItems['basic'] : (isset($rawItems[0]) ? $rawItems : []);
+                            foreach ($itemList as $rawIt) {
+                                $itName = is_numeric($rawIt) ? optional($allItems->get($rawIt))->name : (string)$rawIt;
+                                if ($itName) {
+                                    $resolvedItems[] = [
+                                        'name' => $itName,
+                                        'component' => 'Included Item',
+                                        'qty' => 1,
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Process resolved items from tiffin
+            foreach ($resolvedItems as $rItem) {
+                $name = $rItem['name'];
+                $component = $rItem['component'];
+                $baseQty = $rItem['qty'];
+
+                $isBread = (stripos($name, 'roti') !== false || stripos($name, 'thepla') !== false ||
+                            stripos($name, 'bhakhri') !== false || stripos($name, 'bhakri') !== false ||
+                            stripos($name, 'paratha') !== false || stripos($name, 'naan') !== false ||
+                            stripos($name, 'puri') !== false || stripos($component, 'bread') !== false);
+
+                $multiplier = $isBread ? 4 : 1;
+                if (preg_match('/\((\d+)\s*pcs?\)/i', $name, $m)) {
+                    $multiplier = (int)$m[1];
+                }
+
+                $itemTotalUnits = $orderQty * $baseQty * $multiplier;
+                $unit = $isBread ? 'Rotis' : (preg_match('/\((\d+)\s*pcs?\)/i', $name) ? 'Pieces' : 'Portions');
+
+                // Category determination
+                $cat = 'Curries & Mains';
+                $catKey = 'curry';
+                if ($isBread) {
+                    $cat = 'Breads / Rotis';
+                    $catKey = 'bread';
+                    $totalRotisCount += $itemTotalUnits;
+                } elseif (stripos($name, 'salad') !== false) {
+                    $cat = 'Salads & Sides';
+                    $catKey = 'salad';
+                    $totalSaladsCount += $itemTotalUnits;
+                } elseif (stripos($name, 'rice') !== false || stripos($name, 'biryani') !== false || stripos($name, 'pulaw') !== false) {
+                    $cat = 'Rice Dishes';
+                    $catKey = 'rice';
+                    $totalRiceCount += $itemTotalUnits;
+                } elseif (stripos($name, 'jamun') !== false || stripos($name, 'halwa') !== false || stripos($name, 'malai') !== false || stripos($name, 'kheer') !== false || stripos($name, 'jalebi') !== false || stripos($name, 'kulfi') !== false) {
+                    $cat = 'Desserts & Sweets';
+                    $catKey = 'dessert';
+                    $totalDessertsCount += $itemTotalUnits;
+                } elseif (stripos($name, 'lassi') !== false || stripos($name, 'tea') !== false || stripos($name, 'buttermilk') !== false || stripos($name, 'soda') !== false || stripos($name, 'shake') !== false || stripos($name, 'coca') !== false) {
+                    $cat = 'Beverages';
+                    $catKey = 'beverage';
+                } else {
+                    $totalCurriesCount += $itemTotalUnits;
+                }
+
+                $normKey = mb_strtolower(trim($name));
+                if (!isset($itemTotals[$normKey])) {
+                    $itemTotals[$normKey] = [
+                        'name' => $name,
+                        'category' => $cat,
+                        'cat_key' => $catKey,
+                        'unit' => $unit,
+                        'total_qty' => 0,
+                        'tiffin_qty' => 0,
+                        'addon_qty' => 0,
+                        'orders_count' => 0,
+                        'week_breakdown' => [1 => 0, 2 => 0, 3 => 0, 4 => 0, 5 => 0],
+                    ];
+                }
+                $itemTotals[$normKey]['total_qty'] += $itemTotalUnits;
+                $itemTotals[$normKey]['tiffin_qty'] += $itemTotalUnits;
+                $itemTotals[$normKey]['orders_count']++;
+
+                // Track week breakdown within month
+                foreach ($monthWeeks as $wNum => $wInfo) {
+                    if ($orderDate >= $wInfo['start_date'] && $orderDate <= $wInfo['end_date']) {
+                        $itemTotals[$normKey]['week_breakdown'][$wNum] += $itemTotalUnits;
+                        break;
+                    }
+                }
+            }
+
+            // 2. Process Add-ons
+            if ($order->add_ons) {
+                $addons = is_array($order->add_ons) ? $order->add_ons : json_decode($order->add_ons, true);
+                if (is_array($addons)) {
+                    foreach ($addons as $addon) {
+                        $name = trim($addon['name'] ?? '');
+                        if (!$name) continue;
+                        $aQty = (int)($addon['qty'] ?? 1) * $orderQty;
+
+                        $isBread = (stripos($name, 'roti') !== false || stripos($name, 'thepla') !== false ||
+                                    stripos($name, 'bhakhri') !== false || stripos($name, 'bhakri') !== false ||
+                                    stripos($name, 'paratha') !== false || stripos($name, 'naan') !== false);
+
+                        $unit = $isBread ? 'Rotis' : (preg_match('/\((\d+)\s*pcs?\)/i', $name) ? 'Pieces' : 'Portions');
+
+                        $cat = 'Curries & Mains';
+                        $catKey = 'curry';
+                        if ($isBread) {
+                            $cat = 'Breads / Rotis';
+                            $catKey = 'bread';
+                            $totalRotisCount += $aQty;
+                        } elseif (stripos($name, 'salad') !== false) {
+                            $cat = 'Salads & Sides';
+                            $catKey = 'salad';
+                            $totalSaladsCount += $aQty;
+                        } elseif (stripos($name, 'rice') !== false || stripos($name, 'biryani') !== false) {
+                            $cat = 'Rice Dishes';
+                            $catKey = 'rice';
+                            $totalRiceCount += $aQty;
+                        } elseif (stripos($name, 'jamun') !== false || stripos($name, 'halwa') !== false) {
+                            $cat = 'Desserts & Sweets';
+                            $catKey = 'dessert';
+                            $totalDessertsCount += $aQty;
+                        } elseif (stripos($name, 'lassi') !== false || stripos($name, 'tea') !== false || stripos($name, 'soda') !== false) {
+                            $cat = 'Beverages';
+                            $catKey = 'beverage';
+                        } else {
+                            $totalCurriesCount += $aQty;
+                        }
+
+                        $normKey = mb_strtolower(trim($name));
+                        if (!isset($itemTotals[$normKey])) {
+                            $itemTotals[$normKey] = [
+                                'name' => $name,
+                                'category' => $cat,
+                                'cat_key' => $catKey,
+                                'unit' => $unit,
+                                'total_qty' => 0,
+                                'tiffin_qty' => 0,
+                                'addon_qty' => 0,
+                                'orders_count' => 0,
+                                'week_breakdown' => [1 => 0, 2 => 0, 3 => 0, 4 => 0, 5 => 0],
+                            ];
+                        }
+                        $itemTotals[$normKey]['total_qty'] += $aQty;
+                        $itemTotals[$normKey]['addon_qty'] += $aQty;
+                        $itemTotals[$normKey]['orders_count']++;
+
+                        // Track week breakdown within month
+                        foreach ($monthWeeks as $wNum => $wInfo) {
+                            if ($orderDate >= $wInfo['start_date'] && $orderDate <= $wInfo['end_date']) {
+                                $itemTotals[$normKey]['week_breakdown'][$wNum] += $aQty;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Calculate Month Weeks Summary from month orders for week-by-week trends
+        foreach ($monthOrders as $mOrder) {
+            $mQty = (int)($mOrder->quantity ?: 1);
+            $mDate = $mOrder->date;
+            foreach ($monthWeeks as $wNum => &$wRef) {
+                if ($mDate >= $wRef['start_date'] && $mDate <= $wRef['end_date']) {
+                    $wRef['total_orders']++;
+                    $wRef['total_tiffins'] += $mQty;
+                    break;
+                }
+            }
+            unset($wRef);
+        }
+
+        // Populate weekly summary sums from item totals
+        foreach ($itemTotals as $item) {
+            foreach ($item['week_breakdown'] as $wNum => $qty) {
+                if (isset($monthWeeks[$wNum])) {
+                    if ($item['cat_key'] === 'bread') {
+                        $monthWeeks[$wNum]['total_rotis'] += $qty;
+                    } elseif ($item['cat_key'] === 'curry') {
+                        $monthWeeks[$wNum]['total_curries'] += $qty;
+                    } elseif ($item['cat_key'] === 'rice') {
+                        $monthWeeks[$wNum]['total_rice'] += $qty;
+                    } elseif ($item['cat_key'] === 'salad') {
+                        $monthWeeks[$wNum]['total_salads'] += $qty;
+                    } elseif ($item['cat_key'] === 'dessert') {
+                        $monthWeeks[$wNum]['total_desserts'] += $qty;
+                    }
+                }
+            }
+        }
+
+        // Filter items by category & search query if requested
+        $filteredItems = array_values($itemTotals);
+
+        if ($categoryFilter !== 'all') {
+            $filteredItems = array_filter($filteredItems, function ($it) use ($categoryFilter) {
+                return $it['cat_key'] === $categoryFilter;
+            });
+        }
+
+        if ($searchQuery !== '') {
+            $filteredItems = array_filter($filteredItems, function ($it) use ($searchQuery) {
+                return stripos($it['name'], $searchQuery) !== false || stripos($it['category'], $searchQuery) !== false;
+            });
+        }
+
+        // Sort items by category and then total_qty descending
+        usort($filteredItems, function ($a, $b) {
+            if ($a['category'] === $b['category']) {
+                return $b['total_qty'] <=> $a['total_qty'];
+            }
+            return strcmp($a['category'], $b['category']);
+        });
+
+        // Available Months list for dropdown (last 12 months)
+        $availableMonths = [];
+        for ($m = 0; $m < 12; $m++) {
+            $dt = Carbon::now()->subMonths($m);
+            $availableMonths[] = [
+                'value' => $dt->format('Y-m'),
+                'label' => $dt->format('F Y'),
+                'is_current' => ($dt->format('Y-m') === $selectedMonth),
+            ];
+        }
+
+        return [
+            'items' => array_values($filteredItems),
+            'summary' => [
+                'total_orders' => $totalOrdersCount,
+                'total_tiffins' => $totalTiffinsCount,
+                'total_rotis' => $totalRotisCount,
+                'total_curries' => $totalCurriesCount,
+                'total_rice' => $totalRiceCount,
+                'total_salads' => $totalSaladsCount,
+                'total_desserts' => $totalDessertsCount,
+            ],
+            'month_weeks' => array_values($monthWeeks),
+            'available_months' => $availableMonths,
+            'filters' => [
+                'filter_type' => $filterType,
+                'selected_date' => $selectedDate,
+                'selected_month' => $selectedMonth,
+                'selected_week' => $selectedWeek,
+                'start_date' => $queryStartDate,
+                'end_date' => $queryEndDate,
+                'date_range_label' => $dateRangeLabel,
+                'category' => $categoryFilter,
+                'search' => $searchQuery,
+                'status' => $statusFilter,
+            ],
+        ];
     }
 
     // --- Web CRUD Actions ---
@@ -486,7 +947,7 @@ class AdminPanelController extends Controller
             'price' => 'required|numeric|min:0',
             'category_id' => 'nullable|exists:categories,id',
             'description' => 'nullable|string',
-            'prep_time' => 'required|integer|min:1',
+            'prep_time' => 'nullable|integer',
             'status' => 'required|in:Active,Inactive',
             'items' => 'nullable',
             'components_json' => 'nullable|string',
@@ -568,7 +1029,7 @@ class AdminPanelController extends Controller
             'price' => $isCustomizable ? 0 : (float) $request->price,
             'category_id' => $request->category_id,
             'description' => $request->description ? trim($request->description) : null,
-            'prep_time' => (int)$request->prep_time,
+            'prep_time' => (int) ($request->prep_time ?? 0),
             'status' => $request->status,
             'items' => $items,
             'image' => $imagePath,
@@ -696,57 +1157,95 @@ class AdminPanelController extends Controller
 
     public function saveDriver(Request $request)
     {
+        // Normalize confirm_password / password_confirmation aliases
+        if ($request->has('confirm_password') && !$request->has('password_confirmation')) {
+            $request->merge(['password_confirmation' => $request->confirm_password]);
+        }
+        if ($request->has('password_confirmation') && !$request->has('confirm_password')) {
+            $request->merge(['confirm_password' => $request->password_confirmation]);
+        }
+
+        // Normalize suburbs and postcode aliases
+        if ($request->has('suburbs') && !$request->has('suburb')) {
+            $request->merge(['suburb' => $request->suburbs]);
+        }
+        if ($request->has('suburb') && !$request->has('city')) {
+            $request->merge(['city' => $request->suburb]);
+        }
+        if ($request->has('postcode') && !$request->has('pincode')) {
+            $request->merge(['pincode' => $request->postcode]);
+        }
+        if ($request->has('postcode') && !$request->has('assigned_zip')) {
+            $request->merge(['assigned_zip' => $request->postcode]);
+        }
+
         $request->validate([
             'name' => 'required|string|max:255',
             'phone' => 'required|string|max:50',
             'email' => 'required|email',
             'address' => 'nullable|string',
+            'street_address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'suburb' => 'nullable|string',
+            'suburbs' => 'nullable|string',
+            'town' => 'nullable|string',
+            'pincode' => 'nullable|string|max:20',
+            'postcode' => 'nullable|string|max:20',
             'license_no' => 'nullable|string|max:100',
             'license_expiry' => 'nullable|date',
             'vehicle_reg_no' => 'nullable|string|max:50',
             'assigned_zip' => 'nullable|string|max:255',
             'status' => 'required|in:Active,Inactive',
+            'password' => 'nullable|string|min:6|confirmed',
+            'confirm_password' => 'nullable|string|min:6',
+            'password_confirmation' => 'nullable|string|min:6',
             'license_copy_front_file' => 'nullable|image|max:2048',
             'license_copy_back_file' => 'nullable|image|max:2048',
+            'vehicle_reg_image_file' => 'nullable|image|max:2048',
+        ], [
+            'password.confirmed' => 'The password and confirm password do not match.',
         ]);
 
         $id = $request->input('id');
-        $frontPath = $request->input('license_copy_front');
-        $backPath = $request->input('license_copy_back');
+        $existingDriver = $id ? Driver::find($id) : null;
+        $existingFront = $existingDriver ? $existingDriver->license_copy_front : null;
+        $existingBack = $existingDriver ? $existingDriver->license_copy_back : null;
+        $existingRego = $existingDriver ? $existingDriver->vehicle_reg_image : null;
 
-        $uploadsDir = public_path('uploads/licenses');
-        if (!File::exists($uploadsDir)) {
-            File::makeDirectory($uploadsDir, 0777, true, true);
-        }
+        $frontPath = ImageUploadHelper::saveLicenseFront($request, 'front_' . uniqid(), $existingFront);
+        $backPath = ImageUploadHelper::saveLicenseBack($request, 'back_' . uniqid(), $existingBack);
+        $vehicleRegPath = ImageUploadHelper::saveVehicleReg($request, 'vehicle_reg_' . uniqid(), $existingRego);
 
-        if ($request->hasFile('license_copy_front_file')) {
-            $file = $request->file('license_copy_front_file');
-            $fileName = 'front_' . uniqid() . '.' . $file->getClientOriginalExtension();
-            $file->move($uploadsDir, $fileName);
-            $frontPath = 'uploads/licenses/' . $fileName;
-        }
+        $addrInfo = AddressHelper::extractAndFormat($request);
+        $streetAddress = $addrInfo['street_address'];
+        $city = $addrInfo['city'];
+        $pincode = $addrInfo['pincode'];
+        $formattedAddress = $addrInfo['address'];
 
-        if ($request->hasFile('license_copy_back_file')) {
-            $file = $request->file('license_copy_back_file');
-            $fileName = 'back_' . uniqid() . '.' . $file->getClientOriginalExtension();
-            $file->move($uploadsDir, $fileName);
-            $backPath = 'uploads/licenses/' . $fileName;
-        }
+        $assignedZip = $request->assigned_zip ? trim($request->assigned_zip) : ($pincode ?: ($request->area ? trim($request->area) : null));
 
         $data = [
             'name' => trim($request->name),
             'phone' => trim($request->phone),
             'email' => trim($request->email),
-            'address' => $request->address ? trim($request->address) : null,
+            'street_address' => $streetAddress,
+            'city' => $city,
+            'pincode' => $pincode ?: ($assignedZip ?: null),
+            'address' => $formattedAddress ?: ($request->address ? trim($request->address) : null),
             'license_no' => $request->license_no ? trim($request->license_no) : null,
             'license_expiry' => $request->license_expiry,
             'vehicle_reg_no' => $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null,
-            'assigned_zip' => $request->assigned_zip ? trim($request->assigned_zip) : null,
-            'area' => $request->assigned_zip ? trim($request->assigned_zip) : null,
+            'assigned_zip' => $assignedZip,
+            'area' => $assignedZip,
             'status' => $request->status,
             'license_copy_front' => $frontPath,
             'license_copy_back' => $backPath,
+            'vehicle_reg_image' => $vehicleRegPath,
         ];
+
+        if ($request->filled('password')) {
+            $data['password'] = \Illuminate\Support\Facades\Hash::make($request->password);
+        }
 
         if ($id) {
             $driver = Driver::findOrFail($id);
@@ -793,14 +1292,21 @@ class AdminPanelController extends Controller
         ]);
 
         $order = Order::findOrFail($request->id);
-        $status = $request->input('status') ?: $order->status;
         $driverId = $request->driver_id;
+        $status = $request->input('status');
 
         $driverName = 'Unassigned';
         if ($driverId) {
             $driver = Driver::find($driverId);
             if ($driver) {
                 $driverName = $driver->name;
+            }
+            if (!$status) {
+                $status = ($order->status !== 'Delivered' && $order->status !== 'Cancelled') ? 'Out for Delivery' : $order->status;
+            }
+        } else {
+            if (!$status) {
+                $status = ($order->status === 'Out for Delivery') ? 'Pending' : $order->status;
             }
         }
 
@@ -894,37 +1400,113 @@ class AdminPanelController extends Controller
 
     public function saveCustomer(Request $request)
     {
+        // Normalize confirm_password / password_confirmation aliases
+        if ($request->has('confirm_password') && !$request->has('password_confirmation')) {
+            $request->merge(['password_confirmation' => $request->confirm_password]);
+        }
+        if ($request->has('password_confirmation') && !$request->has('confirm_password')) {
+            $request->merge(['confirm_password' => $request->password_confirmation]);
+        }
+
+        // Normalize suburbs and postcode aliases
+        if ($request->has('suburbs') && !$request->has('suburb')) {
+            $request->merge(['suburb' => $request->suburbs]);
+        }
+        if ($request->has('suburb') && !$request->has('city')) {
+            $request->merge(['city' => $request->suburb]);
+        }
+        if ($request->has('postcode') && !$request->has('pincode')) {
+            $request->merge(['pincode' => $request->postcode]);
+        }
+
         $request->validate([
             'name' => 'required|string|max:255',
             'phone' => 'required|string|max:50',
             'email' => 'required|email',
-            'pincode' => 'required|string|max:10',
-            'address' => 'required|string',
-            'password' => $request->input('id') ? 'nullable|string|min:6' : 'required|string|min:6',
+            'pincode' => 'nullable|string|max:20',
+            'postcode' => 'nullable|string|max:20',
+            'address' => 'nullable|string',
+            'street_address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'suburb' => 'nullable|string',
+            'suburbs' => 'nullable|string',
+            'town' => 'nullable|string',
+            'password' => 'nullable|string|min:6|confirmed',
+            'confirm_password' => 'nullable|string|min:6',
+            'password_confirmation' => 'nullable|string|min:6',
             'status' => 'nullable|string|in:Active,Deactivated',
+        ], [
+            'password.confirmed' => 'The password and confirm password do not match.',
         ]);
+
+        $addrInfo = AddressHelper::extractAndFormat($request);
+        $streetAddress = $addrInfo['street_address'];
+        $city = $addrInfo['city'];
+        $pincode = $addrInfo['pincode'];
+        $formattedAddress = $addrInfo['address'];
 
         $id = $request->input('id');
         $data = [
             'name' => trim($request->name),
             'phone' => trim($request->phone),
             'email' => strtolower(trim($request->email)),
-            'pincode' => trim($request->pincode),
-            'address' => trim($request->address),
+            'street_address' => $streetAddress,
+            'city' => $city,
+            'pincode' => $pincode ?: trim($request->pincode ?? ''),
+            'address' => $formattedAddress ?: trim($request->address ?? ''),
         ];
 
         if ($request->has('status')) {
             $data['status'] = $request->status;
         }
 
+        if ($request->filled('password')) {
+            $data['password'] = Hash::make($request->password);
+        }
+
         if ($id) {
             $customer = Customer::findOrFail($id);
             $customer->update($data);
+
+            // Sync default address
+            $defaultAddr = $customer->addresses()->where('is_default', true)->first();
+            if ($defaultAddr) {
+                $defaultAddr->update([
+                    'street_address' => $streetAddress,
+                    'city' => $city,
+                    'address_line' => $formattedAddress ?: $customer->address,
+                    'pincode' => $pincode ?: $customer->pincode,
+                ]);
+            } elseif ($formattedAddress) {
+                $customer->addresses()->create([
+                    'type' => 'Home',
+                    'street_address' => $streetAddress,
+                    'city' => $city,
+                    'address_line' => $formattedAddress,
+                    'pincode' => $pincode ?: $customer->pincode,
+                    'is_default' => true,
+                ]);
+            }
+
             $msg = 'Customer details updated successfully.';
         } else {
-            Customer::create(array_merge($data, [
-                'password' => Hash::make($request->password)
-            ]));
+            $createData = $data;
+            if (!isset($createData['password'])) {
+                $createData['password'] = Hash::make(\Illuminate\Support\Str::random(16));
+            }
+            $customer = Customer::create($createData);
+
+            if ($formattedAddress) {
+                $customer->addresses()->create([
+                    'type' => 'Home',
+                    'street_address' => $streetAddress,
+                    'city' => $city,
+                    'address_line' => $formattedAddress,
+                    'pincode' => $pincode ?: $customer->pincode,
+                    'is_default' => true,
+                ]);
+            }
+
             $msg = 'Customer registered successfully.';
         }
 
@@ -936,6 +1518,46 @@ class AdminPanelController extends Controller
         $customer = Customer::findOrFail($id);
         $customer->delete();
         return redirect()->back()->with('success', 'Customer deleted successfully.');
+    }
+
+    public function toggleCustomerStatus(Request $request, $id)
+    {
+        $customer = Customer::findOrFail($id);
+        $customer->status = ($customer->status === 'Active') ? 'Deactivated' : 'Active';
+        $customer->save();
+
+        if ($request->wantsJson() || $request->is('api/*')) {
+            return response()->json([
+                'success' => true,
+                'message' => "Customer status updated to {$customer->status}.",
+                'status' => $customer->status,
+                'customer' => $customer
+            ]);
+        }
+
+        return redirect()->back()->with('success', "Customer account status has been updated to {$customer->status}.");
+    }
+
+    public function updateCustomerStatus(Request $request, $id)
+    {
+        $request->validate([
+            'status' => 'required|in:Active,Deactivated'
+        ]);
+
+        $customer = Customer::findOrFail($id);
+        $customer->status = $request->status;
+        $customer->save();
+
+        if ($request->wantsJson() || $request->is('api/*')) {
+            return response()->json([
+                'success' => true,
+                'message' => "Customer status updated to {$customer->status}.",
+                'status' => $customer->status,
+                'customer' => $customer
+            ]);
+        }
+
+        return redirect()->back()->with('success', "Customer status updated to {$customer->status}.");
     }
 
     public function saveCoupon(Request $request)
@@ -1077,10 +1699,15 @@ class AdminPanelController extends Controller
         return redirect()->back()->with('success', 'All notifications marked as read.');
     }
 
-    public function readSingleNotification($id)
+    public function readSingleNotification($id = null)
     {
-        $notification = Notification::findOrFail($id);
-        $notification->update(['read_status' => true]);
+        if ($id instanceof \Illuminate\Http\Request) {
+            $id = $id->route('id') ?? $id->input('id');
+        }
+        $notification = Notification::find($id);
+        if ($notification) {
+            $notification->update(['read_status' => true]);
+        }
         return redirect()->back()->with('success', 'Notification marked as read.');
     }
 
@@ -1132,7 +1759,7 @@ class AdminPanelController extends Controller
 
         $query = Tiffin::with('category');
 
-        $hasCustomizableColumn = \Illuminate\Support\Facades\Schema::hasTable('tiffins') 
+        $hasCustomizableColumn = \Illuminate\Support\Facades\Schema::hasTable('tiffins')
             && \Illuminate\Support\Facades\Schema::hasColumn('tiffins', 'is_customizable');
 
         if ($hasCustomizableColumn) {
@@ -1263,6 +1890,26 @@ class AdminPanelController extends Controller
             return $tiffinArray;
         });
 
+        $req = $request ?: request();
+        $uri = $req ? strtolower($req->getRequestUri() . ' ' . $req->path() . ' ' . $req->url()) : '';
+
+        $isTiffinPlansRoute = str_contains($uri, 'tiffin-plans')
+            || str_contains($uri, 'tiffin_plans')
+            || ($req && $req->input('format') === 'object')
+            || ($req && str_contains($uri, 'customer/tiffin'));
+
+        if ($isTiffinPlansRoute) {
+            return response()->json([
+                'success' => true,
+                'tiffin_plans' => $formatted,
+                'tiffins' => $formatted,
+                'data' => [
+                    'tiffin_plans' => $formatted,
+                    'data' => $formatted,
+                ]
+            ]);
+        }
+
         return response()->json($formatted);
     }
 
@@ -1274,7 +1921,7 @@ class AdminPanelController extends Controller
     public function getCustomizeTiffin(Request $request = null)
     {
         try {
-            $hasCustomizableColumn = \Illuminate\Support\Facades\Schema::hasTable('tiffins') 
+            $hasCustomizableColumn = \Illuminate\Support\Facades\Schema::hasTable('tiffins')
                 && \Illuminate\Support\Facades\Schema::hasColumn('tiffins', 'is_customizable');
 
             $tiffin = null;
@@ -1468,25 +2115,36 @@ class AdminPanelController extends Controller
     {
         $customer = Customer::findOrFail($id);
 
-        // Sync customer status based on unpaid overdue invoices
-        $hasOverdue = \App\Models\Invoice::where('customer_id', $customer->id)
-            ->whereIn('status', ['Pending', 'Unpaid'])
-            ->whereDate('due_date', '<', \Carbon\Carbon::now()->toDateString())
-            ->exists();
-        $newStatus = $hasOverdue ? 'Deactivated' : 'Active';
-        if ($customer->status !== $newStatus) {
-            $customer->status = $newStatus;
-            $customer->save();
-        }
+        // 1. Saved Addresses (Primary + Alternative delivery postcodes + CustomerAddress records)
+        $savedAddresses = \App\Models\CustomerAddress::where('customer_id', $customer->id)->get();
+        $addresses = [];
 
-        // 1. Saved Addresses (Primary + Alternative delivery postcodes)
-        $addresses = [
-            [
+        if ($savedAddresses->isNotEmpty()) {
+            foreach ($savedAddresses as $sAddr) {
+                $formattedRecord = AddressHelper::formatAddressRecord($sAddr);
+                $addresses[] = [
+                    'id' => $sAddr->id,
+                    'type' => $sAddr->type ?: ($sAddr->is_default ? 'Primary Address' : 'Saved Address'),
+                    'street_address' => $formattedRecord['street_address'],
+                    'city' => $formattedRecord['city'],
+                    'pincode' => $formattedRecord['pincode'],
+                    'address' => $formattedRecord['address'],
+                    'formatted_address' => $formattedRecord['formatted_address'],
+                    'is_default' => (bool)$sAddr->is_default,
+                ];
+            }
+        } else {
+            $custFormatted = AddressHelper::formatResponsePayload($customer);
+            $addresses[] = [
                 'type' => 'Primary Address',
-                'address' => $customer->address,
-                'pincode' => $customer->pincode,
-            ]
-        ];
+                'street_address' => $custFormatted['street_address'],
+                'city' => $custFormatted['city'],
+                'pincode' => $custFormatted['pincode'],
+                'address' => $custFormatted['address'],
+                'formatted_address' => $custFormatted['formatted_address'],
+                'is_default' => true,
+            ];
+        }
 
         // Retrieve distinct delivery postcodes from past orders
         $deliveryPostcodes = $customer->orders()
@@ -1500,8 +2158,12 @@ class AdminPanelController extends Controller
             if ($pc != $customer->pincode) {
                 $addresses[] = [
                     'type' => 'Alternative Postcode',
-                    'address' => 'Delivery Postcode Location',
+                    'street_address' => 'Delivery Postcode Location',
+                    'city' => '',
                     'pincode' => $pc,
+                    'address' => "Delivery Postcode Location\n\n{$pc}",
+                    'formatted_address' => "Delivery Postcode Location\n\n{$pc}",
+                    'is_default' => false,
                 ];
             }
         }
@@ -1532,7 +2194,9 @@ class AdminPanelController extends Controller
                 'status' => $order->status,
                 'raw_addons' => $addons,
                 'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
+                'proof_of_delivery_photo_url' => $order->proof_of_delivery_photo ? (str_starts_with($order->proof_of_delivery_photo, 'http') ? $order->proof_of_delivery_photo : asset('public/' . ltrim($order->proof_of_delivery_photo, '/'))) : null,
                 'proof_of_delivery_signature' => $order->proof_of_delivery_signature,
+                'proof_of_delivery_signature_url' => $order->proof_of_delivery_signature ? (str_starts_with($order->proof_of_delivery_signature, 'http') ? $order->proof_of_delivery_signature : asset('public/' . ltrim($order->proof_of_delivery_signature, '/'))) : null,
             ];
         });
 
@@ -1682,15 +2346,7 @@ class AdminPanelController extends Controller
 
         return response()->json([
             'success' => true,
-            'customer' => [
-                'id' => $customer->id,
-                'name' => $customer->name,
-                'phone' => $customer->phone,
-                'email' => $customer->email,
-                'pincode' => $customer->pincode,
-                'address' => $customer->address,
-                'status' => $customer->status
-            ],
+            'customer' => array_merge($customer->toArray(), AddressHelper::formatResponsePayload($customer)),
             'addresses' => $addresses,
             'orders' => $orders,
             'weekly_billing' => $weeklyHistory,
@@ -1707,38 +2363,51 @@ class AdminPanelController extends Controller
             ->count();
 
         $orders = $driver->orders()->orderBy('date', 'desc')->get()->map(function($order) {
+            $formattedAddr = AddressHelper::buildFormattedAddress(
+                $order->street_address ?? ($order->customerRelation->street_address ?? null),
+                $order->city ?? ($order->customerRelation->city ?? null),
+                $order->pincode ?? $order->area ?? ($order->customerRelation->pincode ?? null),
+                $order->customer_address ?? ($order->customerRelation->address ?? 'No address')
+            );
             return [
                 'id' => $order->id,
                 'date' => $order->date,
                 'customer' => $order->customer,
-                'customer_address' => $order->customerRelation->address ?? 'No address',
+                'customer_address' => $formattedAddr,
+                'street_address' => $order->street_address ?? ($order->customerRelation->street_address ?? ''),
+                'city' => $order->city ?? ($order->customerRelation->city ?? ''),
+                'pincode' => $order->pincode ?? $order->area ?? ($order->customerRelation->pincode ?? ''),
                 'status' => $order->status,
                 'proof_of_delivery_photo' => $order->proof_of_delivery_photo
             ];
         });
 
+        $driverPayload = array_merge([
+            'id' => $driver->id,
+            'name' => $driver->name,
+            'first_name' => $driver->first_name,
+            'last_name' => $driver->last_name,
+            'email' => $driver->email,
+            'phone' => $driver->phone,
+            'license_no' => $driver->license_no,
+            'license_expiry' => $driver->license_expiry,
+            'vehicle_reg_no' => $driver->vehicle_reg_no,
+            'assigned_zip' => $driver->assigned_zip,
+            'area' => $driver->area,
+            'status' => $driver->status,
+            'approval_status' => $driver->approval_status,
+            'rejection_reason' => $driver->rejection_reason,
+            'reviewed_at' => $driver->reviewed_at ? $driver->reviewed_at->toDateTimeString() : null,
+            'registered_at' => $driver->created_at ? $driver->created_at->toDateTimeString() : null,
+            'profile_image' => $driver->profile_image,
+            'license_copy_front' => $driver->license_copy_front,
+            'license_copy_back' => $driver->license_copy_back,
+            'vehicle_reg_image' => $driver->vehicle_reg_image,
+        ], AddressHelper::formatResponsePayload($driver));
+
         return response()->json([
             'success' => true,
-            'driver' => [
-                'id' => $driver->id,
-                'name' => $driver->name,
-                'phone' => $driver->phone,
-                'email' => $driver->email,
-                'address' => $driver->address,
-                'license_no' => $driver->license_no,
-                'license_expiry' => $driver->license_expiry,
-                'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'assigned_zip' => $driver->assigned_zip,
-                'area' => $driver->area,
-                'status' => $driver->status,
-                'approval_status' => $driver->approval_status,
-                'rejection_reason' => $driver->rejection_reason,
-                'reviewed_at' => $driver->reviewed_at ? $driver->reviewed_at->toDateTimeString() : null,
-                'registered_at' => $driver->created_at ? $driver->created_at->toDateTimeString() : null,
-                'profile_image' => $driver->profile_image ? asset($driver->profile_image) : null,
-                'license_copy_front' => $driver->license_copy_front,
-                'license_copy_back' => $driver->license_copy_back,
-            ],
+            'driver' => $driverPayload,
             'active_shipments' => $activeShipments,
             'total_orders' => $orders->count(),
             'orders' => $orders
@@ -1850,6 +2519,16 @@ class AdminPanelController extends Controller
         $choices = $selections['choices'] ?? [];
         $summary = $selections['summary'] ?? '';
 
+        $custStreet = $order->street_address ?? ($order->customerRelation ? $order->customerRelation->street_address : '');
+        $custCity = $order->city ?? ($order->customerRelation ? $order->customerRelation->city : '');
+        $custPin = $order->pincode ?? $order->area ?? ($order->customerRelation ? $order->customerRelation->pincode : '');
+        $formattedAddress = AddressHelper::buildFormattedAddress(
+            $custStreet,
+            $custCity,
+            $custPin,
+            $order->customer_address ?? ($order->customerRelation ? $order->customerRelation->address : 'N/A')
+        );
+
         return response()->json([
             'success' => true,
             'order' => [
@@ -1858,8 +2537,12 @@ class AdminPanelController extends Controller
                 'customer_name' => $order->customer,
                 'customer_phone' => $order->customerRelation ? $order->customerRelation->phone : 'N/A',
                 'customer_email' => $order->customerRelation ? $order->customerRelation->email : 'N/A',
-                'customer_address' => $order->customerRelation ? $order->customerRelation->address : 'N/A',
-                'customer_pincode' => $order->customerRelation ? $order->customerRelation->pincode : 'N/A',
+                'customer_address' => $formattedAddress,
+                'street_address' => $custStreet,
+                'city' => $custCity,
+                'customer_pincode' => $custPin,
+                'pincode' => $custPin,
+                'formatted_address' => $formattedAddress,
                 'tiffin_name' => $order->tiffin,
                 'tiffin_price' => $order->tiffinRelation ? $order->tiffinRelation->price : '0.00',
                 'quantity' => $order->quantity ?: 1,
@@ -1872,8 +2555,80 @@ class AdminPanelController extends Controller
                 'note' => $order->note ?: 'No special instructions provided.',
                 'driver_name' => $order->driver ?: 'Unassigned',
                 'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
+                'proof_of_delivery_photo_url' => $order->proof_of_delivery_photo ? (str_starts_with($order->proof_of_delivery_photo, 'http') ? $order->proof_of_delivery_photo : asset('public/' . ltrim($order->proof_of_delivery_photo, '/'))) : null,
                 'proof_of_delivery_signature' => $order->proof_of_delivery_signature,
+                'proof_of_delivery_signature_url' => $order->proof_of_delivery_signature ? (str_starts_with($order->proof_of_delivery_signature, 'http') ? $order->proof_of_delivery_signature : asset('public/' . ltrim($order->proof_of_delivery_signature, '/'))) : null,
             ]
+        ]);
+    }
+
+    /**
+     * Upload or update proof of delivery photo for an order from the Admin Panel.
+     */
+    public function uploadProofOfDelivery(Request $request, $id = null)
+    {
+        $orderId = $id ?: $request->input('id') ?: $request->input('order_id');
+        $order = Order::find($orderId);
+        if (!$order) {
+            return response()->json(['success' => false, 'message' => 'Order not found.'], 404);
+        }
+
+        $photoFile = $request->file('proof_photo')
+            ?: $request->file('photo')
+            ?: $request->file('image')
+            ?: $request->file('proof_of_delivery_photo')
+            ?: $request->file('drop_photo')
+            ?: $request->file('file');
+
+        $podDir = public_path('uploads/pod');
+        if (!File::exists($podDir)) {
+            File::makeDirectory($podDir, 0777, true, true);
+        }
+
+        if ($photoFile) {
+            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $photoFile->getClientOriginalExtension();
+            $photoFile->move($podDir, $fileName);
+            $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
+        } else {
+            $base64Input = $request->input('proof_photo')
+                ?: $request->input('photo')
+                ?: $request->input('image')
+                ?: $request->input('proof_of_delivery_photo');
+
+            if ($base64Input && is_string($base64Input) && (str_starts_with($base64Input, 'data:image/') || strlen($base64Input) > 100)) {
+                $imageType = 'jpg';
+                $imageData = $base64Input;
+                if (str_starts_with($base64Input, 'data:image/')) {
+                    $parts = explode(';base64,', $base64Input);
+                    $typeParts = explode('image/', $parts[0]);
+                    $imageType = $typeParts[1] ?? 'jpg';
+                    $imageData = $parts[1] ?? '';
+                }
+                $decoded = base64_decode($imageData);
+                if ($decoded !== false) {
+                    $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $imageType;
+                    File::put($podDir . '/' . $fileName, $decoded);
+                    $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
+                }
+            } else {
+                return response()->json(['success' => false, 'message' => 'No valid proof of delivery image provided.'], 422);
+            }
+        }
+
+        if ($request->filled('status')) {
+            $order->status = $request->input('status');
+        } elseif ($order->status === 'Pending' || $order->status === 'Out for Delivery') {
+            $order->status = 'Delivered';
+        }
+
+        $order->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Proof of delivery image uploaded successfully.',
+            'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
+            'proof_of_delivery_photo_url' => asset('public/' . ltrim($order->proof_of_delivery_photo, '/')),
+            'order' => $order
         ]);
     }
 
@@ -2015,7 +2770,7 @@ class AdminPanelController extends Controller
             'Expires' => '0',
         ];
 
-        $callback = function () use ($type) {
+        $callback = function () use ($type, $request) {
             $file = fopen('php://output', 'w');
 
             if ($type === 'sales') {
@@ -2064,20 +2819,23 @@ class AdminPanelController extends Controller
                         $driver->status,
                     ]);
                 }
-            } elseif ($type === 'customers') {
-                fputcsv($file, ['Customer ID', 'Name', 'Phone', 'Email', 'Postcode', 'Default Address', 'Total Orders', 'Total Spend ($)']);
-                $customers = Customer::with(['orders'])->get();
-                foreach ($customers as $cust) {
-                    $totalSpend = $cust->orders->where('status', 'Delivered')->sum('amount');
+            } elseif ($type === 'kitchen_prep' || $type === 'kitchen' || $type === 'prep') {
+                fputcsv($file, ['Food Item', 'Category', 'Total To Prepare', 'Unit', 'From Tiffins', 'From Add-ons', 'Orders Count', 'Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5']);
+                $prepData = $this->calculateKitchenPrepReport($request);
+                foreach ($prepData['items'] as $item) {
                     fputcsv($file, [
-                        $cust->id,
-                        $cust->name,
-                        $cust->phone,
-                        $cust->email,
-                        $cust->pincode,
-                        $cust->address,
-                        $cust->orders->count(),
-                        $totalSpend,
+                        $item['name'],
+                        $item['category'],
+                        $item['total_qty'],
+                        $item['unit'],
+                        $item['tiffin_qty'],
+                        $item['addon_qty'],
+                        $item['orders_count'],
+                        $item['week_breakdown'][1] ?? 0,
+                        $item['week_breakdown'][2] ?? 0,
+                        $item['week_breakdown'][3] ?? 0,
+                        $item['week_breakdown'][4] ?? 0,
+                        $item['week_breakdown'][5] ?? 0,
                     ]);
                 }
             }
@@ -2096,48 +2854,40 @@ class AdminPanelController extends Controller
         $action = $request->input('action');
 
         if ($action === 'create' || $action === 'update') {
-            $frontPath = $request->license_copy_front;
-            $backPath = $request->license_copy_back;
+            $existingDriver = ($action === 'update' && $request->filled('id')) ? Driver::find($request->id) : null;
+            $existingFront = $existingDriver ? $existingDriver->license_copy_front : null;
+            $existingBack = $existingDriver ? $existingDriver->license_copy_back : null;
+            $existingRego = $existingDriver ? $existingDriver->vehicle_reg_image : null;
 
-            // Handle base64 uploads for license copies
-            $uploadsDir = public_path('uploads/licenses');
-            if (! File::exists($uploadsDir)) {
-                File::makeDirectory($uploadsDir, 0777, true, true);
-            }
+            $frontPath = ImageUploadHelper::saveLicenseFront($request, 'front_' . uniqid(), $existingFront);
+            $backPath = ImageUploadHelper::saveLicenseBack($request, 'back_' . uniqid(), $existingBack);
+            $vehicleRegPath = ImageUploadHelper::saveVehicleReg($request, 'vehicle_reg_' . uniqid(), $existingRego);
 
-            if ($request->filled('license_copy_front') && str_starts_with($request->license_copy_front, 'data:image/')) {
-                $imageParts = explode(';base64,', $request->license_copy_front);
-                $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1];
-                $imageDecoded = base64_decode($imageParts[1]);
-                $fileName = 'front_'.uniqid().'.'.$imageType;
-                File::put($uploadsDir.'/'.$fileName, $imageDecoded);
-                $frontPath = 'uploads/licenses/'.$fileName;
-            }
+            $addrInfo = AddressHelper::extractAndFormat($request);
+            $streetAddress = $addrInfo['street_address'];
+            $city = $addrInfo['city'];
+            $pincode = $addrInfo['pincode'];
+            $formattedAddress = $addrInfo['address'];
 
-            if ($request->filled('license_copy_back') && str_starts_with($request->license_copy_back, 'data:image/')) {
-                $imageParts = explode(';base64,', $request->license_copy_back);
-                $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1];
-                $imageDecoded = base64_decode($imageParts[1]);
-                $fileName = 'back_'.uniqid().'.'.$imageType;
-                File::put($uploadsDir.'/'.$fileName, $imageDecoded);
-                $backPath = 'uploads/licenses/'.$fileName;
-            }
+            $assignedZip = $request->assigned_zip ? trim($request->assigned_zip) : ($pincode ?: ($request->area ? trim($request->area) : null));
 
             $data = [
                 'name' => trim($request->name),
                 'phone' => trim($request->phone),
                 'email' => trim($request->email),
-                'address' => trim($request->address),
-                'license_no' => trim($request->license_no),
+                'street_address' => $streetAddress,
+                'city' => $city,
+                'pincode' => $pincode ?: ($assignedZip ?: null),
+                'address' => $formattedAddress ?: ($request->address ? trim($request->address) : null),
+                'license_no' => trim($request->license_no ?? ''),
                 'license_expiry' => $request->license_expiry,
-                'vehicle_reg_no' => trim($request->vehicle_reg_no),
-                'assigned_zip' => trim($request->assigned_zip),
-                'area' => trim($request->assigned_zip), // Compatibility copy of postcode
+                'vehicle_reg_no' => trim($request->vehicle_reg_no ?? ''),
+                'assigned_zip' => $assignedZip,
+                'area' => $assignedZip, // Compatibility copy of postcode
                 'status' => $request->status,
                 'license_copy_front' => $frontPath,
                 'license_copy_back' => $backPath,
+                'vehicle_reg_image' => $vehicleRegPath,
             ];
 
             if ($action === 'create') {
@@ -2218,7 +2968,7 @@ class AdminPanelController extends Controller
                 'price' => (float) $request->price,
                 'items' => is_array($request->items) ? $request->items : [],
                 'description' => trim($request->description),
-                'prep_time' => (int) $request->prepTime,
+                'prep_time' => (int) ($request->prepTime ?? $request->prep_time ?? 0),
                 'status' => $request->status,
                 'image' => $imagePath,
                 'category_id' => $request->category_id ?: null,
@@ -2281,6 +3031,9 @@ class AdminPanelController extends Controller
                         $oldDriverId = $order->driver_id;
                         $order->driver = $matchedDriver->name;
                         $order->driver_id = $matchedDriver->id;
+                        if ($order->status !== 'Delivered' && $order->status !== 'Cancelled') {
+                            $order->status = 'Out for Delivery';
+                        }
                         $order->save();
 
                         Trip::updateOrCreate(
@@ -2314,6 +3067,9 @@ class AdminPanelController extends Controller
                 } else {
                     $order->driver = 'Unassigned';
                     $order->driver_id = null;
+                    if ($order->status === 'Out for Delivery') {
+                        $order->status = 'Pending';
+                    }
                     $order->save();
                     Trip::where('order_id', $order->id)->delete();
                     $updatedOrders[] = $order->id;
@@ -2348,9 +3104,15 @@ class AdminPanelController extends Controller
                 }
                 $order->driver = $driver->name;
                 $order->driver_id = $driver->id;
+                if ($order->status !== 'Delivered' && $order->status !== 'Cancelled') {
+                    $order->status = 'Out for Delivery';
+                }
             } else {
                 $order->driver = 'Unassigned';
                 $order->driver_id = null;
+                if ($order->status === 'Out for Delivery') {
+                    $order->status = 'Pending';
+                }
                 Trip::where('order_id', $order->id)->delete();
             }
 
@@ -2701,27 +3463,98 @@ class AdminPanelController extends Controller
     {
         $action = $request->input('action');
 
+        if ($action === 'status' || $action === 'update_status') {
+            $request->validate([
+                'id' => 'required|exists:customers,id',
+                'status' => 'required|in:Active,Deactivated'
+            ]);
+            $customer = Customer::findOrFail($request->id);
+            $customer->status = $request->status;
+            $customer->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Customer status updated to {$customer->status}.",
+                'status' => $customer->status,
+                'customer' => $customer
+            ]);
+        }
+
+        if ($action === 'toggle_status') {
+            $request->validate(['id' => 'required|exists:customers,id']);
+            $customer = Customer::findOrFail($request->id);
+            $customer->status = ($customer->status === 'Active') ? 'Deactivated' : 'Active';
+            $customer->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Customer status toggled to {$customer->status}.",
+                'status' => $customer->status,
+                'customer' => $customer
+            ]);
+        }
+
+        if ($action === 'activate') {
+            $request->validate(['id' => 'required|exists:customers,id']);
+            $customer = Customer::findOrFail($request->id);
+            $customer->status = 'Active';
+            $customer->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Customer activated successfully.',
+                'status' => 'Active',
+                'customer' => $customer
+            ]);
+        }
+
+        if ($action === 'deactivate') {
+            $request->validate(['id' => 'required|exists:customers,id']);
+            $customer = Customer::findOrFail($request->id);
+            $customer->status = 'Deactivated';
+            $customer->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Customer deactivated successfully.',
+                'status' => 'Deactivated',
+                'customer' => $customer
+            ]);
+        }
+
         if ($action === 'create') {
-            $customer = Customer::create([
+            $data = [
                 'name' => trim($request->name),
                 'phone' => trim($request->phone),
-                'email' => trim($request->email),
+                'email' => strtolower(trim($request->email)),
                 'pincode' => trim($request->pincode),
                 'address' => trim($request->address),
-            ]);
+                'status' => $request->input('status', 'Active'),
+            ];
+            if ($request->filled('password')) {
+                $data['password'] = Hash::make($request->password);
+            }
+            $customer = Customer::create($data);
 
             return response()->json(['success' => true, 'customer' => $customer]);
         }
 
         if ($action === 'update') {
             $customer = Customer::findOrFail($request->id);
-            $customer->update([
+            $data = [
                 'name' => trim($request->name),
                 'phone' => trim($request->phone),
-                'email' => trim($request->email),
+                'email' => strtolower(trim($request->email)),
                 'pincode' => trim($request->pincode),
                 'address' => trim($request->address),
-            ]);
+            ];
+            if ($request->has('status')) {
+                $data['status'] = $request->status;
+            }
+            if ($request->filled('password')) {
+                $data['password'] = Hash::make($request->password);
+            }
+            $customer->update($data);
 
             return response()->json(['success' => true, 'customer' => $customer]);
         }

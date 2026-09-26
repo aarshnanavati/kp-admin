@@ -4,6 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Customer;
+use App\Models\CustomerAddress;
+use App\Models\Driver;
+use App\Models\Order;
 use App\Models\PasswordOtp;
 use App\Mail\SendOtpMail;
 use App\Mail\KitchenAlertMail;
@@ -15,6 +18,8 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use App\Services\FcmService;
+use App\Helpers\AddressHelper;
+use App\Helpers\ImageUploadHelper;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -262,7 +267,7 @@ class AuthController extends Controller
         }
 
         $email = strtolower(trim($request->email));
-        
+
         // Re-verify OTP to prevent bypasses
         $otpRecord = PasswordOtp::where('email', $email)
             ->where('otp', trim($request->otp))
@@ -310,6 +315,49 @@ class AuthController extends Controller
             ]);
         }
 
+        // Normalize field aliases from mobile apps and web forms
+        if ($request->has('delivery_address') && !$request->has('address')) {
+            $request->merge(['address' => $request->delivery_address]);
+        }
+        if ($request->has('postcode') && !$request->has('pincode')) {
+            $request->merge(['pincode' => $request->postcode]);
+        }
+        if ($request->has('postal_code') && !$request->has('pincode')) {
+            $request->merge(['pincode' => $request->postal_code]);
+        }
+        if ($request->has('zip') && !$request->has('pincode')) {
+            $request->merge(['pincode' => $request->zip]);
+        }
+        if ($request->has('suburbs') && !$request->has('suburb')) {
+            $request->merge(['suburb' => $request->suburbs]);
+        }
+        if ($request->has('suburb') && !$request->has('city')) {
+            $request->merge(['city' => $request->suburb]);
+        }
+        if ($request->has('confirm_password') && !$request->has('password_confirmation')) {
+            $request->merge(['password_confirmation' => $request->confirm_password]);
+        }
+        if ($request->has('password_confirmation') && !$request->has('confirm_password')) {
+            $request->merge(['confirm_password' => $request->password_confirmation]);
+        }
+        if (!$request->filled('phone')) {
+            $request->merge(['phone' => '0400' . rand(100000, 999999)]);
+        }
+
+        // Extract structured address fields (street_address, city/suburb, pincode/postcode, address)
+        $addressInfo = AddressHelper::extractAndFormat($request);
+        $streetAddress = $addressInfo['street_address'];
+        $city = $addressInfo['city'];
+        $pincode = $addressInfo['pincode'];
+        $formattedAddress = $addressInfo['address'];
+
+        if ($formattedAddress && !$request->has('address')) {
+            $request->merge(['address' => $formattedAddress]);
+        }
+        if ($pincode && !$request->has('pincode')) {
+            $request->merge(['pincode' => $pincode]);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required_without:first_name|string|max:255',
             'first_name' => 'required_without:name|string|max:255',
@@ -317,8 +365,20 @@ class AuthController extends Controller
             'email' => 'required|email|max:255',
             'phone' => 'required|string|max:50',
             'password' => 'required|string|min:6|confirmed',
-            'pincode' => 'required|string|max:10',
-            'address' => 'required|string',
+            'confirm_password' => 'required_without:password_confirmation|string|min:6',
+            'password_confirmation' => 'required_without:confirm_password|string|min:6',
+            'pincode' => 'nullable|string|max:20',
+            'postcode' => 'nullable|string|max:20',
+            'address' => 'nullable|string',
+            'street_address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'suburb' => 'nullable|string',
+            'suburbs' => 'nullable|string',
+            'town' => 'nullable|string',
+        ], [
+            'password.confirmed' => 'The password and confirm password do not match.',
+            'confirm_password.required_without' => 'The confirm password field is required.',
+            'password_confirmation.required_without' => 'The confirm password field is required.',
         ]);
 
         if ($validator->fails()) {
@@ -343,8 +403,10 @@ class AuthController extends Controller
             'email' => $email,
             'phone' => trim($request->phone),
             'password' => Hash::make($request->password),
-            'pincode' => trim($request->pincode),
-            'address' => trim($request->address),
+            'street_address' => $streetAddress,
+            'city' => $city,
+            'pincode' => $pincode ?: trim($request->pincode),
+            'address' => $formattedAddress ?: trim($request->address),
             'api_token' => $token,
             'user_type' => 'customer',
             'fcm_token' => $request->input('fcm_token'),
@@ -352,8 +414,10 @@ class AuthController extends Controller
 
         $defaultAddr = $customer->addresses()->create([
             'type' => 'Home',
-            'address_line' => trim($request->address),
-            'pincode' => trim($request->pincode),
+            'street_address' => $streetAddress,
+            'city' => $city,
+            'address_line' => $formattedAddress ?: trim($request->address),
+            'pincode' => $pincode ?: trim($request->pincode),
             'is_default' => true,
         ]);
 
@@ -364,22 +428,30 @@ class AuthController extends Controller
             Log::warning("Customer registration email triggers failed: " . $e->getMessage());
         }
 
+        $formattedAddrRecord = AddressHelper::formatAddressRecord($defaultAddr);
+        $customerData = array_merge([
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'first_name' => $customer->first_name,
+            'last_name' => $customer->last_name,
+            'email' => $customer->email,
+            'phone' => $customer->phone,
+            'profile_image' => null,
+            'status' => 'Active',
+            'user_type' => $customer->user_type,
+            'addresses' => [$formattedAddrRecord],
+        ], AddressHelper::formatResponsePayload($customer));
+
         return response()->json([
             'success' => true,
             'message' => 'Registration successful.',
             'token' => $token,
             'user_type' => $customer->user_type,
-            'customer' => [
-                'id' => $customer->id,
-                'name' => $customer->name,
-                'first_name' => $customer->first_name,
-                'last_name' => $customer->last_name,
-                'email' => $customer->email,
-                'phone' => $customer->phone,
-                'pincode' => $customer->pincode,
-                'address' => $customer->address,
-                'profile_image' => null,
-                'addresses' => [$defaultAddr],
+            'customer' => $customerData,
+            'data' => [
+                'token' => $token,
+                'customer' => $customerData,
+                'user' => $customerData,
             ]
         ], 201);
     }
@@ -389,22 +461,21 @@ class AuthController extends Controller
      */
     public function customerLogin(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
+        $loginInput = trim($request->input('email') ?: $request->input('phone') ?: $request->input('username') ?: '');
+        $password = $request->input('password');
 
-        if ($validator->fails()) {
+        if (empty($loginInput) || empty($password)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Please provide email and password.',
+                'message' => 'Please provide email or phone and password.',
             ], 422);
         }
 
-        $email = strtolower(trim($request->email));
-        $customer = Customer::where('email', $email)->first();
+        $customer = Customer::where('email', strtolower($loginInput))
+            ->orWhere('phone', $loginInput)
+            ->first();
 
-        if (!$customer || !Hash::check($request->password, $customer->password)) {
+        if (!$customer || !Hash::check($password, $customer->password)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid credentials.',
@@ -483,23 +554,34 @@ class AuthController extends Controller
             Log::warning("Customer login alert email failed: " . $e->getMessage());
         }
 
+        $formattedAddresses = $customer->addresses()->orderBy('is_default', 'desc')->get()->map(function ($addr) {
+            return AddressHelper::formatAddressRecord($addr);
+        });
+
+        $customerData = array_merge([
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'first_name' => $customer->first_name,
+            'last_name' => $customer->last_name,
+            'email' => $customer->email,
+            'phone' => $customer->phone,
+            'profile_image' => $customer->profile_image ? asset($customer->profile_image) : null,
+            'user_type' => $customer->user_type,
+            'status' => $customer->status ?? 'Active',
+            'account_status' => $customer->status ?? 'Active',
+            'addresses' => $formattedAddresses,
+        ], AddressHelper::formatResponsePayload($customer));
+
         return response()->json([
             'success' => true,
             'message' => 'Login successful.',
             'token' => $token,
             'user_type' => $customer->user_type,
-            'customer' => [
-                'id' => $customer->id,
-                'name' => $customer->name,
-                'first_name' => $customer->first_name,
-                'last_name' => $customer->last_name,
-                'email' => $customer->email,
-                'phone' => $customer->phone,
-                'pincode' => $customer->pincode,
-                'address' => $customer->address,
-                'profile_image' => $customer->profile_image ? asset($customer->profile_image) : null,
-                'user_type' => $customer->user_type,
-                'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get(),
+            'customer' => $customerData,
+            'data' => [
+                'token' => $token,
+                'customer' => $customerData,
+                'user' => $customerData,
             ]
         ]);
     }
@@ -529,33 +611,38 @@ class AuthController extends Controller
 
         $addresses = $customer->addresses()->orderBy('is_default', 'desc')->get();
         if ($addresses->isEmpty() && $customer->address) {
+            $addrInfo = AddressHelper::extractAndFormat($customer);
             $created = $customer->addresses()->create([
                 'type' => 'Home',
-                'address_line' => $customer->address,
-                'pincode' => $customer->pincode,
+                'street_address' => $addrInfo['street_address'],
+                'city' => $addrInfo['city'],
+                'address_line' => $addrInfo['address'],
+                'pincode' => $addrInfo['pincode'],
                 'is_default' => true,
             ]);
             $addresses = collect([$created]);
         }
 
+        $formattedAddresses = $addresses->map(fn($a) => AddressHelper::formatAddressRecord($a));
+
+        $customerData = array_merge([
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'first_name' => $customer->first_name,
+            'last_name' => $customer->last_name,
+            'email' => $customer->email,
+            'phone' => $customer->phone,
+            'profile_image' => $customer->profile_image ? asset($customer->profile_image) : null,
+            'user_type' => $customer->user_type,
+            'total_orders' => $customer->orders()->count(),
+            'total_spent' => (float)$customer->orders()->sum('amount'),
+            'recent_orders' => $customer->orders()->latest()->take(5)->get(),
+            'addresses' => $formattedAddresses,
+        ], AddressHelper::formatResponsePayload($customer));
+
         return response()->json([
             'success' => true,
-            'customer' => [
-                'id' => $customer->id,
-                'name' => $customer->name,
-                'first_name' => $customer->first_name,
-                'last_name' => $customer->last_name,
-                'email' => $customer->email,
-                'phone' => $customer->phone,
-                'pincode' => $customer->pincode,
-                'address' => $customer->address,
-                'profile_image' => $customer->profile_image ? asset($customer->profile_image) : null,
-                'user_type' => $customer->user_type,
-                'total_orders' => $customer->orders()->count(),
-                'total_spent' => (float)$customer->orders()->sum('amount'),
-                'recent_orders' => $customer->orders()->latest()->take(5)->get(),
-                'addresses' => $addresses,
-            ]
+            'customer' => $customerData
         ]);
     }
 
@@ -565,12 +652,198 @@ class AuthController extends Controller
     public function customerOrders(Request $request)
     {
         $customer = $request->attributes->get('customer');
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $this->ensureInvoicesForCustomerOrders($customer);
+
+        $invoices = \App\Models\Invoice::where('customer_id', $customer->id)->get();
+
         $orders = \App\Models\Order::where('customer_id', $customer->id)
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->get()
+            ->map(function ($order) use ($customer, $invoices) {
+                $dt = Carbon::parse($order->date);
+                $wStart = $dt->copy()->startOfWeek()->toDateString();
+                $wEnd = $dt->copy()->endOfWeek()->toDateString();
+                $wYear = $dt->year;
+                $wWeekNum = $dt->weekOfYear;
+                $prefix = 'INV-W' . $wYear . str_pad((string)$wWeekNum, 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
+
+                $invoice = $invoices->first(function ($inv) use ($prefix, $wStart, $wEnd, $order) {
+                    if (str_starts_with($inv->id, $prefix)) return true;
+                    if ($inv->due_date && $inv->due_date >= $wStart && $inv->due_date <= $wEnd) return true;
+                    if ($inv->order_id && str_contains($inv->order_id, $order->id)) return true;
+                    return false;
+                });
+
+                $isPaid = $invoice ? ($invoice->status === 'Paid') : false;
+                $weeklyBillId = $invoice ? $invoice->id : ($prefix . '-001');
+                $weeklyBillStatus = $invoice ? $invoice->status : 'Pending';
+                $weeklyBillAmount = $invoice ? (float)$invoice->amount : (float)$order->amount;
+                $weekRange = Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y');
+
+                // If weekly invoice is paid and order status is 'Payment Pending', update order status to 'Pending'
+                $orderStatus = $order->status;
+                if ($isPaid && $orderStatus === 'Payment Pending') {
+                    $orderStatus = 'Pending';
+                    $order->status = 'Pending';
+                    $order->save();
+                }
+
+                $paymentStatus = $isPaid 
+                    ? 'Paid' 
+                    : (in_array($orderStatus, ['Delivered', 'Completed']) ? 'Paid' : 'Weekly Billed');
+
+                $addrDetails = AddressHelper::extractAndFormat($order, $customer);
+                $formattedOrderAddress = $addrDetails['address'];
+
+                return [
+                    'id' => $order->id,
+                    'order_number' => $order->order_number ?: ('ORD-' . $order->id),
+                    'customer_id' => $order->customer_id,
+                    'customer' => $order->customer,
+                    'customer_address' => $formattedOrderAddress,
+                    'delivery_address' => $formattedOrderAddress,
+                    'formatted_address' => $formattedOrderAddress,
+                    'street_address' => $addrDetails['street_address'],
+                    'city' => $addrDetails['city'],
+                    'suburb' => $addrDetails['city'],
+                    'pincode' => $addrDetails['pincode'],
+                    'postal_code' => $addrDetails['pincode'],
+                    'address_details' => $addrDetails['address_details'],
+                    'tiffin_id' => $order->tiffin_id,
+                    'tiffin_plan_name' => $order->tiffin,
+                    'tiffin' => $order->tiffin,
+                    'quantity' => $order->quantity,
+                    'amount' => $order->amount,
+                    'total_amount' => (string)$order->amount,
+                    'delivery_date' => $order->date,
+                    'date' => $order->date,
+                    'status' => $orderStatus,
+                    'driver' => $order->driver,
+                    'proof_of_delivery_photo' => $order->proof_of_delivery_photo ? asset('public/' . ltrim($order->proof_of_delivery_photo, '/')) : null,
+                    'proof_of_delivery_signature' => $order->proof_of_delivery_signature ? asset('public/' . ltrim($order->proof_of_delivery_signature, '/')) : null,
+                    'created_at' => $order->created_at,
+                    'is_paid' => $isPaid,
+                    'payment_status' => $paymentStatus,
+                    'weekly_bill_id' => $weeklyBillId,
+                    'bill_id' => $weeklyBillId,
+                    'invoice_id' => $weeklyBillId,
+                    'weekly_bill_status' => $weeklyBillStatus,
+                    'weekly_bill_amount' => $weeklyBillAmount,
+                    'week_range' => $weekRange,
+                    'is_weekly_billed' => true,
+                    'is_weekly_billing' => true,
+                    'billing_cycle' => 'Weekly Consolidated',
+                ];
+            });
+
         return response()->json([
             'success' => true,
-            'orders' => $orders
+            'orders' => $orders,
+            'data' => [
+                'data' => $orders,
+                'orders' => $orders,
+            ]
+        ]);
+    }
+
+    /**
+     * Get current week's running payment and order metrics.
+     */
+    public function getCurrentWeeklyPayment(Request $request)
+    {
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        // Ensure physical weekly invoice records exist
+        $this->ensureInvoicesForCustomerOrders($customer);
+
+        $now = Carbon::now();
+        $startOfWeek = $now->copy()->startOfWeek()->toDateString();
+        $endOfWeek = $now->copy()->endOfWeek()->toDateString();
+        $dueSunday = $now->copy()->endOfWeek()->format('d M Y');
+
+        $currentWeekOrders = \App\Models\Order::where('customer_id', $customer->id)
+            ->whereBetween('date', [$startOfWeek, $endOfWeek])
+            ->get();
+
+        $totalAmount = (float) $currentWeekOrders->sum('amount');
+        $totalOrders = $currentWeekOrders->count();
+
+        // Calculate overdue invoices (due date is strictly in past)
+        $overdueInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->whereDate('due_date', '<', $now->toDateString())
+            ->get();
+        $overdueBalance = (float) $overdueInvoices->sum('amount');
+        $hasOverdue = $overdueBalance > 0;
+        $overdueBillId = $hasOverdue ? 'overdue' : null;
+        $primaryOverdueId = $overdueInvoices->isNotEmpty() ? $overdueInvoices->first()->id : null;
+
+        // Calculate all outstanding unpaid invoices
+        $allUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->get();
+        $outstandingBalance = (float) $allUnpaid->sum('amount');
+
+        // Current week invoice
+        $prefix = 'INV-W' . $now->year . str_pad((string) $now->weekOfYear, 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
+        $currentWeekInv = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->where(function ($q) use ($prefix, $startOfWeek, $endOfWeek) {
+                $q->where('id', 'like', $prefix . '%')
+                  ->orWhereBetween('due_date', [$startOfWeek, $endOfWeek]);
+            })
+            ->first();
+
+        $currentWeekBillId = $currentWeekInv ? $currentWeekInv->id : ($prefix . '-001');
+
+        $currentWeekUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->where(function ($q) use ($prefix, $startOfWeek, $endOfWeek) {
+                $q->where('id', 'like', $prefix . '%')
+                  ->orWhereBetween('due_date', [$startOfWeek, $endOfWeek]);
+            })
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->sum('amount');
+        $currentWeekBalance = (float) ($currentWeekUnpaid > 0 ? $currentWeekUnpaid : ($totalAmount > 0 && (!$currentWeekInv || $currentWeekInv->status !== 'Paid') ? $totalAmount : 0.00));
+
+        $data = [
+            'id' => $currentWeekBillId,
+            'bill_id' => $currentWeekBillId,
+            'weekly_bill_id' => $currentWeekBillId,
+            'current_bill_id' => $currentWeekBillId,
+            'current_week_id' => $currentWeekBillId,
+            'total_orders' => $totalOrders,
+            'total_amount' => number_format($totalAmount, 2, '.', ''),
+            'current_week_amount' => round($totalAmount, 2),
+            'weekly_balance' => round($currentWeekBalance, 2),
+            'due_by' => $dueSunday,
+            'status' => $hasOverdue ? 'Overdue Invoices Pending' : ($totalAmount > 0 ? 'Pending Sunday Invoice' : 'Paid'),
+            'week_range' => Carbon::parse($startOfWeek)->format('d M Y') . ' - ' . Carbon::parse($endOfWeek)->format('d M Y'),
+            'start_date' => $startOfWeek,
+            'end_date' => $endOfWeek,
+            'orders' => $currentWeekOrders,
+            'has_overdue' => $hasOverdue,
+            'overdue_balance' => round($overdueBalance, 2),
+            'overdue_amount' => round($overdueBalance, 2),
+            'overdue_bill_id' => $overdueBillId,
+            'primary_overdue_bill_id' => $primaryOverdueId,
+            'overdue_invoices_count' => $overdueInvoices->count(),
+            'outstanding_balance' => round($outstandingBalance, 2),
+            'total_amount_due' => round($outstandingBalance > 0 ? $outstandingBalance : $totalAmount, 2),
+            'all_due_amount' => round($outstandingBalance > 0 ? $outstandingBalance : $totalAmount, 2),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $data
         ]);
     }
 
@@ -579,7 +852,11 @@ class AuthController extends Controller
      */
     public function placeCustomerOrder(Request $request)
     {
-        $customer = $request->attributes->get('customer');
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Customer not found or unauthorized.'], 401);
+        }
+        $customer = \App\Models\Customer::find($customer->id) ?: $customer;
 
         $now = Carbon::now();
         // Unpaid outstanding invoices from previous weeks (due date is strictly in the past)
@@ -590,39 +867,22 @@ class AuthController extends Controller
 
         $outstandingAmount = (float) $outstandingInvoices->sum('amount');
 
-        if ($outstandingAmount > 0) {
-            $earliestDueDate = $outstandingInvoices->min('due_date');
-            
-            // Count tiffins (quantity) ordered after this earliest due date
-            $postDueTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
-                ->where('date', '>', $earliestDueDate)
-                ->sum('quantity');
-
-            if ($postDueTiffinsCount >= 2) {
-                if ($customer->status !== 'Deactivated') {
-                    $customer->status = 'Deactivated';
-                    $customer->save();
-                }
-            }
-        } else {
-            // All overdue invoices are cleared (paid anytime during the week) - ensure customer is Active
-            if ($customer->status === 'Deactivated') {
-                $customer->status = 'Active';
-                $customer->save();
-            }
-        }
-
         if ($customer->status === 'Deactivated') {
             return response()->json([
                 'success' => false,
-                'message' => 'Your account is deactivated due to unpaid weekly invoices (AUD ' . number_format($outstandingAmount, 2) . '). You can pay your overdue balance anytime to reactivate your account and continue ordering.',
-                'has_overdue' => true,
+                'message' => $outstandingAmount > 0
+                    ? 'Your account is deactivated due to unpaid weekly invoices (AUD ' . number_format($outstandingAmount, 2) . '). You can pay your overdue balance anytime or contact admin to reactivate your account and continue ordering.'
+                    : 'Your account is currently deactivated by the administrator. Please contact support to reactivate your account.',
+                'has_overdue' => ($outstandingAmount > 0),
                 'overdue_amount' => round($outstandingAmount, 2),
                 'overdue_bill_id' => $outstandingInvoices->isNotEmpty() ? $outstandingInvoices->first()->id : null,
             ], 403);
         }
 
-        // Normalize tiffin_id if sent as id
+        // Normalize tiffin_plan_id or id if sent as tiffin_id
+        if (!$request->has('tiffin_id') && $request->has('tiffin_plan_id')) {
+            $request->merge(['tiffin_id' => $request->tiffin_plan_id]);
+        }
         if (!$request->has('tiffin_id') && $request->has('id')) {
             $request->merge(['tiffin_id' => $request->id]);
         }
@@ -766,14 +1026,24 @@ class AuthController extends Controller
 
         $orderId = 'ORD' . strtoupper(Str::random(8));
 
+        $orderAddressInfo = AddressHelper::extractAndFormat($request, $customer);
+        $orderStreet = $orderAddressInfo['street_address'];
+        $orderCity = $orderAddressInfo['city'];
+        $orderPincode = $orderAddressInfo['pincode'] ?: $customer->pincode;
+        $orderFormattedAddress = $orderAddressInfo['address'] ?: $customer->address;
+
         $order = \App\Models\Order::create([
             'id' => $orderId,
             'customer_id' => $customer->id,
             'customer' => $customer->name,
+            'customer_address' => $orderFormattedAddress,
+            'street_address' => $orderStreet,
+            'city' => $orderCity,
+            'pincode' => $orderPincode,
             'tiffin_id' => $tiffin->id,
             'tiffin' => $tiffin->name,
             'quantity' => $quantity,
-            'area' => $customer->pincode,
+            'area' => $orderPincode,
             'amount' => $amount,
             'status' => 'Pending',
             'date' => Carbon::now()->toDateString(),
@@ -826,17 +1096,6 @@ class AuthController extends Controller
                 $invoice->status = 'Pending';
             }
             $invoice->save();
-        }
-
-        if ($outstandingAmount > 0) {
-            $postDueTiffinsCount = \App\Models\Order::where('customer_id', $customer->id)
-                ->where('date', '>', $earliestDueDate)
-                ->sum('quantity');
-
-            if ($postDueTiffinsCount >= 2) {
-                $customer->status = 'Deactivated';
-                $customer->save();
-            }
         }
 
         $choicesLine = ($selectionsData && !empty($selectionsData['summary']))
@@ -903,7 +1162,14 @@ class AuthController extends Controller
 
     public function payWeeklyBill(Request $request)
     {
-        $customer = $request->attributes->get('customer');
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated or customer not found.',
+            ], 401);
+        }
+
         $billId = $request->input('bill_id') ?: $request->input('invoice_id') ?: $request->input('id');
         $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $billId, $request);
         $totalAmount = (float) $resolved['amount'];
@@ -960,7 +1226,12 @@ class AuthController extends Controller
         }
 
         $primaryInvoice = $resolved['invoices']->first();
-        $targetBillId = $primaryInvoice ? $primaryInvoice->id : ($billId ?: 'INV-WEEKLY');
+        $isOverdue = $resolved['is_overdue'] ?? false;
+        $isMultipleInvoices = $resolved['invoices']->count() > 1;
+
+        // Preserve specific bill_id if provided by client, otherwise use primary invoice id or overdue/all
+        $targetBillId = $billId
+            ?: ($isOverdue ? 'overdue' : ($primaryInvoice ? $primaryInvoice->id : 'INV-WEEKLY'));
 
         return response()->json([
             'success' => true,
@@ -972,13 +1243,22 @@ class AuthController extends Controller
             'weekly_bill_id' => $targetBillId,
             'bill_id' => $targetBillId,
             'invoice_id' => $targetBillId,
-            'is_overdue' => $resolved['is_overdue'] ?? false,
+            'is_overdue' => $isOverdue,
+            'invoices_count' => $resolved['invoices']->count(),
+            'invoice_ids' => $resolved['invoices']->pluck('id')->toArray(),
         ]);
     }
 
     public function confirmWeeklyBillPayment(Request $request)
     {
-        $customer = $request->attributes->get('customer');
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated or customer not found.',
+            ], 401);
+        }
+
         $paymentIntentId = $request->input('payment_intent_id');
 
         if (!$paymentIntentId) {
@@ -1017,6 +1297,7 @@ class AuthController extends Controller
 
         $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
         $paymentCleared = false;
+        $actualPaidAmount = 0.0;
 
         if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
             try {
@@ -1031,6 +1312,9 @@ class AuthController extends Controller
                     } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
                         $paymentCleared = true;
                     }
+                    if (isset($data['amount'])) {
+                        $actualPaidAmount = ((float) $data['amount']) / 100.0;
+                    }
                 }
             } catch (\Exception $e) {
                 return response()->json([
@@ -1043,30 +1327,84 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
-            // Settle all resolved invoices
+            $settleAmount = $actualPaidAmount > 0 
+                ? $actualPaidAmount 
+                : ((float) ($request->input('amount') ?: $totalAmount));
+
+            // Settle all resolved invoices first
+            $settledInvoices = collect([]);
             foreach ($invoices as $invoice) {
                 $invoice->status = 'Paid';
                 $invoice->save();
+                $settledInvoices->push($invoice);
             }
 
-            // Settle orders in the week if available
-            if (!empty($resolved['start_date']) && !empty($resolved['end_date'])) {
+            // FIFO Check: If settleAmount is greater than the sum of already settled invoices,
+            // or if there are other unpaid overdue invoices and the paid amount covers them,
+            // settle all remaining unpaid invoices in chronological order up to settleAmount.
+            $alreadySettledSum = (float) $settledInvoices->sum('amount');
+            $remainingPayment = $settleAmount - $alreadySettledSum;
+
+            if ($remainingPayment > 0.01 || ($resolved['is_overdue'] ?? false)) {
+                $otherUnpaidInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                    ->whereIn('status', ['Pending', 'Unpaid'])
+                    ->whereNotIn('id', $settledInvoices->pluck('id')->toArray())
+                    ->orderBy('due_date', 'asc')
+                    ->orderBy('created_at', 'asc')
+                    ->get();
+
+                foreach ($otherUnpaidInvoices as $otherInv) {
+                    if ($remainingPayment >= ((float) $otherInv->amount - 0.05) || (($resolved['is_overdue'] ?? false) && $settleAmount >= (float) $otherInv->amount)) {
+                        $otherInv->status = 'Paid';
+                        $otherInv->save();
+                        $settledInvoices->push($otherInv);
+                        $remainingPayment -= (float) $otherInv->amount;
+                    }
+                }
+            }
+
+            // Settle corresponding orders in the week/order_id for all settled invoices
+            foreach ($settledInvoices as $sinv) {
+                if ($sinv->order_id) {
+                    $orderIds = array_filter(array_map('trim', explode(',', $sinv->order_id)));
+                    if (!empty($orderIds)) {
+                        \App\Models\Order::where('customer_id', $customer->id)
+                            ->whereIn('id', $orderIds)
+                            ->where('status', 'Payment Pending')
+                            ->update(['status' => 'Pending']);
+                    }
+                }
+                if ($sinv->due_date) {
+                    $dt = Carbon::parse($sinv->due_date);
+                    $wStart = $dt->copy()->startOfWeek()->toDateString();
+                    $wEnd = $dt->copy()->endOfWeek()->toDateString();
+                    \App\Models\Order::where('customer_id', $customer->id)
+                        ->whereBetween('date', [$wStart, $wEnd])
+                        ->where('status', 'Payment Pending')
+                        ->update(['status' => 'Pending']);
+                }
+            }
+
+            // Settle any remaining past Payment Pending orders
+            if ($resolved['is_overdue'] ?? false) {
                 \App\Models\Order::where('customer_id', $customer->id)
-                    ->whereBetween('date', [$resolved['start_date'], $resolved['end_date']])
                     ->where('status', 'Payment Pending')
-                    ->update(['status' => 'Pending']);
-            } else {
-                \App\Models\Order::where('customer_id', $customer->id)
-                    ->where('status', 'Payment Pending')
+                    ->whereDate('date', '<=', Carbon::today()->toDateString())
                     ->update(['status' => 'Pending']);
             }
+
+            $finalPaidAmount = $settleAmount > 0 ? $settleAmount : (float) $settledInvoices->sum('amount');
+            $weekCount = $settledInvoices->count();
+            $planLabel = $weekCount > 1 
+                ? "Overdue Weekly Bills ({$weekCount} weeks)" 
+                : ($resolved['label'] ?: 'Weekly Bill Payment');
 
             \App\Models\Payment::create([
                 'id' => 'TXN' . strtoupper(Str::random(8)),
                 'customer_id' => $customer->id,
                 'customer' => $customer->name,
-                'plan' => $resolved['label'],
-                'amount' => $totalAmount,
+                'plan' => $planLabel,
+                'amount' => $finalPaidAmount,
                 'date' => Carbon::now()->toDateString(),
                 'status' => 'Successful',
                 'payment_intent_id' => $paymentIntentId,
@@ -1083,18 +1421,36 @@ class AuthController extends Controller
                 $customer->save();
             }
 
+            // Admin Database Notification
             \App\Models\Notification::create([
                 'title' => 'Weekly Bill Paid',
-                'message' => "Thank you! Your payment of AUD " . number_format($totalAmount, 2) . " for {$resolved['label']} was successful. Your account is active.",
+                'message' => "Customer {$customer->name} has paid AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel}.",
+                'user_type' => 'admin',
+                'user_id' => null,
+                'read_status' => false,
+            ]);
+
+            // Admin FCM Push Notification
+            FcmService::sendToAdmin(
+                'Weekly Bill Paid',
+                "Customer {$customer->name} has paid AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel}.",
+                ['type' => 'weekly_bill_paid', 'customer_id' => (string)$customer->id, 'amount' => (string)$finalPaidAmount]
+            );
+
+            // Customer Database Notification
+            \App\Models\Notification::create([
+                'title' => 'Weekly Bill Paid',
+                'message' => "Thank you! Your payment of AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel} was successful. Your account is active.",
                 'user_type' => 'customer',
                 'user_id' => $customer->id,
                 'read_status' => false,
             ]);
 
+            // Customer FCM Push Notification
             FcmService::sendToCustomer(
                 $customer->id,
                 'Weekly Bill Paid',
-                "Your weekly payment of AUD " . number_format($totalAmount, 2) . " was successful. Your account is active.",
+                "Your weekly payment of AUD " . number_format($finalPaidAmount, 2) . " was successful. Your account is active.",
                 ['type' => 'payment_success']
             );
 
@@ -1110,12 +1466,14 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Weekly bill payment confirmed successfully. Your account is active and you can continue ordering.',
-                'amount_paid' => $totalAmount,
+                'amount_paid' => $finalPaidAmount,
                 'outstanding_balance' => round((float) $remainingUnpaid, 2),
                 'overdue_balance' => round((float) $remainingOverdue, 2),
                 'weekly_balance' => 0.00,
                 'account_status' => $customer->status,
                 'can_order' => ($customer->status === 'Active'),
+                'settled_invoices_count' => $settledInvoices->count(),
+                'settled_invoice_ids' => $settledInvoices->pluck('id')->toArray(),
             ]);
         }
 
@@ -1167,7 +1525,8 @@ class AuthController extends Controller
             ->get();
         $overdueBalance = (float) $overdueInvoices->sum('amount');
         $hasOverdue = $overdueBalance > 0;
-        $overdueBillId = $overdueInvoices->isNotEmpty() ? $overdueInvoices->first()->id : null;
+        $overdueBillId = $hasOverdue ? 'overdue' : null;
+        $primaryOverdueId = $overdueInvoices->isNotEmpty() ? $overdueInvoices->first()->id : null;
 
         // Auto-reactivate customer if overdue balance cleared
         if (!$hasOverdue && $customer->status === 'Deactivated') {
@@ -1183,13 +1542,11 @@ class AuthController extends Controller
         $currentWeekOrdersCount = $currentWeekOrders->count();
 
         // Invoices for this particular week
+        $currentWeekPrefix = 'INV-W' . Carbon::parse($startOfWeek)->year . str_pad((string) Carbon::parse($startOfWeek)->weekOfYear, 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
         $currentWeekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
-            ->where(function ($q) use ($startOfWeek, $endOfWeek) {
-                $q->whereBetween('due_date', [$startOfWeek, $endOfWeek])
-                    ->orWhereBetween('created_at', [
-                        Carbon::parse($startOfWeek)->startOfDay(),
-                        Carbon::parse($endOfWeek)->endOfDay(),
-                    ]);
+            ->where(function ($q) use ($startOfWeek, $endOfWeek, $currentWeekPrefix) {
+                $q->where('id', 'like', $currentWeekPrefix . '%')
+                  ->orWhereBetween('due_date', [$startOfWeek, $endOfWeek]);
             })
             ->get();
 
@@ -1360,6 +1717,9 @@ class AuthController extends Controller
             'overdue_amount' => round($overdueBalance, 2),
             'has_overdue' => $hasOverdue,
             'overdue_bill_id' => $overdueBillId,
+            'primary_overdue_bill_id' => $primaryOverdueId,
+            'overdue_invoices_count' => $overdueInvoices->count(),
+            'overdue_bill_ids' => $overdueInvoices->pluck('id')->toArray(),
             'weekly_balance' => round($currentWeekBalance, 2),
             'total_amount_due' => round($outstandingBalance, 2),
             'current_week' => [
@@ -1377,6 +1737,7 @@ class AuthController extends Controller
                 'has_overdue' => $hasOverdue,
                 'overdue_amount' => round($overdueBalance, 2),
                 'overdue_bill_id' => $overdueBillId,
+                'primary_overdue_bill_id' => $primaryOverdueId,
                 'orders' => $currentWeekOrders,
             ],
             'invoices' => $invoices,
@@ -1391,7 +1752,13 @@ class AuthController extends Controller
      */
     public function customerInvoiceDetails(Request $request, $id)
     {
-        $customer = $request->attributes->get('customer');
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated or customer not found.',
+            ], 401);
+        }
         $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $id, $request);
 
         $primaryInvoice = $resolved['invoices']->first();
@@ -1543,10 +1910,52 @@ class AuthController extends Controller
         if ($request->has('confirm_password') && !$request->has('password_confirmation')) {
             $request->merge(['password_confirmation' => $request->confirm_password]);
         }
+        if ($request->has('password_confirmation') && !$request->has('confirm_password')) {
+            $request->merge(['confirm_password' => $request->password_confirmation]);
+        }
+
+        // Normalize suburbs and postcode aliases
+        if ($request->has('suburbs') && !$request->has('suburb')) {
+            $request->merge(['suburb' => $request->suburbs]);
+        }
+        if ($request->has('suburb') && !$request->has('city')) {
+            $request->merge(['city' => $request->suburb]);
+        }
+        if ($request->has('postcode') && !$request->has('pincode')) {
+            $request->merge(['pincode' => $request->postcode]);
+        }
+
+        // Normalize license and vehicle field aliases from mobile apps
+        if ($request->has('license_number') && !$request->has('license_no')) {
+            $request->merge(['license_no' => $request->license_number]);
+        }
+        if ($request->has('vehicle_number') && !$request->has('vehicle_reg_no')) {
+            $request->merge(['vehicle_reg_no' => $request->vehicle_number]);
+        }
 
         // Normalize area and assigned_zip
+        if ($request->has('postcode') && !$request->has('assigned_zip')) {
+            $request->merge(['assigned_zip' => $request->postcode]);
+        }
         if ($request->has('area') && !$request->has('assigned_zip')) {
             $request->merge(['assigned_zip' => $request->area]);
+        }
+        if ($request->has('delivery_area') && !$request->has('assigned_zip')) {
+            $request->merge(['assigned_zip' => $request->delivery_area]);
+        }
+
+        // Extract structured address fields (street_address, city/suburb, pincode/postcode, address)
+        $addressInfo = AddressHelper::extractAndFormat($request);
+        $streetAddress = $addressInfo['street_address'];
+        $city = $addressInfo['city'];
+        $pincode = $addressInfo['pincode'];
+        $formattedAddress = $addressInfo['address'];
+
+        if ($formattedAddress && !$request->has('address')) {
+            $request->merge(['address' => $formattedAddress]);
+        }
+        if ($pincode && !$request->has('assigned_zip')) {
+            $request->merge(['assigned_zip' => $pincode]);
         }
 
         $validator = Validator::make($request->all(), [
@@ -1556,7 +1965,16 @@ class AuthController extends Controller
             'phone' => 'required|string|max:50',
             'email' => 'required|email|max:255',
             'password' => 'required|string|min:6|confirmed',
+            'confirm_password' => 'required_without:password_confirmation|string|min:6',
+            'password_confirmation' => 'required_without:confirm_password|string|min:6',
             'address' => 'nullable|string',
+            'street_address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'suburb' => 'nullable|string',
+            'suburbs' => 'nullable|string',
+            'town' => 'nullable|string',
+            'pincode' => 'nullable|string|max:20',
+            'postcode' => 'nullable|string|max:20',
             'license_no' => 'nullable|string|max:100',
             'license_expiry' => 'nullable|date',
             'vehicle_reg_no' => 'nullable|string|max:50',
@@ -1565,6 +1983,13 @@ class AuthController extends Controller
             'license_copy_front' => 'nullable',
             'license_copy_back' => 'nullable',
             'profile_image' => 'nullable',
+            'vehicle_reg_image' => 'nullable',
+            'vehicle_registration_image' => 'nullable',
+            'vehicle_reg_doc' => 'nullable',
+        ], [
+            'password.confirmed' => 'The password and confirm password do not match.',
+            'confirm_password.required_without' => 'The confirm password field is required.',
+            'password_confirmation.required_without' => 'The confirm password field is required.',
         ]);
 
         if ($validator->fails()) {
@@ -1582,39 +2007,42 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $licenseFront = $this->saveUploadedImage(
+        $licenseFront = ImageUploadHelper::saveLicenseFront(
             $request,
-            ['license_copy_front', 'license_front', 'license_front_image'],
-            'license_front_drv_' . time(),
-            'uploads/licenses'
+            'license_front_drv_' . time()
         );
 
-        $licenseBack = $this->saveUploadedImage(
+        $licenseBack = ImageUploadHelper::saveLicenseBack(
             $request,
-            ['license_copy_back', 'license_back', 'license_back_image'],
-            'license_back_drv_' . time(),
-            'uploads/licenses'
+            'license_back_drv_' . time()
         );
 
-        $profileImage = $this->saveUploadedImage(
+        $profileImage = ImageUploadHelper::saveProfileImage(
             $request,
-            ['profile_image', 'image', 'avatar', 'photo', 'file'],
-            'profile_drv_' . time(),
-            'uploads/profiles'
+            'profile_drv_' . time()
         );
 
-        $assignedZip = $request->assigned_zip ? trim($request->assigned_zip) : ($request->area ? trim($request->area) : null);
+        $vehicleRegImage = ImageUploadHelper::saveVehicleReg(
+            $request,
+            'vehicle_reg_drv_' . time()
+        );
+
+        $assignedZip = $request->assigned_zip ? trim($request->assigned_zip) : ($pincode ?: ($request->area ? trim($request->area) : null));
 
         $driver = \App\Models\Driver::create([
             'name' => trim($request->name),
             'phone' => trim($request->phone),
             'email' => $email,
             'password' => Hash::make($request->password),
-            'address' => $request->address ? trim($request->address) : null,
+            'street_address' => $streetAddress,
+            'city' => $city,
+            'pincode' => $pincode ?: ($assignedZip ?: null),
+            'address' => $formattedAddress ?: ($request->address ? trim($request->address) : null),
             'license_no' => $request->license_no ? trim($request->license_no) : null,
             'license_copy_front' => $licenseFront,
             'license_copy_back' => $licenseBack,
             'profile_image' => $profileImage,
+            'vehicle_reg_image' => $vehicleRegImage,
             'license_expiry' => $request->license_expiry ? trim($request->license_expiry) : null,
             'vehicle_reg_no' => $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null,
             'assigned_zip' => $assignedZip,
@@ -1652,28 +2080,43 @@ class AuthController extends Controller
             Log::warning("Driver registration email triggers failed: " . $e->getMessage());
         }
 
+        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+
+        $driverData = array_merge([
+            'id' => $driver->id,
+            'name' => $driver->name,
+            'first_name' => $driver->first_name,
+            'last_name' => $driver->last_name,
+            'email' => $driver->email,
+            'phone' => $driver->phone,
+            'vehicle_reg_no' => $driver->vehicle_reg_no,
+            'vehicle_number' => $driver->vehicle_reg_no,
+            'license_no' => $driver->license_no,
+            'license_number' => $driver->license_no,
+            'license_expiry' => $driver->license_expiry,
+            'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
+            'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+            'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
+            'vehicle_reg_image' => $vehicleRegUrl,
+            'vehicle_registration_image' => $vehicleRegUrl,
+            'vehicle_reg_doc' => $vehicleRegUrl,
+            'assigned_zip' => $driver->assigned_zip,
+            'area' => $driver->area,
+            'approval_status' => $driver->approval_status,
+            'status' => 'pending',
+            'user_type' => $driver->user_type,
+        ], AddressHelper::formatResponsePayload($driver));
+
         return response()->json([
             'success' => true,
             'message' => 'Registration submitted. Your account is pending admin approval - you will be able to log in once it is approved.',
             'token' => null,
             'approval_status' => $driver->approval_status,
             'user_type' => $driver->user_type,
-            'driver' => [
-                'id' => $driver->id,
-                'name' => $driver->name,
-                'first_name' => $driver->first_name,
-                'last_name' => $driver->last_name,
-                'email' => $driver->email,
-                'phone' => $driver->phone,
-                'address' => $driver->address,
-                'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'license_no' => $driver->license_no,
-                'license_expiry' => $driver->license_expiry,
-                'license_copy_front' => $driver->license_copy_front ? asset($driver->license_copy_front) : null,
-                'license_copy_back' => $driver->license_copy_back ? asset($driver->license_copy_back) : null,
-                'profile_image' => $driver->profile_image ? asset($driver->profile_image) : null,
-                'assigned_zip' => $driver->assigned_zip,
-                'area' => $driver->area,
+            'driver' => $driverData,
+            'data' => [
+                'driver' => $driverData,
+                'user' => $driverData,
                 'approval_status' => $driver->approval_status,
             ]
         ], 201);
@@ -1684,22 +2127,21 @@ class AuthController extends Controller
      */
     public function driverLogin(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
+        $loginInput = trim($request->input('email') ?: $request->input('phone') ?: $request->input('username') ?: '');
+        $password = $request->input('password');
 
-        if ($validator->fails()) {
+        if (empty($loginInput) || empty($password)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Please provide email and password.',
+                'message' => 'Please provide email or phone and password.',
             ], 422);
         }
 
-        $email = strtolower(trim($request->email));
-        $driver = \App\Models\Driver::where('email', $email)->first();
+        $driver = \App\Models\Driver::where('email', strtolower($loginInput))
+            ->orWhere('phone', $loginInput)
+            ->first();
 
-        if (!$driver || !Hash::check($request->password, $driver->password)) {
+        if (!$driver || !Hash::check($password, $driver->password)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid credentials.',
@@ -1754,17 +2196,44 @@ class AuthController extends Controller
             Log::warning("Driver login alert email failed: " . $e->getMessage());
         }
 
+        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+
+        $driverData = array_merge([
+            'id' => $driver->id,
+            'name' => $driver->name,
+            'first_name' => $driver->first_name,
+            'last_name' => $driver->last_name,
+            'email' => $driver->email,
+            'phone' => $driver->phone,
+            'vehicle_reg_no' => $driver->vehicle_reg_no,
+            'vehicle_number' => $driver->vehicle_reg_no,
+            'license_no' => $driver->license_no,
+            'license_number' => $driver->license_no,
+            'license_expiry' => $driver->license_expiry,
+            'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
+            'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+            'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
+            'vehicle_reg_image' => $vehicleRegUrl,
+            'vehicle_registration_image' => $vehicleRegUrl,
+            'vehicle_reg_doc' => $vehicleRegUrl,
+            'assigned_zip' => $driver->assigned_zip,
+            'area' => $driver->area,
+            'approval_status' => $driver->approval_status,
+            'status' => 'active', // Lowercase for frontend condition matching
+            'account_status' => $driver->status ?? 'Active',
+            'user_type' => $driver->user_type,
+        ], AddressHelper::formatResponsePayload($driver));
+
         return response()->json([
             'success' => true,
             'message' => 'Driver login successful.',
             'token' => $token,
             'user_type' => $driver->user_type,
-            'driver' => [
-                'id' => $driver->id,
-                'name' => $driver->name,
-                'email' => $driver->email,
-                'phone' => $driver->phone,
-                'assigned_zip' => $driver->assigned_zip,
+            'driver' => $driverData,
+            'data' => [
+                'token' => $token,
+                'driver' => $driverData,
+                'user' => $driverData,
             ]
         ]);
     }
@@ -1791,30 +2260,37 @@ class AuthController extends Controller
     public function driverProfile(Request $request)
     {
         $driver = $request->attributes->get('driver');
+        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+
+        $driverData = array_merge([
+            'id' => $driver->id,
+            'name' => $driver->name,
+            'first_name' => $driver->first_name,
+            'last_name' => $driver->last_name,
+            'email' => $driver->email,
+            'phone' => $driver->phone,
+            'license_no' => $driver->license_no,
+            'license_expiry' => $driver->license_expiry,
+            'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
+            'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+            'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
+            'vehicle_reg_no' => $driver->vehicle_reg_no,
+            'vehicle_reg_image' => $vehicleRegUrl,
+            'vehicle_registration_image' => $vehicleRegUrl,
+            'vehicle_reg_doc' => $vehicleRegUrl,
+            'assigned_zip' => $driver->assigned_zip,
+            'area' => $driver->area,
+            'status' => $driver->status,
+            'approval_status' => $driver->approval_status,
+            'user_type' => $driver->user_type,
+            'total_assigned_orders' => $driver->orders()->count(),
+            'active_shipments' => $driver->orders()->whereIn('status', ['Cooking', 'Dispatched'])->count(),
+            'recent_deliveries' => $driver->orders()->latest()->take(5)->get(),
+        ], AddressHelper::formatResponsePayload($driver));
+
         return response()->json([
             'success' => true,
-            'driver' => [
-                'id' => $driver->id,
-                'name' => $driver->name,
-                'first_name' => $driver->first_name,
-                'last_name' => $driver->last_name,
-                'email' => $driver->email,
-                'phone' => $driver->phone,
-                'address' => $driver->address,
-                'license_no' => $driver->license_no,
-                'license_expiry' => $driver->license_expiry,
-                'license_copy_front' => $driver->license_copy_front ? asset($driver->license_copy_front) : null,
-                'license_copy_back' => $driver->license_copy_back ? asset($driver->license_copy_back) : null,
-                'profile_image' => $driver->profile_image ? asset($driver->profile_image) : null,
-                'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'assigned_zip' => $driver->assigned_zip,
-                'area' => $driver->area,
-                'status' => $driver->status,
-                'user_type' => $driver->user_type,
-                'total_assigned_orders' => $driver->orders()->count(),
-                'active_shipments' => $driver->orders()->whereIn('status', ['Cooking', 'Dispatched'])->count(),
-                'recent_deliveries' => $driver->orders()->latest()->take(5)->get(),
-            ]
+            'driver' => $driverData
         ]);
     }
 
@@ -2472,28 +2948,44 @@ class AuthController extends Controller
             ->map(function ($order) {
                 $customer = $order->customerRelation;
                 $addons = is_string($order->add_ons) ? json_decode($order->add_ons, true) : ($order->add_ons ?? []);
+                $cleanStatus = strtolower(str_replace(' ', '_', $order->status ?? 'pending'));
+
+                $addrDetails = AddressHelper::extractAndFormat($order, $customer);
+                $formattedOrderAddress = $addrDetails['address'];
 
                 return [
                     'id' => $order->id,
+                    'order_number' => $order->order_number ?: ('ORD-' . $order->id),
                     'customer_id' => $order->customer_id,
                     'customer' => $customer ? $customer->name : $order->customer,
-                    'customer_phone' => $customer ? $customer->phone : null,
-                    'customer_address' => $customer ? $customer->address : null,
-                    'pincode' => $customer ? $customer->pincode : $order->area,
+                    'customer_name' => $customer ? $customer->name : ($order->customer ?? 'Customer'),
+                    'customer_phone' => $customer ? $customer->phone : '',
+                    'customer_address' => $formattedOrderAddress,
+                    'delivery_address' => $formattedOrderAddress,
+                    'formatted_address' => $formattedOrderAddress,
+                    'street_address' => $addrDetails['street_address'],
+                    'city' => $addrDetails['city'],
+                    'suburb' => $addrDetails['city'],
+                    'pincode' => $addrDetails['pincode'],
+                    'postal_code' => $addrDetails['pincode'],
+                    'address_details' => $addrDetails['address_details'],
                     'driver_id' => $order->driver_id,
                     'driver' => $order->driver,
                     'tiffin_id' => $order->tiffin_id,
                     'tiffin' => $order->tiffin,
                     'quantity' => $order->quantity,
                     'amount' => $order->amount,
-                    'status' => $order->status,
+                    'total_amount' => (string)$order->amount,
+                    'status' => $cleanStatus,
+                    'display_status' => $order->status,
                     'area' => $order->area,
                     'date' => $order->date,
                     'add_ons' => $addons,
                     'selections' => $order->selections,
                     'note' => $order->note,
-                    'proof_of_delivery_photo' => $order->proof_of_delivery_photo ? asset($order->proof_of_delivery_photo) : null,
-                    'proof_of_delivery_signature' => $order->proof_of_delivery_signature ? asset($order->proof_of_delivery_signature) : null,
+                    'customer_note' => $order->note ?? '',
+                    'proof_of_delivery_photo' => $order->proof_of_delivery_photo ? asset('public/' . ltrim($order->proof_of_delivery_photo, '/')) : null,
+                    'proof_of_delivery_signature' => $order->proof_of_delivery_signature ? asset('public/' . ltrim($order->proof_of_delivery_signature, '/')) : null,
                     'created_at' => $order->created_at,
                     'updated_at' => $order->updated_at,
                 ];
@@ -2501,7 +2993,87 @@ class AuthController extends Controller
 
         return response()->json([
             'success' => true,
-            'orders' => $orders
+            'orders' => $orders,
+            'data' => [
+                'data' => $orders,
+                'orders' => $orders,
+            ]
+        ]);
+    }
+
+    /**
+     * Get details of a single assigned order for the driver.
+     */
+    public function getDriverOrderDetails(Request $request, $id)
+    {
+        $driver = $request->attributes->get('driver');
+        if (!$driver) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
+        }
+
+        $order = \App\Models\Order::with('customerRelation')
+            ->where('id', $id)
+            ->where('driver_id', $driver->id)
+            ->first();
+
+        if (!$order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found or not assigned to this driver.'
+            ], 404);
+        }
+
+        $customer = $order->customerRelation;
+        $addons = is_string($order->add_ons) ? json_decode($order->add_ons, true) : ($order->add_ons ?? []);
+        $cleanStatus = strtolower(str_replace(' ', '_', $order->status ?? 'pending'));
+
+        $addrDetails = AddressHelper::extractAndFormat($order, $customer);
+        $formattedOrderAddress = $addrDetails['address'];
+
+        $orderData = [
+            'id' => $order->id,
+            'order_number' => $order->order_number ?: ('ORD-' . $order->id),
+            'customer_id' => $order->customer_id,
+            'customer_name' => $customer ? $customer->name : ($order->customer ?? 'Customer'),
+            'customer_phone' => $customer ? $customer->phone : '',
+            'customer_address' => $formattedOrderAddress,
+            'delivery_address' => $formattedOrderAddress,
+            'formatted_address' => $formattedOrderAddress,
+            'street_address' => $addrDetails['street_address'],
+            'city' => $addrDetails['city'],
+            'suburb' => $addrDetails['city'],
+            'pincode' => $addrDetails['pincode'],
+            'postal_code' => $addrDetails['pincode'],
+            'address_details' => $addrDetails['address_details'],
+            'driver_id' => $order->driver_id,
+            'tiffin_id' => $order->tiffin_id,
+            'tiffin' => $order->tiffin,
+            'quantity' => $order->quantity,
+            'amount' => $order->amount,
+            'total_amount' => (string)$order->amount,
+            'status' => $cleanStatus,
+            'display_status' => $order->status,
+            'area' => $order->area,
+            'date' => $order->date,
+            'add_ons' => $addons,
+            'selections' => $order->selections,
+            'customer_note' => $order->note ?? '',
+            'driver_note' => $order->driver_note ?? '',
+            'proof_of_delivery_photo' => $order->proof_of_delivery_photo ? asset('public/' . ltrim($order->proof_of_delivery_photo, '/')) : null,
+            'proof_of_delivery_signature' => $order->proof_of_delivery_signature ? asset('public/' . ltrim($order->proof_of_delivery_signature, '/')) : null,
+            'created_at' => $order->created_at,
+            'updated_at' => $order->updated_at,
+        ];
+
+        return response()->json([
+            'success' => true,
+            'order' => $orderData,
+            'data' => [
+                'order' => $orderData,
+            ]
         ]);
     }
 
@@ -2529,53 +3101,105 @@ class AuthController extends Controller
             ], 404);
         }
 
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|string|in:Pending,Out for Delivery,Delivered,Failed',
-            'proof_photo' => 'nullable|image|max:5120',
-            'proof_signature' => 'nullable|image|max:5120',
-        ]);
+        $statusMap = [
+            'delivered' => 'Delivered',
+            'out_for_delivery' => 'Out for Delivery',
+            'failed' => 'Failed',
+            'pending' => 'Pending',
+            'assigned' => 'Out for Delivery',
+            'out for delivery' => 'Out for Delivery',
+        ];
+        $rawStatus = strtolower(trim(str_replace('_', ' ', $request->input('status', ''))));
+        $normalizedStatus = $statusMap[$rawStatus] ?? ucfirst($request->input('status', 'Pending'));
 
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
-            ], 422);
+        $order->status = $normalizedStatus;
+
+        if ($request->filled('driver_note') || $request->filled('note')) {
+            $noteText = $request->input('driver_note') ?: $request->input('note');
+            $order->note = $order->note ? ($order->note . " | Driver: " . $noteText) : ("Driver: " . $noteText);
         }
 
-        $order->status = $request->status;
+        // Ensure pod directory exists
+        $podDir = public_path('uploads/pod');
+        if (!\Illuminate\Support\Facades\File::exists($podDir)) {
+            \Illuminate\Support\Facades\File::makeDirectory($podDir, 0777, true, true);
+        }
 
-        // Handle proof of delivery photo upload
-        if ($request->hasFile('proof_photo')) {
-            $file = $request->file('proof_photo');
-            $uploadedHash = md5_file($file->getRealPath());
+        // Handle proof of delivery photo upload (accept proof_photo, delivery_proof, photo, image, proof_of_delivery_photo, drop_photo, pod_photo, delivery_image, etc.)
+        $photoFile = $request->file('proof_photo')
+            ?: $request->file('delivery_proof')
+            ?: $request->file('photo')
+            ?: $request->file('image')
+            ?: $request->file('proof_of_delivery_photo')
+            ?: $request->file('drop_photo')
+            ?: $request->file('pod_photo')
+            ?: $request->file('drop_image')
+            ?: $request->file('delivery_image')
+            ?: $request->file('file')
+            ?: $request->file('attachment');
 
-            // Check against existing orders' pod photos
-            $existingOrders = \App\Models\Order::whereNotNull('proof_of_delivery_photo')->get();
-            foreach ($existingOrders as $existingOrder) {
-                if ($existingOrder->id !== $order->id) {
-                    $existingFilePath = public_path($existingOrder->proof_of_delivery_photo);
-                    if (file_exists($existingFilePath)) {
-                        if (md5_file($existingFilePath) === $uploadedHash) {
-                            return response()->json([
-                                'success' => false,
-                                'message' => 'Please take a new photo. You cannot upload the same image for multiple deliveries.'
-                            ], 422);
-                        }
-                    }
+        if ($photoFile) {
+            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $photoFile->getClientOriginalExtension();
+            $photoFile->move($podDir, $fileName);
+            $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
+        } else {
+            $base64Input = $request->input('proof_photo')
+                ?: $request->input('delivery_proof')
+                ?: $request->input('photo')
+                ?: $request->input('image')
+                ?: $request->input('proof_of_delivery_photo')
+                ?: $request->input('drop_photo')
+                ?: $request->input('pod_photo')
+                ?: $request->input('drop_image');
+
+            if ($base64Input && is_string($base64Input) && (str_starts_with($base64Input, 'data:image/') || strlen($base64Input) > 100)) {
+                $imageType = 'jpg';
+                $imageData = $base64Input;
+                if (str_starts_with($base64Input, 'data:image/')) {
+                    $parts = explode(';base64,', $base64Input);
+                    $typeParts = explode('image/', $parts[0]);
+                    $imageType = $typeParts[1] ?? 'jpg';
+                    $imageData = $parts[1] ?? '';
+                }
+                $decoded = base64_decode($imageData);
+                if ($decoded !== false) {
+                    $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $imageType;
+                    \Illuminate\Support\Facades\File::put($podDir . '/' . $fileName, $decoded);
+                    $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
                 }
             }
-
-            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-            $file->move(public_path('uploads/pod'), $fileName);
-            $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
         }
 
-        // Handle proof of delivery signature upload
-        if ($request->hasFile('proof_signature')) {
-            $file = $request->file('proof_signature');
-            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-            $file->move(public_path('uploads/pod'), $fileName);
+        // Handle proof of delivery signature upload (file or base64)
+        $sigFile = $request->file('proof_signature')
+            ?: $request->file('signature')
+            ?: $request->file('customer_signature');
+
+        if ($sigFile) {
+            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $sigFile->getClientOriginalExtension();
+            $sigFile->move($podDir, $fileName);
             $order->proof_of_delivery_signature = 'uploads/pod/' . $fileName;
+        } else {
+            $sigInput = $request->input('proof_signature')
+                ?: $request->input('signature')
+                ?: $request->input('customer_signature');
+
+            if ($sigInput && is_string($sigInput) && (str_starts_with($sigInput, 'data:image/') || strlen($sigInput) > 100)) {
+                $imageType = 'png';
+                $sigData = $sigInput;
+                if (str_starts_with($sigInput, 'data:image/')) {
+                    $parts = explode(';base64,', $sigInput);
+                    $typeParts = explode('image/', $parts[0]);
+                    $imageType = $typeParts[1] ?? 'png';
+                    $sigData = $parts[1] ?? '';
+                }
+                $decoded = base64_decode($sigData);
+                if ($decoded !== false) {
+                    $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $imageType;
+                    \Illuminate\Support\Facades\File::put($podDir . '/' . $fileName, $decoded);
+                    $order->proof_of_delivery_signature = 'uploads/pod/' . $fileName;
+                }
+            }
         }
 
         $order->save();
@@ -2608,7 +3232,207 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Order status updated successfully.',
-            'order' => $order
+            'order' => $order,
+            'data' => [
+                'order' => $order,
+            ]
+        ]);
+    }
+
+    /**
+     * Dedicated Driver POD Upload API: POST /driver/orders/upload-pod
+     * Uploads proof of delivery image/signature and updates order status to Delivered.
+     */
+    public function driverUploadPod(Request $request, $id = null)
+    {
+        $orderId = $id ?: $request->input('order_id') ?: $request->input('id');
+        if (!$orderId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order ID is required. Please provide order_id or id.'
+            ], 422);
+        }
+
+        $driver = $request->attributes->get('driver');
+        if (!$driver) {
+            // Check Authorization Bearer Token
+            $authHeader = $request->header('Authorization');
+            if ($authHeader && preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
+                $token = $matches[1];
+                $driver = \App\Models\Driver::where('remember_token', $token)->first();
+            }
+            if (!$driver && $request->filled('driver_id')) {
+                $driver = \App\Models\Driver::find($request->input('driver_id'));
+            }
+        }
+
+        $query = \App\Models\Order::where('id', $orderId);
+        if ($driver) {
+            $order = (clone $query)->where(function ($q) use ($driver) {
+                $q->where('driver_id', $driver->id)
+                    ->orWhere('driver', $driver->name)
+                    ->orWhereNull('driver_id')
+                    ->orWhere('driver', 'Unassigned');
+            })->first() ?: $query->first();
+        } else {
+            $order = $query->first();
+        }
+
+        if (!$order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found.'
+            ], 404);
+        }
+
+        if ($driver && (!$order->driver_id || $order->driver_id != $driver->id)) {
+            $order->driver_id = $driver->id;
+            $order->driver = $driver->name;
+        }
+
+        $podDir = public_path('uploads/pod');
+        if (!\Illuminate\Support\Facades\File::exists($podDir)) {
+            \Illuminate\Support\Facades\File::makeDirectory($podDir, 0777, true, true);
+        }
+
+        // Handle proof of delivery photo upload
+        $photoFile = $request->file('proof_photo')
+            ?: $request->file('delivery_proof')
+            ?: $request->file('photo')
+            ?: $request->file('image')
+            ?: $request->file('proof_of_delivery_photo')
+            ?: $request->file('drop_photo')
+            ?: $request->file('pod_photo')
+            ?: $request->file('drop_image')
+            ?: $request->file('delivery_image')
+            ?: $request->file('file')
+            ?: $request->file('attachment');
+
+        if ($photoFile) {
+            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $photoFile->getClientOriginalExtension();
+            $photoFile->move($podDir, $fileName);
+            $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
+        } else {
+            $base64Input = $request->input('proof_photo')
+                ?: $request->input('delivery_proof')
+                ?: $request->input('photo')
+                ?: $request->input('image')
+                ?: $request->input('proof_of_delivery_photo')
+                ?: $request->input('drop_photo')
+                ?: $request->input('pod_photo')
+                ?: $request->input('drop_image');
+
+            if ($base64Input && is_string($base64Input) && (str_starts_with($base64Input, 'data:image/') || strlen($base64Input) > 100)) {
+                $imageType = 'jpg';
+                $imageData = $base64Input;
+                if (str_starts_with($base64Input, 'data:image/')) {
+                    $parts = explode(';base64,', $base64Input);
+                    $typeParts = explode('image/', $parts[0]);
+                    $imageType = $typeParts[1] ?? 'jpg';
+                    $imageData = $parts[1] ?? '';
+                }
+                $decoded = base64_decode($imageData);
+                if ($decoded !== false) {
+                    $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $imageType;
+                    \Illuminate\Support\Facades\File::put($podDir . '/' . $fileName, $decoded);
+                    $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
+                }
+            }
+        }
+
+        // Handle signature upload (file or base64)
+        $sigFile = $request->file('proof_signature')
+            ?: $request->file('signature')
+            ?: $request->file('customer_signature');
+
+        if ($sigFile) {
+            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $sigFile->getClientOriginalExtension();
+            $sigFile->move($podDir, $fileName);
+            $order->proof_of_delivery_signature = 'uploads/pod/' . $fileName;
+        } else {
+            $sigInput = $request->input('proof_signature')
+                ?: $request->input('signature')
+                ?: $request->input('customer_signature');
+
+            if ($sigInput && is_string($sigInput) && (str_starts_with($sigInput, 'data:image/') || strlen($sigInput) > 100)) {
+                $imageType = 'png';
+                $sigData = $sigInput;
+                if (str_starts_with($sigInput, 'data:image/')) {
+                    $parts = explode(';base64,', $sigInput);
+                    $typeParts = explode('image/', $parts[0]);
+                    $imageType = $typeParts[1] ?? 'png';
+                    $sigData = $parts[1] ?? '';
+                }
+                $decoded = base64_decode($sigData);
+                if ($decoded !== false) {
+                    $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $imageType;
+                    \Illuminate\Support\Facades\File::put($podDir . '/' . $fileName, $decoded);
+                    $order->proof_of_delivery_signature = 'uploads/pod/' . $fileName;
+                }
+            }
+        }
+
+        if ($request->filled('driver_note') || $request->filled('note')) {
+            $noteText = $request->input('driver_note') ?: $request->input('note');
+            $order->note = $order->note ? ($order->note . " | Driver: " . $noteText) : ("Driver: " . $noteText);
+        }
+
+        // Update status to Delivered (or status passed by request)
+        $newStatus = $request->input('status') ?: 'Delivered';
+        $statusMap = [
+            'delivered' => 'Delivered',
+            'out_for_delivery' => 'Out for Delivery',
+            'failed' => 'Failed',
+            'pending' => 'Pending',
+        ];
+        $rawStatus = strtolower(trim(str_replace('_', ' ', $newStatus)));
+        $order->status = $statusMap[$rawStatus] ?? ucfirst($newStatus);
+        $order->save();
+
+        // Notification for Admin
+        $driverName = $driver ? $driver->name : ($order->driver ?: 'Driver');
+        \App\Models\Notification::create([
+            'title' => 'Order Delivered',
+            'message' => "Driver {$driverName} delivered order {$order->id} and uploaded proof of delivery.",
+            'user_type' => 'admin',
+            'user_id' => null,
+            'read_status' => false
+        ]);
+
+        // Notification for Customer
+        if ($order->customer_id) {
+            \App\Models\Notification::create([
+                'title' => 'Order Delivered',
+                'message' => "Your order {$order->id} has been delivered. Enjoy your meal!",
+                'user_type' => 'customer',
+                'user_id' => $order->customer_id,
+                'read_status' => false
+            ]);
+
+            FcmService::sendToCustomer(
+                $order->customer_id,
+                'Order Delivered',
+                "Your order {$order->id} has been delivered. Enjoy your meal!",
+                ['order_id' => $order->id, 'status' => $order->status, 'type' => 'order_delivered']
+            );
+        }
+
+        $photoUrl = $order->proof_of_delivery_photo ? asset('public/' . ltrim($order->proof_of_delivery_photo, '/')) : null;
+        $sigUrl = $order->proof_of_delivery_signature ? asset('public/' . ltrim($order->proof_of_delivery_signature, '/')) : null;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Proof of delivery uploaded successfully.',
+            'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
+            'proof_of_delivery_photo_url' => $photoUrl,
+            'proof_of_delivery_signature' => $order->proof_of_delivery_signature,
+            'proof_of_delivery_signature_url' => $sigUrl,
+            'order' => $order,
+            'data' => [
+                'order' => $order,
+                'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
+                'proof_of_delivery_photo_url' => $photoUrl,
+            ]
         ]);
     }
 
@@ -2644,7 +3468,12 @@ class AuthController extends Controller
             'phone' => 'nullable|string|max:20',
             'email' => 'nullable|email|max:255|unique:customers,email,' . $customer->id,
             'pincode' => 'nullable|string|max:20',
+            'postcode' => 'nullable|string|max:20',
             'address' => 'nullable|string',
+            'street_address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'suburb' => 'nullable|string',
+            'town' => 'nullable|string',
             'old_password' => 'nullable|required_with:password|string',
             'password' => 'nullable|string|min:6|confirmed',
             'profile_image' => 'nullable',
@@ -2653,8 +3482,13 @@ class AuthController extends Controller
             'photo' => 'nullable',
             'addresses' => 'nullable|array',
             'addresses.*.type' => 'required_with:addresses|string|max:50',
-            'addresses.*.address_line' => 'required_with:addresses|string',
-            'addresses.*.pincode' => 'required_with:addresses|string|max:20',
+            'addresses.*.address_line' => 'nullable|string',
+            'addresses.*.address' => 'nullable|string',
+            'addresses.*.street_address' => 'nullable|string',
+            'addresses.*.city' => 'nullable|string',
+            'addresses.*.suburb' => 'nullable|string',
+            'addresses.*.pincode' => 'nullable|string|max:20',
+            'addresses.*.postcode' => 'nullable|string|max:20',
             'addresses.*.is_default' => 'required_with:addresses|boolean',
         ]);
 
@@ -2691,15 +3525,19 @@ class AuthController extends Controller
             }
 
             if ($defaultAddr) {
-                $data['address'] = trim($defaultAddr['address_line']);
-                $data['pincode'] = trim($defaultAddr['pincode']);
+                $addrInfo = AddressHelper::extractAndFormat($defaultAddr);
+                $data['street_address'] = $addrInfo['street_address'];
+                $data['city'] = $addrInfo['city'];
+                $data['address'] = $addrInfo['address'];
+                $data['pincode'] = $addrInfo['pincode'];
             }
         } else {
-            if ($request->has('address')) {
-                $data['address'] = trim($request->address);
-            }
-            if ($request->has('pincode')) {
-                $data['pincode'] = trim($request->pincode);
+            if ($request->has('street_address') || $request->has('city') || $request->has('suburb') || $request->has('town') || $request->has('pincode') || $request->has('postcode') || $request->has('address')) {
+                $addrInfo = AddressHelper::extractAndFormat($request, $customer);
+                if ($addrInfo['street_address']) $data['street_address'] = $addrInfo['street_address'];
+                if ($addrInfo['city']) $data['city'] = $addrInfo['city'];
+                if ($addrInfo['pincode']) $data['pincode'] = $addrInfo['pincode'];
+                if ($addrInfo['address']) $data['address'] = $addrInfo['address'];
             }
         }
 
@@ -2739,10 +3577,13 @@ class AuthController extends Controller
         if ($request->has('addresses') && is_array($request->addresses)) {
             $customer->addresses()->delete();
             foreach ($request->addresses as $addr) {
+                $addrInfo = AddressHelper::extractAndFormat($addr);
                 $customer->addresses()->create([
                     'type' => $addr['type'] ?? 'Home',
-                    'address_line' => trim($addr['address_line']),
-                    'pincode' => trim($addr['pincode']),
+                    'street_address' => $addrInfo['street_address'],
+                    'city' => $addrInfo['city'],
+                    'address_line' => $addrInfo['address'],
+                    'pincode' => $addrInfo['pincode'],
                     'is_default' => filter_var($addr['is_default'] ?? false, FILTER_VALIDATE_BOOLEAN),
                 ]);
             }
@@ -2750,22 +3591,26 @@ class AuthController extends Controller
 
         $profileImageUrl = $customer->profile_image ? (str_starts_with($customer->profile_image, 'http') ? $customer->profile_image : asset($customer->profile_image)) : null;
 
+        $formattedAddresses = $customer->addresses()->orderBy('is_default', 'desc')->get()->map(function ($a) {
+            return AddressHelper::formatAddressRecord($a);
+        });
+
+        $customerData = array_merge([
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'first_name' => $customer->first_name,
+            'last_name' => $customer->last_name,
+            'email' => $customer->email,
+            'phone' => $customer->phone,
+            'profile_image' => $profileImageUrl,
+            'user_type' => $customer->user_type,
+            'addresses' => $formattedAddresses,
+        ], AddressHelper::formatResponsePayload($customer));
+
         return response()->json([
             'success' => true,
             'message' => 'Profile updated successfully.',
-            'customer' => [
-                'id' => $customer->id,
-                'name' => $customer->name,
-                'first_name' => $customer->first_name,
-                'last_name' => $customer->last_name,
-                'email' => $customer->email,
-                'phone' => $customer->phone,
-                'pincode' => $customer->pincode,
-                'address' => $customer->address,
-                'profile_image' => $profileImageUrl,
-                'user_type' => $customer->user_type,
-                'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get(),
-            ]
+            'customer' => $customerData
         ]);
     }
 
@@ -2775,19 +3620,38 @@ class AuthController extends Controller
     public function getCustomerAddresses(Request $request)
     {
         $customer = $request->attributes->get('customer');
+        if (!$customer && $request->filled('customer_id')) {
+            $customer = Customer::find($request->input('customer_id'));
+        }
+        if (!$customer) {
+            $token = $request->bearerToken() ?: $request->input('api_token');
+            if ($token) {
+                $customer = Customer::where('api_token', $token)->first();
+            }
+        }
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated or customer not found.'], 401);
+        }
+
         $addresses = $customer->addresses()->orderBy('is_default', 'desc')->get();
         if ($addresses->isEmpty() && $customer->address) {
+            $addrInfo = AddressHelper::extractAndFormat($customer);
             $created = $customer->addresses()->create([
                 'type' => 'Home',
-                'address_line' => $customer->address,
-                'pincode' => $customer->pincode,
+                'street_address' => $addrInfo['street_address'],
+                'city' => $addrInfo['city'],
+                'address_line' => $addrInfo['address'],
+                'pincode' => $addrInfo['pincode'],
                 'is_default' => true,
             ]);
             $addresses = collect([$created]);
         }
+
+        $formatted = $addresses->map(fn($a) => AddressHelper::formatAddressRecord($a));
+
         return response()->json([
             'success' => true,
-            'addresses' => $addresses
+            'addresses' => $formatted
         ]);
     }
 
@@ -2797,11 +3661,29 @@ class AuthController extends Controller
     public function addOrUpdateCustomerAddress(Request $request)
     {
         $customer = $request->attributes->get('customer');
+        if (!$customer && $request->filled('customer_id')) {
+            $customer = Customer::find($request->input('customer_id'));
+        }
+        if (!$customer) {
+            $token = $request->bearerToken() ?: $request->input('api_token');
+            if ($token) {
+                $customer = Customer::where('api_token', $token)->first();
+            }
+        }
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated or customer not found.'], 401);
+        }
         $validator = Validator::make($request->all(), [
             'id' => 'nullable|exists:customer_addresses,id',
             'type' => 'required|string|max:50',
-            'address_line' => 'required|string',
-            'pincode' => 'required|string|max:20',
+            'address_line' => 'nullable|string',
+            'address' => 'nullable|string',
+            'street_address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'suburb' => 'nullable|string',
+            'town' => 'nullable|string',
+            'pincode' => 'nullable|string|max:20',
+            'postcode' => 'nullable|string|max:20',
             'is_default' => 'nullable|boolean',
         ]);
 
@@ -2812,13 +3694,21 @@ class AuthController extends Controller
             ], 422);
         }
 
+        $addrInfo = AddressHelper::extractAndFormat($request);
+        $streetAddress = $addrInfo['street_address'];
+        $city = $addrInfo['city'];
+        $pincode = $addrInfo['pincode'];
+        $formattedAddress = $addrInfo['address'];
+
         $isDefault = filter_var($request->input('is_default', false), FILTER_VALIDATE_BOOLEAN);
 
         if ($isDefault) {
             $customer->addresses()->update(['is_default' => false]);
             $customer->update([
-                'address' => trim($request->address_line),
-                'pincode' => trim($request->pincode)
+                'street_address' => $streetAddress,
+                'city' => $city,
+                'address' => $formattedAddress,
+                'pincode' => $pincode
             ]);
         }
 
@@ -2826,32 +3716,40 @@ class AuthController extends Controller
             $address = $customer->addresses()->findOrFail($request->id);
             $address->update([
                 'type' => trim($request->type),
-                'address_line' => trim($request->address_line),
-                'pincode' => trim($request->pincode),
+                'street_address' => $streetAddress,
+                'city' => $city,
+                'address_line' => $formattedAddress,
+                'pincode' => $pincode,
                 'is_default' => $isDefault,
             ]);
         } else {
             if ($customer->addresses()->count() === 0) {
                 $isDefault = true;
                 $customer->update([
-                    'address' => trim($request->address_line),
-                    'pincode' => trim($request->pincode)
+                    'street_address' => $streetAddress,
+                    'city' => $city,
+                    'address' => $formattedAddress,
+                    'pincode' => $pincode
                 ]);
             }
 
             $address = $customer->addresses()->create([
                 'type' => trim($request->type),
-                'address_line' => trim($request->address_line),
-                'pincode' => trim($request->pincode),
+                'street_address' => $streetAddress,
+                'city' => $city,
+                'address_line' => $formattedAddress,
+                'pincode' => $pincode,
                 'is_default' => $isDefault,
             ]);
         }
 
+        $formattedList = $customer->addresses()->orderBy('is_default', 'desc')->get()->map(fn($a) => AddressHelper::formatAddressRecord($a));
+
         return response()->json([
             'success' => true,
             'message' => 'Address saved successfully.',
-            'address' => $address,
-            'addresses' => $customer->addresses()->orderBy('is_default', 'desc')->get()
+            'address' => AddressHelper::formatAddressRecord($address),
+            'addresses' => $formattedList
         ]);
     }
 
@@ -2962,6 +3860,18 @@ class AuthController extends Controller
     public function editDriverProfile(Request $request)
     {
         $driver = $request->attributes->get('driver');
+        if (!$driver && $request->filled('driver_id')) {
+            $driver = Driver::find($request->input('driver_id'));
+        }
+        if (!$driver) {
+            $token = $request->bearerToken() ?: $request->input('api_token');
+            if ($token) {
+                $driver = Driver::where('api_token', $token)->first();
+            }
+        }
+        if (!$driver) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated or driver not found.'], 401);
+        }
 
         // Normalize first_name and last_name into name if provided
         if ($request->has('first_name') && $request->has('last_name')) {
@@ -2991,6 +3901,12 @@ class AuthController extends Controller
             'phone' => 'nullable|string|max:50',
             'email' => 'nullable|email|max:255|unique:drivers,email,' . $driver->id,
             'address' => 'nullable|string',
+            'street_address' => 'nullable|string',
+            'city' => 'nullable|string',
+            'suburb' => 'nullable|string',
+            'town' => 'nullable|string',
+            'pincode' => 'nullable|string|max:20',
+            'postcode' => 'nullable|string|max:20',
             'vehicle_reg_no' => 'nullable|string|max:50',
             'license_no' => 'nullable|string|max:100',
             'license_expiry' => 'nullable|date',
@@ -3004,6 +3920,12 @@ class AuthController extends Controller
             'photo' => 'nullable',
             'license_copy_front' => 'nullable',
             'license_copy_back' => 'nullable',
+            'vehicle_reg_image' => 'nullable',
+            'vehicle_registration_image' => 'nullable',
+            'vehicle_reg_doc' => 'nullable',
+            'vehicle_doc' => 'nullable',
+            'vehicle_image' => 'nullable',
+            'rego_image' => 'nullable',
         ]);
 
         if ($validator->fails()) {
@@ -3025,9 +3947,25 @@ class AuthController extends Controller
             $data['email'] = strtolower(trim($request->email));
         }
 
-        if ($request->has('address')) {
-            $data['address'] = $request->address ? trim($request->address) : null;
+        if ($request->has('street_address') || $request->has('city') || $request->has('suburb') || $request->has('town') || $request->has('pincode') || $request->has('postcode') || $request->has('address') || $request->has('assigned_zip') || $request->has('area')) {
+            $addrInfo = AddressHelper::extractAndFormat($request, $driver);
+            if ($addrInfo['street_address']) $data['street_address'] = $addrInfo['street_address'];
+            if ($addrInfo['city']) $data['city'] = $addrInfo['city'];
+            if ($addrInfo['pincode']) {
+                $data['pincode'] = $addrInfo['pincode'];
+                $data['assigned_zip'] = $addrInfo['pincode'];
+                $data['area'] = $addrInfo['pincode'];
+            }
+            if ($addrInfo['address']) $data['address'] = $addrInfo['address'];
         }
+
+        if ($request->has('assigned_zip') && empty($data['assigned_zip'])) {
+            $zip = trim($request->assigned_zip);
+            $data['assigned_zip'] = $zip;
+            $data['area'] = $zip;
+            $data['pincode'] = $zip;
+        }
+
         if ($request->has('vehicle_reg_no')) {
             $data['vehicle_reg_no'] = $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null;
         }
@@ -3063,11 +4001,9 @@ class AuthController extends Controller
         }
 
         // Handle Profile Image Upload
-        $savedProfileImage = $this->saveUploadedImage(
+        $savedProfileImage = ImageUploadHelper::saveProfileImage(
             $request,
-            ['profile_image', 'image', 'avatar', 'photo', 'file'],
             'profile_drv_' . $driver->id,
-            'uploads/profiles',
             $driver->profile_image
         );
         if ($savedProfileImage !== null) {
@@ -3075,11 +4011,9 @@ class AuthController extends Controller
         }
 
         // Handle License Front Copy Upload
-        $savedLicenseFront = $this->saveUploadedImage(
+        $savedLicenseFront = ImageUploadHelper::saveLicenseFront(
             $request,
-            ['license_copy_front', 'license_front', 'license_front_image'],
             'license_front_drv_' . $driver->id,
-            'uploads/licenses',
             $driver->license_copy_front
         );
         if ($savedLicenseFront !== null) {
@@ -3087,15 +4021,23 @@ class AuthController extends Controller
         }
 
         // Handle License Back Copy Upload
-        $savedLicenseBack = $this->saveUploadedImage(
+        $savedLicenseBack = ImageUploadHelper::saveLicenseBack(
             $request,
-            ['license_copy_back', 'license_back', 'license_back_image'],
             'license_back_drv_' . $driver->id,
-            'uploads/licenses',
             $driver->license_copy_back
         );
         if ($savedLicenseBack !== null) {
             $data['license_copy_back'] = $savedLicenseBack;
+        }
+
+        // Handle Vehicle Registration Document Upload
+        $savedVehicleRegImage = ImageUploadHelper::saveVehicleReg(
+            $request,
+            'vehicle_reg_drv_' . $driver->id,
+            $driver->vehicle_reg_image
+        );
+        if ($savedVehicleRegImage !== null) {
+            $data['vehicle_reg_image'] = $savedVehicleRegImage;
         }
 
         $driver->update($data);
@@ -3104,29 +4046,35 @@ class AuthController extends Controller
         $profileImageUrl = $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null;
         $licFrontUrl = $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null;
         $licBackUrl = $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null;
+        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+
+        $driverData = array_merge([
+            'id' => $driver->id,
+            'name' => $driver->name,
+            'first_name' => $driver->first_name,
+            'last_name' => $driver->last_name,
+            'email' => $driver->email,
+            'phone' => $driver->phone,
+            'license_no' => $driver->license_no,
+            'license_expiry' => $driver->license_expiry,
+            'license_copy_front' => $licFrontUrl,
+            'license_copy_back' => $licBackUrl,
+            'profile_image' => $profileImageUrl,
+            'vehicle_reg_no' => $driver->vehicle_reg_no,
+            'vehicle_reg_image' => $vehicleRegUrl,
+            'vehicle_registration_image' => $vehicleRegUrl,
+            'vehicle_reg_doc' => $vehicleRegUrl,
+            'assigned_zip' => $driver->assigned_zip,
+            'area' => $driver->area,
+            'status' => $driver->status,
+            'approval_status' => $driver->approval_status,
+            'user_type' => $driver->user_type,
+        ], AddressHelper::formatResponsePayload($driver));
 
         return response()->json([
             'success' => true,
             'message' => 'Profile updated successfully.',
-            'driver' => [
-                'id' => $driver->id,
-                'name' => $driver->name,
-                'first_name' => $driver->first_name,
-                'last_name' => $driver->last_name,
-                'email' => $driver->email,
-                'phone' => $driver->phone,
-                'address' => $driver->address,
-                'license_no' => $driver->license_no,
-                'license_expiry' => $driver->license_expiry,
-                'license_copy_front' => $licFrontUrl,
-                'license_copy_back' => $licBackUrl,
-                'profile_image' => $profileImageUrl,
-                'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'assigned_zip' => $driver->assigned_zip,
-                'area' => $driver->area,
-                'status' => $driver->status,
-                'user_type' => $driver->user_type,
-            ]
+            'driver' => $driverData
         ]);
     }
 
@@ -3235,12 +4183,43 @@ class AuthController extends Controller
      */
     private function resolveWeeklyInvoicesForPayment($customer, $billId = null, Request $request = null)
     {
-        $billId = $billId ? trim((string) $billId) : ($request ? trim((string) ($request->input('bill_id') ?: $request->input('invoice_id') ?: $request->input('id') ?: '')) : '');
+        if (!$customer && $request) {
+            $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        }
+        if ($customer && is_numeric($customer)) {
+            $customer = \App\Models\Customer::find($customer);
+        }
+
+        if (!$customer) {
+            return [
+                'invoices' => collect([]),
+                'orders' => collect([]),
+                'amount' => 0.00,
+                'start_date' => null,
+                'end_date' => null,
+                'label' => 'Weekly Bill Payment',
+                'week_range' => null,
+                'is_overdue' => false,
+            ];
+        }
+
+        $this->ensureInvoicesForCustomerOrders($customer);
+
+        $rawBillId = $billId ? trim((string) $billId) : ($request ? trim((string) ($request->input('bill_id') ?: $request->input('invoice_id') ?: $request->input('id') ?: '')) : '');
+        if (in_array(strtolower($rawBillId), ['undefined', 'null', '0', 'false', 'none', ''])) {
+            $rawBillId = '';
+        }
+        $cleanBillId = strtolower($rawBillId);
+        $reqAmount = $request ? (float) ($request->input('amount') ?: $request->input('total_amount') ?: 0) : 0.0;
 
         $startDate = $request ? $request->input('start_date', $request->input('week_start')) : null;
         $endDate = $request ? $request->input('end_date', $request->input('week_end')) : null;
+        $now = Carbon::now();
+        $nowDate = $now->toDateString();
+        $thisWeekStart = $now->copy()->startOfWeek()->toDateString();
+        $thisWeekEnd = $now->copy()->endOfWeek()->toDateString();
 
-        // 1. If explicit date range provided in request
+        // 1. Explicit Date Range in request
         if ($startDate && $endDate) {
             $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
                 ->where(function ($q) use ($startDate, $endDate) {
@@ -3253,32 +4232,78 @@ class AuthController extends Controller
             $weekRange = Carbon::parse($startDate)->format('d M Y') . ' - ' . Carbon::parse($endDate)->format('d M Y');
             $isOverdue = Carbon::parse($endDate)->lt(Carbon::today()) && $unpaidInvoices->isNotEmpty();
 
+            if ($amount > 0) {
+                return [
+                    'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : $invoices,
+                    'orders' => $weeklyOrders,
+                    'amount' => $amount,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'label' => "Weekly Bill ({$weekRange})",
+                    'week_range' => $weekRange,
+                    'is_overdue' => $isOverdue,
+                ];
+            }
+        }
+
+        // 2. Explicit Current Week / New Bill
+        if (in_array($cleanBillId, ['current', 'this_week', 'current_week', 'latest', 'new', 'new_bill', 'today', 'current_bill'])) {
+            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where(function ($q) use ($thisWeekStart, $thisWeekEnd) {
+                    $q->whereBetween('due_date', [$thisWeekStart, $thisWeekEnd]);
+                })
+                ->get();
+            $weekOrders = $customer->orders()->whereBetween('date', [$thisWeekStart, $thisWeekEnd])->get();
+            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $weekOrders->sum('amount');
+            $weekRange = Carbon::parse($thisWeekStart)->format('d M Y') . ' - ' . Carbon::parse($thisWeekEnd)->format('d M Y');
+
             return [
-                'invoices' => $invoices,
-                'orders' => $weeklyOrders,
+                'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : $weekInvoices,
+                'orders' => $weekOrders,
                 'amount' => $amount,
-                'start_date' => $startDate,
-                'end_date' => $endDate,
+                'start_date' => $thisWeekStart,
+                'end_date' => $thisWeekEnd,
                 'label' => "Weekly Bill ({$weekRange})",
                 'week_range' => $weekRange,
-                'is_overdue' => $isOverdue,
+                'is_overdue' => false,
             ];
         }
 
-        // 2. If billId is 'overdue', 'past_due', or indicates overdue invoices
-        if (in_array(strtolower($billId), ['overdue', 'past_due', 'previous_overdue'])) {
+        // 3. Explicit Total Due / All Unpaid / Combined
+        if (in_array($cleanBillId, ['all', 'total', 'total_due', 'all_due', 'outstanding', 'all_unpaid', 'all_bills', 'combined', 'both'])) {
+            $allUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->whereIn('status', ['Pending', 'Unpaid'])
+                ->orderBy('due_date', 'asc')
+                ->get();
+            $amount = (float) $allUnpaid->sum('amount');
+            $hasOverdue = $allUnpaid->where('due_date', '<', $nowDate)->isNotEmpty();
+            $weekCount = $allUnpaid->count();
+
+            return [
+                'invoices' => $allUnpaid,
+                'orders' => collect([]),
+                'amount' => $amount,
+                'start_date' => null,
+                'end_date' => null,
+                'label' => $weekCount > 1 ? "Total Outstanding Balance ({$weekCount} weeks)" : 'Total Outstanding Balance',
+                'week_range' => 'All Unpaid Weeks',
+                'is_overdue' => $hasOverdue,
+            ];
+        }
+
+        // 4. Explicit Overdue
+        $isExplicitOverdue = ($request && ($request->input('is_overdue') === true || $request->input('is_overdue') === '1' || $request->input('is_overdue') === 'true' || $request->input('pay_type') === 'overdue' || $request->input('type') === 'overdue'))
+            || in_array($cleanBillId, ['overdue', 'past_due', 'previous_overdue', 'previous', 'all_overdue', 'overdue_bills']);
+
+        if ($isExplicitOverdue) {
             $overdueInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
                 ->whereIn('status', ['Pending', 'Unpaid'])
-                ->whereDate('due_date', '<', Carbon::now()->toDateString())
+                ->whereDate('due_date', '<', $nowDate)
+                ->orderBy('due_date', 'asc')
                 ->get();
-
-            if ($overdueInvoices->isEmpty()) {
-                $overdueInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                    ->whereIn('status', ['Pending', 'Unpaid'])
-                    ->get();
-            }
-
             $amount = (float) $overdueInvoices->sum('amount');
+            $weekCount = $overdueInvoices->count();
 
             return [
                 'invoices' => $overdueInvoices,
@@ -3286,121 +4311,81 @@ class AuthController extends Controller
                 'amount' => $amount,
                 'start_date' => null,
                 'end_date' => null,
-                'label' => 'Overdue Weekly Bill Payment',
-                'week_range' => null,
+                'label' => $weekCount > 1 ? "Overdue Bills Payment ({$weekCount} weeks)" : 'Overdue Weekly Bill Payment',
+                'week_range' => 'All Overdue Weeks',
                 'is_overdue' => true,
             ];
         }
 
-        // 3. If billId is empty or indicates total/all outstanding
-        if (empty($billId) || in_array(strtolower($billId), ['all', 'previous', 'outstanding', 'total', 'balance', 'weekly'])) {
-            $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->whereIn('status', ['Pending', 'Unpaid'])
-                ->get();
-
-            if ($invoices->isEmpty()) {
-                $this->ensureInvoicesForCustomerOrders($customer);
-                $invoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                    ->whereIn('status', ['Pending', 'Unpaid'])
-                    ->get();
-            }
-
-            $amount = (float) $invoices->sum('amount');
-            $hasOverdue = $invoices->where('due_date', '<', Carbon::now()->toDateString())->isNotEmpty();
-
-            return [
-                'invoices' => $invoices,
-                'orders' => collect([]),
-                'amount' => $amount,
-                'start_date' => null,
-                'end_date' => null,
-                'label' => $hasOverdue ? 'Weekly Balance Payment (Including Overdue)' : 'Weekly Balance Payment (All Outstanding)',
-                'week_range' => null,
-                'is_overdue' => $hasOverdue,
-            ];
-        }
-
-        // 4. If billId is 'current', 'current_week', 'this_week'
-        if (in_array(strtolower($billId), ['current', 'current_week', 'this_week'])) {
-            $now = Carbon::now();
-            $wStart = $now->copy()->startOfWeek()->toDateString();
-            $wEnd = $now->copy()->endOfWeek()->toDateString();
-
-            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->where(function ($q) use ($wStart, $wEnd) {
-                    $q->whereBetween('due_date', [$wStart, $wEnd]);
-                })
-                ->get();
-
-            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
-            $amount = (float) $unpaidInvoices->sum('amount');
-
-            // If current week has 0 unpaid amount, fallback to any overdue/unpaid invoices
-            if ($amount <= 0) {
-                $allUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
-                    ->whereIn('status', ['Pending', 'Unpaid'])
-                    ->get();
-                if ($allUnpaid->isNotEmpty()) {
-                    return [
-                        'invoices' => $allUnpaid,
-                        'orders' => collect([]),
-                        'amount' => (float) $allUnpaid->sum('amount'),
-                        'start_date' => null,
-                        'end_date' => null,
-                        'label' => 'Weekly Balance Payment',
-                        'week_range' => null,
-                        'is_overdue' => $allUnpaid->where('due_date', '<', $now->toDateString())->isNotEmpty(),
-                    ];
-                }
-            }
-
-            $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
-            return [
-                'invoices' => $unpaidInvoices,
-                'orders' => $weekOrders,
-                'amount' => $amount,
-                'start_date' => $wStart,
-                'end_date' => $wEnd,
-                'label' => 'Current Week Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
-                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
-                'is_overdue' => false,
-            ];
-        }
-
         // 5. Direct primary key match in invoices table
-        $directInvoice = \App\Models\Invoice::where('customer_id', $customer->id)
-            ->where('id', $billId)
-            ->first();
+        if ($rawBillId) {
+            $directInvoice = \App\Models\Invoice::where('customer_id', $customer->id)
+                ->where('id', $rawBillId)
+                ->first();
 
-        if ($directInvoice) {
-            $createdCarbon = Carbon::parse($directInvoice->due_date ?: $directInvoice->created_at);
-            $wStart = $createdCarbon->copy()->startOfWeek()->toDateString();
-            $wEnd = $createdCarbon->copy()->endOfWeek()->toDateString();
+            if ($directInvoice) {
+                $createdCarbon = Carbon::parse($directInvoice->due_date ?: $directInvoice->created_at);
+                $wStart = $createdCarbon->copy()->startOfWeek()->toDateString();
+                $wEnd = $createdCarbon->copy()->endOfWeek()->toDateString();
+                $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                    ->where(function ($q) use ($wStart, $wEnd, $directInvoice) {
+                        $q->where('id', $directInvoice->id)
+                          ->orWhereBetween('due_date', [$wStart, $wEnd]);
+                    })
+                    ->get();
+                $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
+                $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+                $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : ($directInvoice->status !== 'Paid' ? (float) $directInvoice->amount : 0.00);
+                $isInvoiceOverdue = Carbon::parse($directInvoice->due_date ?: $directInvoice->created_at)->lt(Carbon::today());
+
+                return [
+                    'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : collect([$directInvoice]),
+                    'orders' => $weekOrders,
+                    'amount' => $amount,
+                    'start_date' => $wStart,
+                    'end_date' => $wEnd,
+                    'label' => "Weekly Bill Payment ({$directInvoice->id})",
+                    'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                    'is_overdue' => $isInvoiceOverdue,
+                ];
+            }
+        }
+
+        // 6. Week-coded bill ID format e.g. "INV-W202638-1-001"
+        if ($rawBillId && preg_match('/INV-W(\d{4})(\d{2})/i', $rawBillId, $wMatches)) {
+            $wYear = (int) $wMatches[1];
+            $wWeek = (int) $wMatches[2];
+            $dt = Carbon::now()->setISODate($wYear, $wWeek);
+            $wStart = $dt->copy()->startOfWeek()->toDateString();
+            $wEnd = $dt->copy()->endOfWeek()->toDateString();
+
             $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->where(function ($q) use ($wStart, $wEnd, $directInvoice) {
-                    $q->where('id', $directInvoice->id)
+                ->where(function ($q) use ($wStart, $wEnd, $rawBillId) {
+                    $q->where('id', 'like', "%{$rawBillId}%")
                       ->orWhereBetween('due_date', [$wStart, $wEnd]);
                 })
                 ->get();
             $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
             $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
-            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : ($directInvoice->status !== 'Paid' ? (float) $directInvoice->amount : 0.00);
-            $isOverdue = Carbon::parse($directInvoice->due_date ?: $wEnd)->lt(Carbon::today());
+            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $weekOrders->sum('amount');
+            $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
 
-            return [
-                'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : collect([$directInvoice]),
-                'orders' => $weekOrders,
-                'amount' => $amount,
-                'start_date' => $wStart,
-                'end_date' => $wEnd,
-                'label' => "Weekly Bill Payment ({$directInvoice->id})",
-                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
-                'is_overdue' => $isOverdue,
-            ];
+            if ($amount > 0) {
+                return [
+                    'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : $weekInvoices,
+                    'orders' => $weekOrders,
+                    'amount' => $amount,
+                    'start_date' => $wStart,
+                    'end_date' => $wEnd,
+                    'label' => 'Weekly Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
+                    'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                    'is_overdue' => $isOverdue,
+                ];
+            }
         }
 
-        // 6. Match by week range string e.g. "2026-09-08_2026-09-14"
-        if (preg_match('/^(\d{4}-\d{2}-\d{2})[_\s\-to]+(\d{4}-\d{2}-\d{2})$/', $billId, $matches)) {
+        // 7. Match by week range string e.g. "2026-09-08_2026-09-14"
+        if ($rawBillId && preg_match('/^(\d{4}-\d{2}-\d{2})[_\s\-to]+(\d{4}-\d{2}-\d{2})$/', $rawBillId, $matches)) {
             $wStart = $matches[1];
             $wEnd = $matches[2];
             $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
@@ -3413,99 +4398,181 @@ class AuthController extends Controller
             $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $weekOrders->sum('amount');
             $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
 
-            return [
-                'invoices' => $weekInvoices,
-                'orders' => $weekOrders,
-                'amount' => $amount,
-                'start_date' => $wStart,
-                'end_date' => $wEnd,
-                'label' => 'Weekly Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
-                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
-                'is_overdue' => $isOverdue,
-            ];
-        }
-
-        // 7. Match by date string inside billId e.g. "2026-09-08" or "INV-20260908-1" or "INV-W202637..."
-        if (preg_match('/(\d{4}-?\d{2}-?\d{2})/', $billId, $dateMatches)) {
-            $rawDate = str_replace('-', '', $dateMatches[1]);
-            $dt = strlen($rawDate) === 8 ? Carbon::createFromFormat('Ymd', $rawDate) : Carbon::parse($dateMatches[1]);
-            $wStart = $dt->copy()->startOfWeek()->toDateString();
-            $wEnd = $dt->copy()->endOfWeek()->toDateString();
-
-            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->where(function ($q) use ($wStart, $wEnd, $billId) {
-                    $q->where('id', 'like', "%{$billId}%")
-                        ->orWhereBetween('due_date', [$wStart, $wEnd]);
-                })
-                ->get();
-            $weekOrders = $customer->orders()->whereBetween('date', [$wStart, $wEnd])->get();
-            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
-            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $weekOrders->sum('amount');
-            $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
-
-            return [
-                'invoices' => $weekInvoices,
-                'orders' => $weekOrders,
-                'amount' => $amount,
-                'start_date' => $wStart,
-                'end_date' => $wEnd,
-                'label' => 'Weekly Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
-                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
-                'is_overdue' => $isOverdue,
-            ];
+            if ($amount > 0) {
+                return [
+                    'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : $weekInvoices,
+                    'orders' => $weekOrders,
+                    'amount' => $amount,
+                    'start_date' => $wStart,
+                    'end_date' => $wEnd,
+                    'label' => 'Weekly Bill (' . Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y') . ')',
+                    'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                    'is_overdue' => $isOverdue,
+                ];
+            }
         }
 
         // 8. Match by order ID e.g. "ORD..."
-        $matchingOrder = \App\Models\Order::where('customer_id', $customer->id)->where('id', $billId)->first();
-        if ($matchingOrder) {
-            $dt = Carbon::parse($matchingOrder->date);
-            $wStart = $dt->copy()->startOfWeek()->toDateString();
-            $wEnd = $dt->copy()->endOfWeek()->toDateString();
-            $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->where(function ($q) use ($wStart, $wEnd, $matchingOrder) {
-                    $q->where('order_id', 'like', "%{$matchingOrder->id}%")
-                        ->orWhereBetween('due_date', [$wStart, $wEnd]);
-                })
-                ->get();
-            $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
-            $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $matchingOrder->amount;
-            $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
+        if ($rawBillId) {
+            $matchingOrder = \App\Models\Order::where('customer_id', $customer->id)->where('id', $rawBillId)->first();
+            if ($matchingOrder) {
+                $dt = Carbon::parse($matchingOrder->date);
+                $wStart = $dt->copy()->startOfWeek()->toDateString();
+                $wEnd = $dt->copy()->endOfWeek()->toDateString();
+                $weekInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                    ->where(function ($q) use ($wStart, $wEnd, $matchingOrder) {
+                        $q->where('order_id', 'like', "%{$matchingOrder->id}%")
+                            ->orWhereBetween('due_date', [$wStart, $wEnd]);
+                    })
+                    ->get();
+                $unpaidInvoices = $weekInvoices->whereIn('status', ['Pending', 'Unpaid']);
+                $amount = $unpaidInvoices->isNotEmpty() ? (float) $unpaidInvoices->sum('amount') : (float) $matchingOrder->amount;
+                $isOverdue = Carbon::parse($wEnd)->lt(Carbon::today());
 
+                if ($amount > 0) {
+                    return [
+                        'invoices' => $unpaidInvoices->isNotEmpty() ? $unpaidInvoices : $weekInvoices,
+                        'orders' => collect([$matchingOrder]),
+                        'amount' => $amount,
+                        'start_date' => $wStart,
+                        'end_date' => $wEnd,
+                        'label' => "Weekly Bill Payment ({$matchingOrder->tiffin})",
+                        'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
+                        'is_overdue' => $isOverdue,
+                    ];
+                }
+            }
+        }
+
+        // 9. Match with explicit request amount
+        if ($reqAmount > 0) {
+            // Check if matches current week
+            $currOrders = $customer->orders()->whereBetween('date', [$thisWeekStart, $thisWeekEnd])->get();
+            $currInvs = \App\Models\Invoice::where('customer_id', $customer->id)->whereBetween('due_date', [$thisWeekStart, $thisWeekEnd])->whereIn('status', ['Pending', 'Unpaid'])->get();
+            $currAmount = $currInvs->isNotEmpty() ? (float)$currInvs->sum('amount') : (float)$currOrders->sum('amount');
+            if (abs($reqAmount - $currAmount) < 0.01) {
+                return [
+                    'invoices' => $currInvs,
+                    'orders' => $currOrders,
+                    'amount' => $currAmount,
+                    'start_date' => $thisWeekStart,
+                    'end_date' => $thisWeekEnd,
+                    'label' => "Weekly Bill (" . Carbon::parse($thisWeekStart)->format('d M Y') . " - " . Carbon::parse($thisWeekEnd)->format('d M Y') . ")",
+                    'week_range' => Carbon::parse($thisWeekStart)->format('d M Y') . ' - ' . Carbon::parse($thisWeekEnd)->format('d M Y'),
+                    'is_overdue' => false,
+                ];
+            }
+
+            // Check if matches overdue
+            $overdueInvs = \App\Models\Invoice::where('customer_id', $customer->id)->whereIn('status', ['Pending', 'Unpaid'])->whereDate('due_date', '<', $nowDate)->get();
+            $overdueAmount = (float) $overdueInvs->sum('amount');
+            if (abs($reqAmount - $overdueAmount) < 0.01) {
+                return [
+                    'invoices' => $overdueInvs,
+                    'orders' => collect([]),
+                    'amount' => $overdueAmount,
+                    'start_date' => null,
+                    'end_date' => null,
+                    'label' => "Overdue Bills Payment (" . $overdueInvs->count() . " weeks)",
+                    'week_range' => 'All Overdue Weeks',
+                    'is_overdue' => true,
+                ];
+            }
+
+            // Check if matches total unpaid
+            $allUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)->whereIn('status', ['Pending', 'Unpaid'])->get();
+            $allAmount = (float) $allUnpaid->sum('amount');
+            if (abs($reqAmount - $allAmount) < 0.01) {
+                return [
+                    'invoices' => $allUnpaid,
+                    'orders' => collect([]),
+                    'amount' => $allAmount,
+                    'start_date' => null,
+                    'end_date' => null,
+                    'label' => "Total Outstanding Balance (" . $allUnpaid->count() . " weeks)",
+                    'week_range' => 'All Unpaid Weeks',
+                    'is_overdue' => $allUnpaid->where('due_date', '<', $nowDate)->isNotEmpty(),
+                ];
+            }
+
+            // Custom amount
             return [
-                'invoices' => $weekInvoices,
-                'orders' => collect([$matchingOrder]),
-                'amount' => $amount,
-                'start_date' => $wStart,
-                'end_date' => $wEnd,
-                'label' => "Weekly Bill Payment ({$matchingOrder->tiffin})",
-                'week_range' => Carbon::parse($wStart)->format('d M Y') . ' - ' . Carbon::parse($wEnd)->format('d M Y'),
-                'is_overdue' => $isOverdue,
+                'invoices' => $allUnpaid,
+                'orders' => collect([]),
+                'amount' => $reqAmount,
+                'start_date' => null,
+                'end_date' => null,
+                'label' => 'Weekly Bill Payment',
+                'week_range' => null,
+                'is_overdue' => false,
             ];
         }
 
-        // 9. General Fallback
-        $fallbackInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+        // 10. Fallback: Overdue first, then Current Week, then All Unpaid
+        $overdueInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
             ->whereIn('status', ['Pending', 'Unpaid'])
+            ->whereDate('due_date', '<', $nowDate)
+            ->orderBy('due_date', 'asc')
             ->get();
 
-        if ($fallbackInvoices->isEmpty()) {
-            $this->ensureInvoicesForCustomerOrders($customer);
-            $fallbackInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
-                ->whereIn('status', ['Pending', 'Unpaid'])
-                ->get();
+        if ($overdueInvoices->isNotEmpty()) {
+            $weekCount = $overdueInvoices->count();
+            return [
+                'invoices' => $overdueInvoices,
+                'orders' => collect([]),
+                'amount' => (float) $overdueInvoices->sum('amount'),
+                'start_date' => null,
+                'end_date' => null,
+                'label' => $weekCount > 1 ? "Overdue Bills Payment ({$weekCount} weeks)" : 'Overdue Weekly Bill Payment',
+                'week_range' => 'All Overdue Weeks',
+                'is_overdue' => true,
+            ];
         }
 
-        $hasOverdue = $fallbackInvoices->where('due_date', '<', Carbon::now()->toDateString())->isNotEmpty();
+        // Check current week
+        $currOrders = $customer->orders()->whereBetween('date', [$thisWeekStart, $thisWeekEnd])->get();
+        $currInvs = \App\Models\Invoice::where('customer_id', $customer->id)->whereBetween('due_date', [$thisWeekStart, $thisWeekEnd])->whereIn('status', ['Pending', 'Unpaid'])->get();
+        $currAmount = $currInvs->isNotEmpty() ? (float)$currInvs->sum('amount') : (float)$currOrders->sum('amount');
+        if ($currAmount > 0) {
+            return [
+                'invoices' => $currInvs,
+                'orders' => $currOrders,
+                'amount' => $currAmount,
+                'start_date' => $thisWeekStart,
+                'end_date' => $thisWeekEnd,
+                'label' => "Weekly Bill (" . Carbon::parse($thisWeekStart)->format('d M Y') . " - " . Carbon::parse($thisWeekEnd)->format('d M Y') . ")",
+                'week_range' => Carbon::parse($thisWeekStart)->format('d M Y') . ' - ' . Carbon::parse($thisWeekEnd)->format('d M Y'),
+                'is_overdue' => false,
+            ];
+        }
+
+        $allUnpaid = \App\Models\Invoice::where('customer_id', $customer->id)
+            ->whereIn('status', ['Pending', 'Unpaid'])
+            ->orderBy('due_date', 'asc')
+            ->get();
+
+        if ($allUnpaid->isNotEmpty()) {
+            return [
+                'invoices' => $allUnpaid,
+                'orders' => collect([]),
+                'amount' => (float) $allUnpaid->sum('amount'),
+                'start_date' => null,
+                'end_date' => null,
+                'label' => 'Weekly Balance Payment',
+                'week_range' => null,
+                'is_overdue' => false,
+            ];
+        }
 
         return [
-            'invoices' => $fallbackInvoices,
+            'invoices' => collect([]),
             'orders' => collect([]),
-            'amount' => (float) $fallbackInvoices->sum('amount'),
+            'amount' => 0.00,
             'start_date' => null,
             'end_date' => null,
-            'label' => $hasOverdue ? 'Overdue Weekly Bill Payment' : 'Weekly Bill Payment',
+            'label' => 'Weekly Bill Payment',
             'week_range' => null,
-            'is_overdue' => $hasOverdue,
+            'is_overdue' => false,
         ];
     }
 
@@ -3514,6 +4581,7 @@ class AuthController extends Controller
      */
     private function ensureInvoicesForCustomerOrders($customer)
     {
+        if (!$customer) return;
         $orders = $customer->orders()->get();
         $weeklyGroups = [];
         foreach ($orders as $order) {
@@ -3542,32 +4610,44 @@ class AuthController extends Controller
             $exists = \App\Models\Invoice::where('customer_id', $customer->id)
                 ->where(function ($q) use ($prefix, $grp) {
                     $q->where('id', 'like', $prefix . '%')
-                      ->orWhereBetween('due_date', [$grp['start'], $grp['end']])
-                      ->orWhereBetween('created_at', [
-                          Carbon::parse($grp['start'])->startOfDay(),
-                          Carbon::parse($grp['end'])->endOfDay(),
-                      ]);
+                      ->orWhereBetween('due_date', [$grp['start'], $grp['end']]);
                 })
                 ->first();
 
+            $orderIdStr = count($grp['orders']) <= 3 ? implode(', ', $grp['orders']) : 'KP-W' . $grp['year'] . '-' . count($grp['orders']) . 'orders';
+            $isPast = Carbon::parse($grp['end'])->lt(Carbon::today());
+
             if (!$exists) {
-                $orderIdStr = count($grp['orders']) <= 3 ? implode(', ', $grp['orders']) : 'KP-W' . $grp['year'] . '-' . count($grp['orders']) . 'orders';
-                $isPast = Carbon::parse($grp['end'])->lt(Carbon::today());
-                \App\Models\Invoice::create([
-                    'id' => $prefix . '-001',
-                    'customer_id' => $customer->id,
-                    'order_id' => $orderIdStr,
-                    'amount' => $grp['total'],
-                    'status' => $isPast ? 'Unpaid' : 'Pending',
-                    'due_date' => $grp['end'],
-                ]);
+                if ($grp['total'] > 0) {
+                    \App\Models\Invoice::create([
+                        'id' => $prefix . '-001',
+                        'customer_id' => $customer->id,
+                        'order_id' => $orderIdStr,
+                        'amount' => $grp['total'],
+                        'status' => $isPast ? 'Unpaid' : 'Pending',
+                        'due_date' => $grp['end'],
+                    ]);
+                }
+            } else {
+                if (in_array($exists->status, ['Pending', 'Unpaid']) && (float)$exists->amount != (float)$grp['total'] && $grp['total'] > 0) {
+                    $exists->amount = $grp['total'];
+                    $exists->order_id = $orderIdStr;
+                    $exists->save();
+                }
             }
         }
     }
 
     public function createBillPaymentIntent(Request $request, $billId)
     {
-        $customer = $request->attributes->get('customer');
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated or customer not found.',
+            ], 401);
+        }
+
         $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $billId, $request);
         $totalAmount = (float) $resolved['amount'];
 
@@ -3623,7 +4703,12 @@ class AuthController extends Controller
         }
 
         $primaryInvoice = $resolved['invoices']->first();
-        $targetBillId = $primaryInvoice ? $primaryInvoice->id : ($billId ?: 'INV-WEEKLY');
+        $isOverdue = $resolved['is_overdue'] ?? false;
+        $isMultipleInvoices = $resolved['invoices']->count() > 1;
+
+        // Preserve specific bill_id if provided by client, otherwise use primary invoice id or overdue/all
+        $targetBillId = $billId
+            ?: ($isOverdue ? 'overdue' : ($primaryInvoice ? $primaryInvoice->id : 'INV-WEEKLY'));
 
         return response()->json([
             'success' => true,
@@ -3635,13 +4720,22 @@ class AuthController extends Controller
             'weekly_bill_id' => $targetBillId,
             'bill_id' => $targetBillId,
             'invoice_id' => $targetBillId,
-            'is_overdue' => $resolved['is_overdue'] ?? false,
+            'is_overdue' => $isOverdue,
+            'invoices_count' => $resolved['invoices']->count(),
+            'invoice_ids' => $resolved['invoices']->pluck('id')->toArray(),
         ]);
     }
 
     public function confirmBillPayment(Request $request, $billId)
     {
-        $customer = $request->attributes->get('customer');
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated or customer not found.',
+            ], 401);
+        }
+
         $paymentIntentId = $request->input('payment_intent_id');
 
         if (!$paymentIntentId) {
@@ -3680,6 +4774,7 @@ class AuthController extends Controller
 
         $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
         $paymentCleared = false;
+        $actualPaidAmount = 0.0;
 
         if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
             try {
@@ -3694,6 +4789,9 @@ class AuthController extends Controller
                     } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
                         $paymentCleared = true;
                     }
+                    if (isset($data['amount'])) {
+                        $actualPaidAmount = ((float) $data['amount']) / 100.0;
+                    }
                 }
             } catch (\Exception $e) {
                 return response()->json([
@@ -3706,28 +4804,84 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
+            $settleAmount = $actualPaidAmount > 0 
+                ? $actualPaidAmount 
+                : ((float) ($request->input('amount') ?: $totalAmount));
+
+            // Settle all resolved invoices first
+            $settledInvoices = collect([]);
             foreach ($invoices as $invoice) {
                 $invoice->status = 'Paid';
                 $invoice->save();
+                $settledInvoices->push($invoice);
             }
 
-            if (!empty($resolved['start_date']) && !empty($resolved['end_date'])) {
+            // FIFO Check: If settleAmount is greater than the sum of already settled invoices,
+            // or if there are other unpaid overdue invoices and the paid amount covers them,
+            // settle all remaining unpaid invoices in chronological order up to settleAmount.
+            $alreadySettledSum = (float) $settledInvoices->sum('amount');
+            $remainingPayment = $settleAmount - $alreadySettledSum;
+
+            if ($remainingPayment > 0.01 || ($resolved['is_overdue'] ?? false)) {
+                $otherUnpaidInvoices = \App\Models\Invoice::where('customer_id', $customer->id)
+                    ->whereIn('status', ['Pending', 'Unpaid'])
+                    ->whereNotIn('id', $settledInvoices->pluck('id')->toArray())
+                    ->orderBy('due_date', 'asc')
+                    ->orderBy('created_at', 'asc')
+                    ->get();
+
+                foreach ($otherUnpaidInvoices as $otherInv) {
+                    if ($remainingPayment >= ((float) $otherInv->amount - 0.05) || (($resolved['is_overdue'] ?? false) && $settleAmount >= (float) $otherInv->amount)) {
+                        $otherInv->status = 'Paid';
+                        $otherInv->save();
+                        $settledInvoices->push($otherInv);
+                        $remainingPayment -= (float) $otherInv->amount;
+                    }
+                }
+            }
+
+            // Settle corresponding orders in the week/order_id for all settled invoices
+            foreach ($settledInvoices as $sinv) {
+                if ($sinv->order_id) {
+                    $orderIds = array_filter(array_map('trim', explode(',', $sinv->order_id)));
+                    if (!empty($orderIds)) {
+                        \App\Models\Order::where('customer_id', $customer->id)
+                            ->whereIn('id', $orderIds)
+                            ->where('status', 'Payment Pending')
+                            ->update(['status' => 'Pending']);
+                    }
+                }
+                if ($sinv->due_date) {
+                    $dt = Carbon::parse($sinv->due_date);
+                    $wStart = $dt->copy()->startOfWeek()->toDateString();
+                    $wEnd = $dt->copy()->endOfWeek()->toDateString();
+                    \App\Models\Order::where('customer_id', $customer->id)
+                        ->whereBetween('date', [$wStart, $wEnd])
+                        ->where('status', 'Payment Pending')
+                        ->update(['status' => 'Pending']);
+                }
+            }
+
+            // Settle any remaining past Payment Pending orders
+            if ($resolved['is_overdue'] ?? false) {
                 \App\Models\Order::where('customer_id', $customer->id)
-                    ->whereBetween('date', [$resolved['start_date'], $resolved['end_date']])
                     ->where('status', 'Payment Pending')
-                    ->update(['status' => 'Pending']);
-            } else {
-                \App\Models\Order::where('customer_id', $customer->id)
-                    ->where('status', 'Payment Pending')
+                    ->whereDate('date', '<=', Carbon::today()->toDateString())
                     ->update(['status' => 'Pending']);
             }
+
+            $finalPaidAmount = $settleAmount > 0 ? $settleAmount : (float) $settledInvoices->sum('amount');
+            $weekCount = $settledInvoices->count();
+            $planLabel = $weekCount > 1 
+                ? "Overdue Weekly Bills ({$weekCount} weeks)" 
+                : ($resolved['label'] ?: 'Weekly Bill Payment');
 
             \App\Models\Payment::create([
                 'id' => 'TXN' . strtoupper(Str::random(8)),
                 'customer_id' => $customer->id,
                 'customer' => $customer->name,
-                'plan' => $resolved['label'],
-                'amount' => $totalAmount,
+                'plan' => $planLabel,
+                'amount' => $finalPaidAmount,
                 'date' => Carbon::now()->toDateString(),
                 'status' => 'Successful',
                 'payment_intent_id' => $paymentIntentId,
@@ -3744,18 +4898,36 @@ class AuthController extends Controller
                 $customer->save();
             }
 
+            // Admin Database Notification
             \App\Models\Notification::create([
                 'title' => 'Weekly Bill Paid',
-                'message' => "Your payment of AUD {$totalAmount} for {$resolved['label']} was successful. Your account is active.",
+                'message' => "Customer {$customer->name} has paid AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel}.",
+                'user_type' => 'admin',
+                'user_id' => null,
+                'read_status' => false,
+            ]);
+
+            // Admin FCM Push Notification
+            FcmService::sendToAdmin(
+                'Weekly Bill Paid',
+                "Customer {$customer->name} has paid AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel}.",
+                ['type' => 'weekly_bill_paid', 'customer_id' => (string)$customer->id, 'amount' => (string)$finalPaidAmount]
+            );
+
+            // Customer Database Notification
+            \App\Models\Notification::create([
+                'title' => 'Weekly Bill Paid',
+                'message' => "Your payment of AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel} was successful. Your account is active.",
                 'user_type' => 'customer',
                 'user_id' => $customer->id,
                 'read_status' => false,
             ]);
 
+            // Customer FCM Push Notification
             FcmService::sendToCustomer(
                 $customer->id,
                 'Weekly Bill Paid',
-                "Your weekly payment of AUD " . number_format($totalAmount, 2) . " was successful. Your account is active.",
+                "Your weekly payment of AUD " . number_format($finalPaidAmount, 2) . " was successful. Your account is active.",
                 ['type' => 'payment_success']
             );
 
@@ -3771,12 +4943,14 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Payment confirmed successfully. Your account is active and you can continue ordering.',
-                'amount_paid' => $totalAmount,
+                'amount_paid' => $finalPaidAmount,
                 'outstanding_balance' => round((float) $remainingUnpaid, 2),
                 'overdue_balance' => round((float) $remainingOverdue, 2),
                 'weekly_balance' => 0.00,
                 'account_status' => $customer->status,
                 'can_order' => ($customer->status === 'Active'),
+                'settled_invoices_count' => $settledInvoices->count(),
+                'settled_invoice_ids' => $settledInvoices->pluck('id')->toArray(),
             ]);
         }
 
@@ -3788,8 +4962,24 @@ class AuthController extends Controller
 
     public function createOrderPaymentIntent(Request $request, $orderId)
     {
-        $customer = $request->attributes->get('customer');
-        $order = \App\Models\Order::where('customer_id', $customer->id)->findOrFail($orderId);
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Customer not found or unauthorized.'], 401);
+        }
+
+        $order = \App\Models\Order::where('customer_id', $customer->id)->find($orderId);
+        $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $orderId, $request);
+        $totalAmount = (float) $resolved['amount'];
+        if ($totalAmount <= 0 && $order) {
+            $totalAmount = (float) $order->amount;
+        }
+
+        if ($totalAmount <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No outstanding balance due for this order/bill.',
+            ], 400);
+        }
 
         $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
         $paymentIntentId = '';
@@ -3801,7 +4991,7 @@ class AuthController extends Controller
                     'Authorization' => 'Bearer ' . $stripeSecret,
                     'Content-Type' => 'application/x-www-form-urlencoded',
                 ])->asForm()->post('https://api.stripe.com/v1/payment_intents', [
-                    'amount' => (int)round($order->amount * 100),
+                    'amount' => (int)round($totalAmount * 100),
                     'currency' => 'aud',
                     'automatic_payment_methods[enabled]' => 'true',
                 ]);
@@ -3829,22 +5019,34 @@ class AuthController extends Controller
             $clientSecret = $paymentIntentId . '_secret_' . strtolower(Str::random(16));
         }
 
-        $order->payment_intent_id = $paymentIntentId;
-        $order->save();
+        if ($order) {
+            $order->payment_intent_id = $paymentIntentId;
+            $order->save();
+        }
+
+        $targetBillId = $resolved['invoices']->first() ? $resolved['invoices']->first()->id : ($order ? 'INV-ORD-' . $order->id : 'INV-WEEKLY');
 
         return response()->json([
             'success' => true,
-            'amount' => $order->amount,
+            'amount' => $totalAmount,
             'stripe_client_secret' => $clientSecret,
             'payment_intent_id' => $paymentIntentId,
+            'weekly_bill_id' => $targetBillId,
+            'bill_id' => $targetBillId,
+            'invoice_id' => $targetBillId,
+            'label' => $resolved['label'],
         ]);
     }
 
     public function confirmOrderPayment(Request $request, $id)
     {
-        $customer = $request->attributes->get('customer');
-        $order = \App\Models\Order::where('customer_id', $customer->id)->findOrFail($id);
-        $paymentIntentId = $request->input('payment_intent_id') ?: $order->payment_intent_id;
+        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Customer not found or unauthorized.'], 401);
+        }
+
+        $order = \App\Models\Order::where('customer_id', $customer->id)->find($id);
+        $paymentIntentId = $request->input('payment_intent_id') ?: ($order ? $order->payment_intent_id : null);
 
         if (!$paymentIntentId) {
             return response()->json([
@@ -3869,8 +5071,16 @@ class AuthController extends Controller
             ], 400);
         }
 
+        $resolved = $this->resolveWeeklyInvoicesForPayment($customer, $id, $request);
+        $invoices = $resolved['invoices'];
+        $totalAmount = (float) $resolved['amount'];
+        if ($totalAmount <= 0 && $order) {
+            $totalAmount = (float) $order->amount;
+        }
+
         $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
         $paymentCleared = false;
+        $actualPaidAmount = 0.0;
 
         if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
             try {
@@ -3880,8 +5090,13 @@ class AuthController extends Controller
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    if (isset($data['status']) && $data['status'] === 'succeeded') {
+                    if (isset($data['status']) && in_array($data['status'], ['succeeded', 'processing', 'requires_capture'])) {
                         $paymentCleared = true;
+                    } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
+                        $paymentCleared = true;
+                    }
+                    if (isset($data['amount'])) {
+                        $actualPaidAmount = ((float) $data['amount']) / 100.0;
                     }
                 }
             } catch (\Exception $e) {
@@ -3895,23 +5110,66 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
-            $order->status = 'Pending';
-            $order->payment_intent_id = $paymentIntentId;
-            $order->save();
+            $settleAmount = $actualPaidAmount > 0 
+                ? $actualPaidAmount 
+                : ((float) ($request->input('amount') ?: $totalAmount));
 
-            // Settle any matching invoice for this order
-            $invoice = \App\Models\Invoice::where('order_id', $order->id)->first();
-            if ($invoice) {
+            if ($order) {
+                $order->status = 'Pending';
+                $order->payment_intent_id = $paymentIntentId;
+                $order->save();
+            }
+
+            // Settle all resolved invoices
+            $settledInvoices = collect([]);
+            foreach ($invoices as $invoice) {
                 $invoice->status = 'Paid';
                 $invoice->save();
+                $settledInvoices->push($invoice);
             }
+
+            // Settle all corresponding orders in the week for all settled invoices
+            foreach ($settledInvoices as $sinv) {
+                if ($sinv->order_id) {
+                    $orderIds = array_filter(array_map('trim', explode(',', $sinv->order_id)));
+                    if (!empty($orderIds)) {
+                        \App\Models\Order::where('customer_id', $customer->id)
+                            ->whereIn('id', $orderIds)
+                            ->where('status', 'Payment Pending')
+                            ->update(['status' => 'Pending']);
+                    }
+                }
+                if ($sinv->due_date) {
+                    $dt = Carbon::parse($sinv->due_date);
+                    $wStart = $dt->copy()->startOfWeek()->toDateString();
+                    $wEnd = $dt->copy()->endOfWeek()->toDateString();
+                    \App\Models\Order::where('customer_id', $customer->id)
+                        ->whereBetween('date', [$wStart, $wEnd])
+                        ->where('status', 'Payment Pending')
+                        ->update(['status' => 'Pending']);
+                }
+            }
+
+            // If an order was directly passed, also clear any other order in that same week
+            if ($order) {
+                $dt = Carbon::parse($order->date);
+                $wStart = $dt->copy()->startOfWeek()->toDateString();
+                $wEnd = $dt->copy()->endOfWeek()->toDateString();
+                \App\Models\Order::where('customer_id', $customer->id)
+                    ->whereBetween('date', [$wStart, $wEnd])
+                    ->where('status', 'Payment Pending')
+                    ->update(['status' => 'Pending']);
+            }
+
+            $finalPaidAmount = $settleAmount > 0 ? $settleAmount : ($order ? (float)$order->amount : 0.0);
+            $planLabel = $order ? ($order->tiffin . ' (Weekly Settled)') : ($resolved['label'] ?: 'Weekly Bill Payment');
 
             \App\Models\Payment::create([
                 'id' => 'TXN' . strtoupper(Str::random(8)),
                 'customer_id' => $customer->id,
                 'customer' => $customer->name,
-                'plan' => $order->tiffin,
-                'amount' => $order->amount,
+                'plan' => $planLabel,
+                'amount' => $finalPaidAmount,
                 'date' => Carbon::now()->toDateString(),
                 'status' => 'Successful',
                 'payment_intent_id' => $paymentIntentId,
@@ -3928,18 +5186,45 @@ class AuthController extends Controller
                 $customer->save();
             }
 
+            // Admin Database Notification
             \App\Models\Notification::create([
-                'title' => 'Order Paid',
-                'message' => "Your payment of AUD {$order->amount} for order {$order->id} was successful.",
+                'title' => 'Weekly Bill Paid',
+                'message' => "Customer {$customer->name} paid AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel}.",
+                'user_type' => 'admin',
+                'user_id' => null,
+                'read_status' => false,
+            ]);
+
+            // Admin FCM Push Notification
+            FcmService::sendToAdmin(
+                'Weekly Bill Paid',
+                "Customer {$customer->name} paid AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel}.",
+                ['type' => 'weekly_bill_paid', 'customer_id' => (string)$customer->id, 'amount' => (string)$finalPaidAmount]
+            );
+
+            // Customer Database Notification
+            \App\Models\Notification::create([
+                'title' => 'Weekly Bill Paid',
+                'message' => "Your payment of AUD " . number_format($finalPaidAmount, 2) . " for {$planLabel} was successful. Your account is active.",
                 'user_type' => 'customer',
                 'user_id' => $customer->id,
                 'read_status' => false
             ]);
 
+            // Customer FCM Push Notification
+            FcmService::sendToCustomer(
+                $customer->id,
+                'Weekly Bill Paid',
+                "Your weekly payment of AUD " . number_format($finalPaidAmount, 2) . " was successful. Your account is active.",
+                ['type' => 'payment_success']
+            );
+
             return response()->json([
                 'success' => true,
-                'message' => 'Payment verified. Order confirmed and sent to kitchen.',
-                'order' => $order
+                'message' => 'Payment verified. Weekly bill and orders confirmed.',
+                'order' => $order,
+                'amount_paid' => $finalPaidAmount,
+                'settled_invoices_count' => $settledInvoices->count(),
             ]);
         }
 
@@ -4001,11 +5286,9 @@ class AuthController extends Controller
     public function uploadDriverProfileImage(Request $request)
     {
         $driver = $request->attributes->get('driver');
-        $savedImage = $this->saveUploadedImage(
+        $savedImage = ImageUploadHelper::saveProfileImage(
             $request,
-            ['profile_image', 'image', 'avatar', 'photo', 'file'],
             'profile_drv_' . $driver->id,
-            'uploads/profiles',
             $driver->profile_image
         );
 
@@ -4035,10 +5318,13 @@ class AuthController extends Controller
                 'address' => $driver->address,
                 'license_no' => $driver->license_no,
                 'license_expiry' => $driver->license_expiry,
-                'license_copy_front' => $driver->license_copy_front ? asset($driver->license_copy_front) : null,
-                'license_copy_back' => $driver->license_copy_back ? asset($driver->license_copy_back) : null,
+                'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
+                'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
                 'profile_image' => $imageUrl,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
                 'assigned_zip' => $driver->assigned_zip,
                 'area' => $driver->area,
                 'status' => $driver->status,
@@ -4048,92 +5334,223 @@ class AuthController extends Controller
     }
 
     /**
-     * Universal image upload & Base64 decoder helper
+     * Dedicated Vehicle Registration Image Upload for Driver
+     */
+    public function uploadDriverVehicleImage(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        $savedImage = ImageUploadHelper::saveVehicleReg(
+            $request,
+            'vehicle_reg_drv_' . $driver->id,
+            $driver->vehicle_reg_image
+        );
+
+        if (!$savedImage) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid image file or Base64 string was provided.'
+            ], 422);
+        }
+
+        $driver->update(['vehicle_reg_image' => $savedImage]);
+        $driver->refresh();
+
+        $imageUrl = str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Vehicle registration image uploaded successfully.',
+            'vehicle_reg_image' => $imageUrl,
+            'vehicle_registration_image' => $imageUrl,
+            'vehicle_reg_doc' => $imageUrl,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
+                'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+                'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'vehicle_reg_image' => $imageUrl,
+                'vehicle_registration_image' => $imageUrl,
+                'vehicle_reg_doc' => $imageUrl,
+                'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
+                'status' => $driver->status,
+                'user_type' => $driver->user_type,
+            ]
+        ]);
+    }
+
+    /**
+     * Dedicated License Front Copy Upload for Driver
+     */
+    public function uploadDriverLicenseFront(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        $savedImage = ImageUploadHelper::saveLicenseFront(
+            $request,
+            'license_front_drv_' . $driver->id,
+            $driver->license_copy_front
+        );
+
+        if (!$savedImage) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid license front image file or Base64 string was provided.'
+            ], 422);
+        }
+
+        $driver->update(['license_copy_front' => $savedImage]);
+        $driver->refresh();
+
+        $imageUrl = str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'License front image uploaded successfully.',
+            'license_copy_front' => $imageUrl,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $imageUrl,
+                'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+                'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
+                'status' => $driver->status,
+                'user_type' => $driver->user_type,
+            ]
+        ]);
+    }
+
+    /**
+     * Dedicated License Back Copy Upload for Driver
+     */
+    public function uploadDriverLicenseBack(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        $savedImage = ImageUploadHelper::saveLicenseBack(
+            $request,
+            'license_back_drv_' . $driver->id,
+            $driver->license_copy_back
+        );
+
+        if (!$savedImage) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid license back image file or Base64 string was provided.'
+            ], 422);
+        }
+
+        $driver->update(['license_copy_back' => $savedImage]);
+        $driver->refresh();
+
+        $imageUrl = str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'License back image uploaded successfully.',
+            'license_copy_back' => $imageUrl,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
+                'license_copy_back' => $imageUrl,
+                'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
+                'status' => $driver->status,
+                'user_type' => $driver->user_type,
+            ]
+        ]);
+    }
+
+    /**
+     * Dedicated License Upload (Front & Back) for Driver
+     */
+    public function uploadDriverLicense(Request $request)
+    {
+        $driver = $request->attributes->get('driver');
+        $front = ImageUploadHelper::saveLicenseFront($request, 'license_front_drv_' . $driver->id, $driver->license_copy_front);
+        $back = ImageUploadHelper::saveLicenseBack($request, 'license_back_drv_' . $driver->id, $driver->license_copy_back);
+
+        $updates = [];
+        if ($front !== null) $updates['license_copy_front'] = $front;
+        if ($back !== null) $updates['license_copy_back'] = $back;
+
+        if (!empty($updates)) {
+            $driver->update($updates);
+            $driver->refresh();
+        }
+
+        $licFrontUrl = $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null;
+        $licBackUrl = $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'License documents updated successfully.',
+            'license_copy_front' => $licFrontUrl,
+            'license_copy_back' => $licBackUrl,
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'first_name' => $driver->first_name,
+                'last_name' => $driver->last_name,
+                'email' => $driver->email,
+                'phone' => $driver->phone,
+                'address' => $driver->address,
+                'license_no' => $driver->license_no,
+                'license_expiry' => $driver->license_expiry,
+                'license_copy_front' => $licFrontUrl,
+                'license_copy_back' => $licBackUrl,
+                'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
+                'vehicle_reg_no' => $driver->vehicle_reg_no,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'assigned_zip' => $driver->assigned_zip,
+                'area' => $driver->area,
+                'status' => $driver->status,
+                'user_type' => $driver->user_type,
+            ]
+        ]);
+    }
+
+    /**
+     * Universal image upload & Base64 decoder helper (delegated to ImageUploadHelper)
      */
     protected function saveUploadedImage($request, $fieldNames, $prefix, $uploadFolder, $existingPath = null)
     {
-        if (!is_array($fieldNames)) {
-            $fieldNames = [$fieldNames];
-        }
-
-        $file = null;
-        foreach ($fieldNames as $fn) {
-            if ($request->hasFile($fn)) {
-                $f = $request->file($fn);
-                if ($f && $f->isValid()) {
-                    $file = $f;
-                    break;
-                }
-            }
-        }
-
-        if ($file) {
-            if ($existingPath && \Illuminate\Support\Facades\File::exists(public_path($existingPath))) {
-                \Illuminate\Support\Facades\File::delete(public_path($existingPath));
-            }
-            $uploadsDir = public_path($uploadFolder);
-            if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
-                \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
-            }
-            $ext = $file->getClientOriginalExtension() ?: 'jpg';
-            $fileName = $prefix . '_' . time() . '_' . Str::random(6) . '.' . $ext;
-            $file->move($uploadsDir, $fileName);
-            return $uploadFolder . '/' . $fileName;
-        }
-
-        foreach ($fieldNames as $fn) {
-            if ($request->filled($fn) && is_string($request->input($fn))) {
-                $str = trim($request->input($fn));
-                if (empty($str)) {
-                    continue;
-                }
-                if (str_contains($str, ';base64,')) {
-                    $parts = explode(';base64,', $str);
-                    $header = $parts[0];
-                    $base64Data = $parts[1];
-                    $ext = 'jpg';
-                    if (str_contains($header, 'png')) $ext = 'png';
-                    elseif (str_contains($header, 'webp')) $ext = 'webp';
-                    elseif (str_contains($header, 'gif')) $ext = 'gif';
-
-                    $decoded = base64_decode($base64Data);
-                    if ($decoded !== false) {
-                        if ($existingPath && \Illuminate\Support\Facades\File::exists(public_path($existingPath))) {
-                            \Illuminate\Support\Facades\File::delete(public_path($existingPath));
-                        }
-                        $uploadsDir = public_path($uploadFolder);
-                        if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
-                            \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
-                        }
-                        $fileName = $prefix . '_' . time() . '_' . Str::random(6) . '.' . $ext;
-                        file_put_contents($uploadsDir . '/' . $fileName, $decoded);
-                        return $uploadFolder . '/' . $fileName;
-                    }
-                } elseif (strlen($str) > 100 && base64_decode($str, true) !== false && !str_starts_with($str, 'http') && !str_contains($str, '/')) {
-                    $decoded = base64_decode($str, true);
-                    if ($decoded !== false) {
-                        if ($existingPath && \Illuminate\Support\Facades\File::exists(public_path($existingPath))) {
-                            \Illuminate\Support\Facades\File::delete(public_path($existingPath));
-                        }
-                        $uploadsDir = public_path($uploadFolder);
-                        if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
-                            \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
-                        }
-                        $fileName = $prefix . '_' . time() . '_' . Str::random(6) . '.jpg';
-                        file_put_contents($uploadsDir . '/' . $fileName, $decoded);
-                        return $uploadFolder . '/' . $fileName;
-                    }
-                } elseif (str_starts_with($str, 'uploads/') || str_contains($str, '/uploads/')) {
-                    if (str_contains($str, '/uploads/')) {
-                        $parts = explode('/uploads/', $str);
-                        return 'uploads/' . end($parts);
-                    }
-                    return $str;
-                }
-            }
-        }
-
-        return null;
+        return ImageUploadHelper::save($request, $fieldNames, $prefix, $uploadFolder, $existingPath);
     }
 
     /**

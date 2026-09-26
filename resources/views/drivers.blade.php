@@ -40,9 +40,9 @@
           <h3 class="kp_kitchen_admin_panel_driver_name">{{ $driver->name }}</h3>
           <p class="kp_kitchen_admin_panel_driver_meta">📞 {{ $driver->phone }}</p>
           <p class="kp_kitchen_admin_panel_driver_meta">✉️ {{ $driver->email ?? 'No email' }}</p>
-          <p class="kp_kitchen_admin_panel_driver_meta">📍 {{ $driver->address ?? 'No address' }}</p>
+          <p class="kp_kitchen_admin_panel_driver_meta" style="white-space: pre-line; line-height: 1.4;">📍 {!! nl2br(e(\App\Helpers\AddressHelper::buildFormattedAddress($driver->street_address, $driver->city, $driver->assigned_zip ?? $driver->pincode, $driver->address))) !!}</p>
           <p class="kp_kitchen_admin_panel_driver_meta">🚙 Rego No: <strong>{{ $driver->vehicle_reg_no ?? 'N/A' }}</strong></p>
-          <p class="kp_kitchen_admin_panel_driver_meta">📮 Postcode: <strong>{{ $driver->assigned_zip ?? 'N/A' }}</strong></p>
+          <p class="kp_kitchen_admin_panel_driver_meta">📮 Postcode: <strong>{{ $driver->assigned_zip ?? ($driver->pincode ?? 'N/A') }}</strong></p>
           <p class="kp_kitchen_admin_panel_driver_meta">🛡️ License: <strong>{{ $driver->license_no ?? 'N/A' }}</strong> (Exp: {{ $driver->license_expiry ?? 'N/A' }})</p>
           <p class="kp_kitchen_admin_panel_driver_meta">📦 Active shipments: <strong>{{ $activeDeliveriesMap[$driver->id] ?? 0 }}</strong></p>
 
@@ -50,7 +50,7 @@
             <div class="kp_kitchen_admin_panel_doc_preview_card">
               <span>License Front</span>
               @if ($driver->license_copy_front)
-                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset($driver->license_copy_front) }}" alt="Front"></div>
+                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset(str_starts_with($driver->license_copy_front, 'public/') ? $driver->license_copy_front : 'public/' . ltrim($driver->license_copy_front, '/')) }}" alt="Front"></div>
               @else
                 <div class="kp_kitchen_admin_panel_doc_image_wrap">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -66,7 +66,23 @@
             <div class="kp_kitchen_admin_panel_doc_preview_card">
               <span>License Back</span>
               @if ($driver->license_copy_back)
-                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset($driver->license_copy_back) }}" alt="Back"></div>
+                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset(str_starts_with($driver->license_copy_back, 'public/') ? $driver->license_copy_back : 'public/' . ltrim($driver->license_copy_back, '/')) }}" alt="Back"></div>
+              @else
+                <div class="kp_kitchen_admin_panel_doc_image_wrap">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                    <polyline points="10 9 9 9 8 9"/>
+                  </svg>
+                </div>
+              @endif
+            </div>
+            <div class="kp_kitchen_admin_panel_doc_preview_card">
+              <span>Vehicle Rego</span>
+              @if ($driver->vehicle_reg_image)
+                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset(str_starts_with($driver->vehicle_reg_image, 'public/') ? $driver->vehicle_reg_image : 'public/' . ltrim($driver->vehicle_reg_image, '/')) }}" alt="Vehicle Rego"></div>
               @else
                 <div class="kp_kitchen_admin_panel_doc_image_wrap">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -89,6 +105,9 @@
               data-name="{{ $driver->name }}"
               data-phone="{{ $driver->phone }}"
               data-email="{{ $driver->email }}"
+              data-street="{{ $driver->street_address }}"
+              data-city="{{ $driver->city }}"
+              data-pincode="{{ $driver->pincode }}"
               data-address="{{ $driver->address }}"
               data-license_no="{{ $driver->license_no }}"
               data-license_expiry="{{ $driver->license_expiry }}"
@@ -96,7 +115,8 @@
               data-assigned_zip="{{ $driver->assigned_zip }}"
               data-status="{{ $driver->status }}"
               data-license_copy_front="{{ $driver->license_copy_front }}"
-              data-license_copy_back="{{ $driver->license_copy_back }}">
+              data-license_copy_back="{{ $driver->license_copy_back }}"
+              data-vehicle_reg_image="{{ $driver->vehicle_reg_image }}">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
                 <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
               </svg>
@@ -180,7 +200,7 @@
           </label>
 
           <label class="kp_kitchen_admin_panel_form_group">
-            <span class="kp_kitchen_admin_panel_form_label">Assigned Postcode</span>
+            <span class="kp_kitchen_admin_panel_form_label">Postcode</span>
             <input type="text" name="assigned_zip" id="editDriverPostcode" class="kp_kitchen_admin_panel_form_input">
           </label>
 
@@ -195,9 +215,16 @@
           </label>
 
           <label class="kp_kitchen_admin_panel_form_group">
-            <span class="kp_kitchen_admin_panel_form_label">Address</span>
-            <input type="text" name="address" id="editDriverAddress" class="kp_kitchen_admin_panel_form_input">
+            <span class="kp_kitchen_admin_panel_form_label">Street Address</span>
+            <input type="text" name="street_address" id="editDriverStreet" class="kp_kitchen_admin_panel_form_input" placeholder="e.g. 123 Main St">
           </label>
+
+          <label class="kp_kitchen_admin_panel_form_group">
+            <span class="kp_kitchen_admin_panel_form_label">Suburbs</span>
+            <input type="text" name="city" id="editDriverCity" class="kp_kitchen_admin_panel_form_input" placeholder="e.g. Richmond">
+          </label>
+
+          <input type="hidden" name="address" id="editDriverAddress">
 
           <label class="kp_kitchen_admin_panel_form_group">
             <span class="kp_kitchen_admin_panel_form_label">Status</span>
@@ -213,13 +240,29 @@
           </label>
 
           <label class="kp_kitchen_admin_panel_form_group">
+            <span class="kp_kitchen_admin_panel_form_label">Confirm Password</span>
+            <input type="password" name="confirm_password" id="editDriverConfirmPassword" class="kp_kitchen_admin_panel_form_input" placeholder="Confirm new password">
+          </label>
+
+          <label class="kp_kitchen_admin_panel_form_group">
             <span class="kp_kitchen_admin_panel_form_label">License Photo (Front)</span>
-            <input type="file" name="license_copy_front" class="kp_kitchen_admin_panel_form_input">
+            <input type="file" name="license_copy_front_file" id="editDriverLicenseFrontInput" class="kp_kitchen_admin_panel_form_input" accept="image/*">
+            <input type="hidden" name="license_copy_front" id="editDriverLicenseFrontData">
+            <div id="editDriverLicenseFrontPreview" class="kp_kitchen_admin_panel_image_preview" style="margin-top: 8px; max-height: 140px;"><span>No document uploaded</span></div>
           </label>
 
           <label class="kp_kitchen_admin_panel_form_group">
             <span class="kp_kitchen_admin_panel_form_label">License Photo (Back)</span>
-            <input type="file" name="license_copy_back" class="kp_kitchen_admin_panel_form_input">
+            <input type="file" name="license_copy_back_file" id="editDriverLicenseBackInput" class="kp_kitchen_admin_panel_form_input" accept="image/*">
+            <input type="hidden" name="license_copy_back" id="editDriverLicenseBackData">
+            <div id="editDriverLicenseBackPreview" class="kp_kitchen_admin_panel_image_preview" style="margin-top: 8px; max-height: 140px;"><span>No document uploaded</span></div>
+          </label>
+
+          <label class="kp_kitchen_admin_panel_form_group">
+            <span class="kp_kitchen_admin_panel_form_label">Vehicle Registration Document</span>
+            <input type="file" name="vehicle_reg_image_file" id="editDriverVehicleRegInput" class="kp_kitchen_admin_panel_form_input" accept="image/*">
+            <input type="hidden" name="vehicle_reg_image" id="editDriverVehicleRegData">
+            <div id="editDriverVehicleRegPreview" class="kp_kitchen_admin_panel_image_preview" style="margin-top: 8px; max-height: 140px;"><span>No document uploaded</span></div>
           </label>
 
         </div>

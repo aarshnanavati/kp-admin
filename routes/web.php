@@ -38,6 +38,7 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/invoices', [AdminPanelController::class, 'invoices'])->name('invoices');
     Route::get('/users', [AdminPanelController::class, 'users'])->name('users');
     Route::get('/reports', [AdminPanelController::class, 'reports'])->name('reports');
+    Route::get('/reports/kitchen-prep-data', [AdminPanelController::class, 'getKitchenPrepJson'])->name('reports.kitchen-prep-data');
 
     // Operational Web CRUD Routes
     Route::post('/categories/save', [AdminPanelController::class, 'saveCategory'])->name('categories.save');
@@ -51,12 +52,19 @@ Route::middleware('api.or.session')->group(function () {
 
     Route::post('/drivers/save', [AdminPanelController::class, 'saveDriver'])->name('drivers.save');
     Route::post('/drivers/delete/{id}', [AdminPanelController::class, 'deleteDriver'])->name('drivers.delete');
+    Route::get('/drivers/{id}/details', [AdminPanelController::class, 'getDriverDetails'])->name('drivers.details');
+    Route::post('/drivers/{id}/approve', [AdminPanelController::class, 'approveDriver'])->name('drivers.approve');
+    Route::post('/drivers/{id}/reject', [AdminPanelController::class, 'rejectDriver'])->name('drivers.reject');
 
     Route::post('/orders/update-status', [AdminPanelController::class, 'updateOrderStatus'])->name('orders.update-status');
+    Route::post('/orders/upload-pod', [AdminPanelController::class, 'uploadProofOfDelivery'])->name('orders.upload-pod');
+    Route::post('/orders/{id}/upload-pod', [AdminPanelController::class, 'uploadProofOfDelivery'])->name('orders.upload-pod.id');
 
     Route::post('/payments/run-deduction', [AdminPanelController::class, 'runManualDeduction'])->name('payments.run-deduction');
 
     Route::post('/customers/save', [AdminPanelController::class, 'saveCustomer'])->name('customers.save');
+    Route::post('/customers/{id}/toggle-status', [AdminPanelController::class, 'toggleCustomerStatus'])->name('customers.toggle-status');
+    Route::post('/customers/{id}/status', [AdminPanelController::class, 'updateCustomerStatus'])->name('customers.status');
     Route::post('/customers/delete/{id}', [AdminPanelController::class, 'deleteCustomer'])->name('customers.delete');
 
     Route::post('/coupons/save', [AdminPanelController::class, 'saveCoupon'])->name('coupons.save');

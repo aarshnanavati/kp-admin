@@ -12,6 +12,8 @@ class CustomerAddress extends Model
     protected $fillable = [
         'customer_id',
         'type',
+        'street_address',
+        'city',
         'address_line',
         'pincode',
         'is_default',

@@ -15,6 +15,8 @@ class Customer extends Authenticatable
         'phone',
         'email',
         'pincode',
+        'street_address',
+        'city',
         'address',
         'password',
         'api_token',

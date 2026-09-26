@@ -26,7 +26,7 @@
       <div class="kp_kitchen_admin_panel_stat_content">
         <span class="kp_kitchen_admin_panel_stat_label">Active Drivers</span>
         <strong class="kp_kitchen_admin_panel_stat_value" id="statDrivers">{{ $driversCount }}</strong>
-        <span class="kp_kitchen_admin_panel_stat_hint">Assigned today</span>
+        <span class="kp_kitchen_admin_panel_stat_hint">Total drivers</span>
       </div>
     </article>
     <article class="kp_kitchen_admin_panel_stat_card">

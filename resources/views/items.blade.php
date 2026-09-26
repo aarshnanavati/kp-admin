@@ -20,7 +20,7 @@
       <article class="kp_kitchen_admin_panel_tiffin_card">
         <div class="kp_kitchen_admin_panel_tiffin_image">
           @if ($item->image)
-            <img class="kp_kitchen_admin_panel_tiffin_photo" src="{{ asset($item->image) }}" alt="{{ $item->name }}">
+            <img class="kp_kitchen_admin_panel_tiffin_photo" src="{{ asset(str_starts_with($item->image, 'public/') ? $item->image : 'public/' . ltrim($item->image, '/')) }}" alt="{{ $item->name }}">
           @else
             <span class="kp_kitchen_admin_panel_tiffin_emoji">🍛</span>
           @endif

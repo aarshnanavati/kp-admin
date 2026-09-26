@@ -82,15 +82,14 @@
       <article class="kp_kitchen_admin_panel_tiffin_card" style="{{ $tiffin->is_customizable ? 'border: 1.5px solid var(--primary-color); box-shadow: 0 4px 14px rgba(255, 107, 107, 0.12);' : '' }}">
         <div class="kp_kitchen_admin_panel_tiffin_image">
           @if ($tiffin->image)
-            <img class="kp_kitchen_admin_panel_tiffin_photo" src="{{ asset($tiffin->image) }}" alt="{{ $tiffin->name }}">
+            <img class="kp_kitchen_admin_panel_tiffin_photo" src="{{ asset(str_starts_with($tiffin->image, 'public/') ? $tiffin->image : 'public/' . ltrim($tiffin->image, '/')) }}" alt="{{ $tiffin->name }}">
           @else
             <span class="kp_kitchen_admin_panel_tiffin_emoji">{{ $tiffin->is_customizable ? '✨' : '🍱' }}</span>
           @endif
           <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_{{ strtolower(str_replace(' ', '_', $tiffin->status)) }}">{{ $tiffin->status }}</span>
         </div>
         <div class="kp_kitchen_admin_panel_tiffin_content">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-            <span class="kp_kitchen_admin_panel_tiffin_type">{{ $tiffin->prep_time }} min prep</span>
+          <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 6px;">
             @if ($tiffin->is_customizable)
               <span style="background: rgba(255, 107, 107, 0.15); color: var(--primary-color); font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; text-transform: uppercase;">
                 Customizable
@@ -170,7 +169,6 @@
                 data-name="{{ $tiffin->name }}"
                 data-price="{{ $tiffin->price }}"
                 data-category_id="{{ $tiffin->category_id }}"
-                data-prep_time="{{ $tiffin->prep_time }}"
                 data-status="{{ $tiffin->status }}"
                 data-description="{{ $tiffin->description }}"
                 data-image="{{ $tiffin->image }}"

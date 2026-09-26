@@ -22,7 +22,20 @@
     @forelse ($notifications as $notification)
       <article class="kp_kitchen_admin_panel_notification_item {{ $notification->read_status ? '' : 'kp_kitchen_admin_panel_notification_item_unread' }}">
         <div class="kp_kitchen_admin_panel_notification_icon">
-          {{ str_contains($notification->title, 'Payment') ? '$' : '🔔' }}
+          @php
+            $titleLower = strtolower($notification->title ?? '');
+          @endphp
+          @if (str_contains($titleLower, 'pay') || str_contains($titleLower, 'paid') || str_contains($titleLower, 'bill') || str_contains($titleLower, 'invoice'))
+            💳
+          @elseif (str_contains($titleLower, 'order'))
+            🍲
+          @elseif (str_contains($titleLower, 'driver'))
+            🚗
+          @elseif (str_contains($titleLower, 'login'))
+            👤
+          @else
+            🔔
+          @endif
         </div>
         <div class="kp_kitchen_admin_panel_notification_content">
           <div class="kp_kitchen_admin_panel_notification_heading">

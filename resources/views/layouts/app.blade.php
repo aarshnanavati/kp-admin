@@ -162,8 +162,8 @@
                         </span>
                     </button>
                     <div class="kp_kitchen_admin_panel_nav_group_items">
-                        <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('coupons') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
-                            href="{{ route('coupons') }}">Coupons</a>
+                        {{-- <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('coupons') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
+                            href="{{ route('coupons') }}">Coupons</a> --}}
                         <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('reports') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"
                             href="{{ route('reports') }}">Reports</a>
                         <a class="kp_kitchen_admin_panel_nav_sub_item {{ request()->routeIs('notifications') ? 'kp_kitchen_admin_panel_nav_sub_item_active' : '' }}"

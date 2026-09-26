@@ -41,6 +41,8 @@ Route::post('/driver/reset-password', [AuthController::class, 'driverResetPasswo
 
 // --- Customer Guest Catalog & Cart Routes ---
 Route::get('/customer/tiffins', [AdminPanelController::class, 'getTiffins']);
+Route::get('/customer/tiffin-plans', [AdminPanelController::class, 'getTiffins']);
+Route::get('/tiffin-plans', [AdminPanelController::class, 'getTiffins']);
 Route::get('/customer/customize-tiffin', [AdminPanelController::class, 'getCustomizeTiffin']);
 Route::get('/customer/custom-tiffin', [AdminPanelController::class, 'getCustomizeTiffin']);
 Route::get('/customer/customize', [AdminPanelController::class, 'getCustomizeTiffin']);
@@ -78,6 +80,9 @@ Route::middleware('customer.auth')->group(function () {
     Route::get('/customer/weekly-bills/{billId}', [AuthController::class, 'customerInvoiceDetails']);
     Route::get('/customer/weekly-billing', [AuthController::class, 'customerInvoices']);
     Route::get('/customer/weekly-billing/{billId}', [AuthController::class, 'customerInvoiceDetails']);
+    Route::get('/customer/weekly-payments/current', [AuthController::class, 'getCurrentWeeklyPayment']);
+    Route::get('/customer/weekly-payments', [AuthController::class, 'customerInvoices']);
+    Route::get('/customer/weekly-payments/{billId}', [AuthController::class, 'customerInvoiceDetails']);
     Route::get('/customer/notifications', [AuthController::class, 'customerNotifications']);
     Route::post('/customer/notifications/clear-all', [AuthController::class, 'clearCustomerNotifications']);
     Route::post('/customer/fcm-token', [AuthController::class, 'updateCustomerFcmToken']);
@@ -92,12 +97,31 @@ Route::middleware('driver.auth')->group(function () {
     Route::post('/driver/profile/edit', [AuthController::class, 'editDriverProfile']);
     Route::post('/driver/profile/image', [AuthController::class, 'uploadDriverProfileImage']);
     Route::post('/driver/profile-image', [AuthController::class, 'uploadDriverProfileImage']);
+    Route::post('/driver/profile/vehicle-image', [AuthController::class, 'uploadDriverVehicleImage']);
+    Route::post('/driver/vehicle-image', [AuthController::class, 'uploadDriverVehicleImage']);
+    Route::post('/driver/vehicle-reg-image', [AuthController::class, 'uploadDriverVehicleImage']);
+    Route::post('/driver/profile/license-front', [AuthController::class, 'uploadDriverLicenseFront']);
+    Route::post('/driver/license-front', [AuthController::class, 'uploadDriverLicenseFront']);
+    Route::post('/driver/profile/license-back', [AuthController::class, 'uploadDriverLicenseBack']);
+    Route::post('/driver/license-back', [AuthController::class, 'uploadDriverLicenseBack']);
+    Route::post('/driver/profile/license', [AuthController::class, 'uploadDriverLicense']);
+    Route::post('/driver/license', [AuthController::class, 'uploadDriverLicense']);
     Route::get('/driver/assigned-orders', [AuthController::class, 'getDriverAssignedOrders']);
+    Route::get('/driver/orders', [AuthController::class, 'getDriverAssignedOrders']);
+    Route::get('/driver/orders/{id}', [AuthController::class, 'getDriverOrderDetails']);
+    Route::patch('/driver/orders/{id}/status', [AuthController::class, 'updateDriverOrderStatus']);
     Route::post('/driver/orders/{id}/status', [AuthController::class, 'updateDriverOrderStatus']);
+    Route::post('/driver/orders/upload-pod', [AuthController::class, 'driverUploadPod']);
+    Route::post('/driver/orders/{id}/upload-pod', [AuthController::class, 'driverUploadPod']);
+    Route::post('/driver/upload-pod', [AuthController::class, 'driverUploadPod']);
     Route::get('/driver/notifications', [AuthController::class, 'getDriverNotifications']);
     Route::post('/driver/notifications/clear-all', [AuthController::class, 'clearDriverNotifications']);
     Route::post('/driver/fcm-token', [AuthController::class, 'updateDriverFcmToken']);
 });
+
+// Fallback direct endpoint for driver upload POD
+Route::post('/driver/orders/upload-pod', [AuthController::class, 'driverUploadPod']);
+Route::post('/driver/orders/{id}/upload-pod', [AuthController::class, 'driverUploadPod']);
 
 // --- Admin Dashboard & Operational API Routes (Session & Bearer Token Protected) ---
 Route::middleware('api.or.session')->group(function () {
@@ -106,6 +130,7 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/data', [AdminPanelController::class, 'getData']);
     Route::get('/dashboard-charts', [AdminPanelController::class, 'getDashboardCharts']);
     Route::get('/reports/export', [AdminPanelController::class, 'exportReports']);
+    Route::get('/reports/kitchen-prep', [AdminPanelController::class, 'getKitchenPrepJson']);
 
     // Drivers API
     Route::get('/drivers', [AdminPanelController::class, 'getDrivers']);
@@ -132,6 +157,8 @@ Route::middleware('api.or.session')->group(function () {
     Route::post('/order/update', [AdminPanelController::class, 'updateOrder']);
     Route::post('/orders/dispatch', [AdminPanelController::class, 'dispatchOrders']);
     Route::post('/order/dispatch', [AdminPanelController::class, 'dispatchOrders']);
+    Route::post('/orders/{id}/upload-pod', [AdminPanelController::class, 'uploadProofOfDelivery']);
+    Route::post('/orders/upload-pod', [AdminPanelController::class, 'uploadProofOfDelivery']);
 
     // Payments API
     Route::get('/payments', [AdminPanelController::class, 'getPayments']);
@@ -163,6 +190,8 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/drivers/{id}/details', [AdminPanelController::class, 'getDriverDetails']);
     Route::get('/orders/{id}/details', [AdminPanelController::class, 'getOrderDetails']);
     Route::post('/customers', [AdminPanelController::class, 'manageCustomer']);
+    Route::post('/customers/{id}/toggle-status', [AdminPanelController::class, 'toggleCustomerStatus']);
+    Route::post('/customers/{id}/status', [AdminPanelController::class, 'updateCustomerStatus']);
 
     // Coupons API
     Route::get('/coupons', [AdminPanelController::class, 'getCoupons']);
