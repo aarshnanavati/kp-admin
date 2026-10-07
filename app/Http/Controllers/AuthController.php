@@ -440,6 +440,11 @@ class AuthController extends Controller
         }
 
         // If customer record doesn't exist yet (frontend validates OTP first before sending full form)
+        $otpRecord->update([
+            'otp' => 'VERIFIED',
+            'expires_at' => Carbon::now()->addMinutes(30)
+        ]);
+
         return response()->json([
             'success' => true,
             'verified' => true,
@@ -563,22 +568,29 @@ class AuthController extends Controller
         $email = strtolower(trim($request->email));
         $existingCustomer = Customer::where('email', $email)->first();
 
-        // Check if user provided OTP with the registration form
+        // Check if user provided OTP or verified OTP earlier on the same page
         $providedOtp = $request->filled('otp') ? trim($request->otp) : null;
+        $otpRecord = null;
 
         if ($providedOtp) {
             $otpRecord = PasswordOtp::where('email', $email)
-                ->where('otp', $providedOtp)
+                ->where(function ($q) use ($providedOtp) {
+                    $q->where('otp', $providedOtp)
+                      ->orWhere('otp', 'VERIFIED');
+                })
                 ->where('expires_at', '>', Carbon::now())
                 ->first();
+        } else {
+            // Check if user already verified their email via verify-otp endpoint earlier on the same screen
+            $otpRecord = PasswordOtp::where('email', $email)
+                ->where('otp', 'VERIFIED')
+                ->where('expires_at', '>', Carbon::now())
+                ->first();
+        }
 
-            if (!$otpRecord) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid or expired OTP. Please verify the code and try again.',
-                ], 422);
-            }
+        $isVerified = ($otpRecord !== null);
 
+        if ($isVerified) {
             // If customer exists and is already verified
             if ($existingCustomer && $existingCustomer->is_verified) {
                 return response()->json([
@@ -637,7 +649,9 @@ class AuthController extends Controller
             );
 
             // Delete consumed OTP
-            $otpRecord->delete();
+            if ($otpRecord) {
+                $otpRecord->delete();
+            }
 
             // Send branded welcome email and admin alert
             try {
@@ -675,6 +689,14 @@ class AuthController extends Controller
                     'user' => $customerData,
                 ]
             ], 201);
+        }
+
+        // If OTP was provided but invalid/expired
+        if ($providedOtp && !$isVerified) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired OTP. Please verify the code and try again.',
+            ], 422);
         }
 
         // If no OTP provided, create or update unverified customer and send verification OTP
