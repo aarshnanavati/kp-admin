@@ -25,6 +25,17 @@ Route::prefix('auth')->group(function () {
 
 // Customer Guest Auth Routes
 Route::post('/customer/register', [AuthController::class, 'customerRegister']);
+Route::post('/customer/register/send-otp', [AuthController::class, 'sendCustomerRegistrationOtp']);
+Route::post('/customer/send-registration-otp', [AuthController::class, 'sendCustomerRegistrationOtp']);
+Route::post('/customer/register-send-otp', [AuthController::class, 'sendCustomerRegistrationOtp']);
+Route::post('/customer/send-otp', [AuthController::class, 'sendCustomerRegistrationOtp']);
+Route::post('/customer/register/verify-otp', [AuthController::class, 'verifyCustomerRegistrationOtp']);
+Route::post('/customer/verify-registration-otp', [AuthController::class, 'verifyCustomerRegistrationOtp']);
+Route::post('/customer/register-verify-otp', [AuthController::class, 'verifyCustomerRegistrationOtp']);
+Route::post('/customer/verify-email', [AuthController::class, 'verifyCustomerRegistrationOtp']);
+Route::post('/customer/register/resend-otp', [AuthController::class, 'sendCustomerRegistrationOtp']);
+Route::post('/customer/resend-registration-otp', [AuthController::class, 'sendCustomerRegistrationOtp']);
+Route::post('/customer/resend-otp', [AuthController::class, 'sendCustomerRegistrationOtp']);
 Route::post('/customer/login', [AuthController::class, 'customerLogin']);
 Route::post('/customer/forget-password', [AuthController::class, 'customerForgetPassword']);
 Route::post('/customer/forgot-password', [AuthController::class, 'customerForgetPassword']);
@@ -49,12 +60,18 @@ Route::get('/customer/customize', [AdminPanelController::class, 'getCustomizeTif
 Route::get('/customer/custom', [AdminPanelController::class, 'getCustomizeTiffin']);
 Route::get('/customer/categories', [AdminPanelController::class, 'getCategories']);
 Route::get('/customer/items', [AdminPanelController::class, 'getItems']);
+Route::get('/customer/ordering-status', [AuthController::class, 'getOrderingStatus']);
+Route::get('/customer/cutoff-status', [AuthController::class, 'getOrderingStatus']);
+Route::get('/ordering-status', [AuthController::class, 'getOrderingStatus']);
+Route::get('/cutoff-status', [AuthController::class, 'getOrderingStatus']);
 Route::get('/customer/cart', [AuthController::class, 'getCart']);
 Route::post('/customer/cart', [AuthController::class, 'addToCart']);
 Route::post('/customer/cart/remove', [AuthController::class, 'removeFromCart']);
 
 // --- Customer Authenticated API Routes ---
 Route::middleware('customer.auth')->group(function () {
+    Route::get('/customer/ordering-status', [AuthController::class, 'getOrderingStatus']);
+    Route::get('/customer/cutoff-status', [AuthController::class, 'getOrderingStatus']);
     Route::post('/customer/logout', [AuthController::class, 'customerLogout']);
     Route::get('/customer/profile', [AuthController::class, 'customerProfile']);
     Route::post('/customer/profile/edit', [AuthController::class, 'editCustomerProfile']);

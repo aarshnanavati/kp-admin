@@ -12,14 +12,24 @@ class SendOtpMail extends Mailable
 {
     use Queueable, SerializesModels;
 
-    public $otp;
+    public string $otp;
+    public string $subjectStr;
+    public string $purpose;
 
     /**
      * Create a new message instance.
+     *
+     * @param string $otp
+     * @param string|null $subjectStr
+     * @param string|null $purpose
      */
-    public function __construct($otp)
+    public function __construct(string $otp, ?string $subjectStr = null, ?string $purpose = 'verification')
     {
         $this->otp = $otp;
+        $this->purpose = $purpose ?: 'verification';
+        $this->subjectStr = $subjectStr ?: ($this->purpose === 'password_reset' 
+            ? "KP's Kitchen - Password Reset Code: {$otp}" 
+            : "KP's Kitchen - Account Verification Code: {$otp}");
     }
 
     /**
@@ -28,7 +38,7 @@ class SendOtpMail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'KP Kitchen - Password Reset OTP',
+            subject: $this->subjectStr,
         );
     }
 

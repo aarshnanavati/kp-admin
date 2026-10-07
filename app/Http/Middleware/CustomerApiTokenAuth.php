@@ -33,6 +33,15 @@ class CustomerApiTokenAuth
             ], 401);
         }
 
+        if ($customer->is_verified === false || $customer->is_verified === 0) {
+            return response()->json([
+                'success' => false,
+                'requires_verification' => true,
+                'is_verified' => false,
+                'message' => 'Your email address is not verified. Please verify your account with the OTP sent to your email.'
+            ], 403);
+        }
+
         // Put the customer instance into the request attributes so controllers can access it easily
         $request->attributes->set('customer', $customer);
 

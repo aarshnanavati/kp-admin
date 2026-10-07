@@ -72,6 +72,8 @@ Route::middleware('api.or.session')->group(function () {
 
     Route::post('/invoices/save', [AdminPanelController::class, 'saveInvoice'])->name('invoices.save');
     Route::post('/invoices/delete/{id}', [AdminPanelController::class, 'deleteInvoice'])->name('invoices.delete');
+    Route::post('/invoices/{id}/notify', [AdminPanelController::class, 'sendInvoiceNotification'])->name('invoices.notify');
+    Route::post('/invoices/generate-and-notify', [AdminPanelController::class, 'generateAndNotifyAllWeeklyInvoices'])->name('invoices.generate-and-notify');
 
     Route::post('/users/save', [AdminPanelController::class, 'saveUser'])->name('users.save');
     Route::post('/users/delete/{id}', [AdminPanelController::class, 'deleteUser'])->name('users.delete');

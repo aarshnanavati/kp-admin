@@ -10,6 +10,7 @@ use App\Models\Order;
 use App\Models\PasswordOtp;
 use App\Mail\SendOtpMail;
 use App\Mail\KitchenAlertMail;
+use App\Mail\CustomerWelcomeMail;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -20,6 +21,7 @@ use Illuminate\Support\Facades\Log;
 use App\Services\FcmService;
 use App\Helpers\AddressHelper;
 use App\Helpers\ImageUploadHelper;
+use App\Helpers\TimezoneHelper;
 use Carbon\Carbon;
 
 class AuthController extends Controller
@@ -299,6 +301,154 @@ class AuthController extends Controller
     }
 
     /**
+     * Send OTP for customer registration verification.
+     */
+    public function sendCustomerRegistrationOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please enter a valid email address.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+
+        // If customer exists and is already verified, inform them to login
+        $existingCustomer = Customer::where('email', $email)->first();
+        if ($existingCustomer && $existingCustomer->is_verified) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An active verified customer account already exists with this email address. Please log in.',
+            ], 422);
+        }
+
+        // Generate 6-digit OTP
+        $otp = (string)rand(100000, 999999);
+
+        // Delete old OTPs for this email
+        PasswordOtp::where('email', $email)->delete();
+
+        // Create new OTP valid for 10 minutes
+        PasswordOtp::create([
+            'email' => $email,
+            'otp' => $otp,
+            'expires_at' => Carbon::now()->addMinutes(10),
+        ]);
+
+        Log::info("Customer Registration Verification OTP for {$email}: {$otp}");
+
+        // Send OTP email
+        try {
+            Mail::to($email)->send(new SendOtpMail($otp, null, 'verification'));
+        } catch (\Exception $e) {
+            Log::warning("Customer registration OTP email dispatch failed: " . $e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'A 6-digit verification OTP has been sent to your email.',
+            'email' => $email,
+        ]);
+    }
+
+    /**
+     * Verify customer registration OTP and activate customer account.
+     */
+    public function verifyCustomerRegistrationOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+            'otp' => 'required|string|size:6',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Please enter the 6-digit OTP sent to your email.',
+            ], 422);
+        }
+
+        $email = strtolower(trim($request->email));
+        $otpRecord = PasswordOtp::where('email', $email)
+            ->where('otp', trim($request->otp))
+            ->where('expires_at', '>', Carbon::now())
+            ->first();
+
+        if (!$otpRecord) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired OTP. Please request a new verification code.',
+            ], 422);
+        }
+
+        $customer = Customer::where('email', $email)->first();
+
+        if ($customer) {
+            $token = Str::random(60);
+            $customer->update([
+                'is_verified' => true,
+                'email_verified_at' => Carbon::now(),
+                'api_token' => $token,
+            ]);
+
+            // Delete verified OTP record
+            $otpRecord->delete();
+
+            // Send welcome email now that customer is verified
+            try {
+                Mail::to($customer->email)->send(new CustomerWelcomeMail($customer));
+                Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "New verified customer {$customer->name} ({$customer->email}) has registered."));
+            } catch (\Exception $e) {
+                Log::warning("Customer verified welcome email dispatch failed: " . $e->getMessage());
+            }
+
+            $defaultAddr = $customer->addresses()->where('is_default', true)->first();
+            $formattedAddrRecord = $defaultAddr ? AddressHelper::formatAddressRecord($defaultAddr) : null;
+            $customerData = array_merge([
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'first_name' => $customer->first_name,
+                'last_name' => $customer->last_name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'profile_image' => null,
+                'status' => 'Active',
+                'is_verified' => true,
+                'email_verified_at' => $customer->email_verified_at,
+                'user_type' => $customer->user_type,
+                'addresses' => $formattedAddrRecord ? [$formattedAddrRecord] : [],
+            ], AddressHelper::formatResponsePayload($customer));
+
+            return response()->json([
+                'success' => true,
+                'verified' => true,
+                'message' => 'Email verified successfully! Welcome to KP\'s Kitchen.',
+                'token' => $token,
+                'user_type' => $customer->user_type,
+                'customer' => $customerData,
+                'data' => [
+                    'token' => $token,
+                    'customer' => $customerData,
+                    'user' => $customerData,
+                ]
+            ]);
+        }
+
+        // If customer record doesn't exist yet (frontend validates OTP first before sending full form)
+        return response()->json([
+            'success' => true,
+            'verified' => true,
+            'message' => 'OTP verified successfully. You can now complete your registration.',
+            'email' => $email,
+        ]);
+    }
+
+    /**
      * Handle customer registration.
      */
     public function customerRegister(Request $request)
@@ -316,23 +466,44 @@ class AuthController extends Controller
         }
 
         // Normalize field aliases from mobile apps and web forms
+        if ($request->has('street address') && !$request->has('street_address')) {
+            $request->merge(['street_address' => $request->input('street address')]);
+        }
+        if ($request->has('post code') && !$request->has('postcode')) {
+            $request->merge(['postcode' => $request->input('post code')]);
+        }
+        if ($request->has('pin code') && !$request->has('postcode')) {
+            $request->merge(['postcode' => $request->input('pin code')]);
+        }
+        if ($request->has('pincode') && !$request->has('postcode')) {
+            $request->merge(['postcode' => $request->pincode]);
+        }
+        if ($request->has('postal_code') && !$request->has('postcode')) {
+            $request->merge(['postcode' => $request->postal_code]);
+        }
+        if ($request->has('zip') && !$request->has('postcode')) {
+            $request->merge(['postcode' => $request->zip]);
+        }
+        if ($request->has('suburb') && !$request->has('suburbs')) {
+            $request->merge(['suburbs' => $request->suburb]);
+        }
+        if ($request->has('city') && !$request->has('suburbs')) {
+            $request->merge(['suburbs' => $request->city]);
+        }
+        if ($request->has('town') && !$request->has('suburbs')) {
+            $request->merge(['suburbs' => $request->town]);
+        }
         if ($request->has('delivery_address') && !$request->has('address')) {
             $request->merge(['address' => $request->delivery_address]);
         }
         if ($request->has('postcode') && !$request->has('pincode')) {
             $request->merge(['pincode' => $request->postcode]);
         }
-        if ($request->has('postal_code') && !$request->has('pincode')) {
-            $request->merge(['pincode' => $request->postal_code]);
-        }
-        if ($request->has('zip') && !$request->has('pincode')) {
-            $request->merge(['pincode' => $request->zip]);
-        }
         if ($request->has('suburbs') && !$request->has('suburb')) {
             $request->merge(['suburb' => $request->suburbs]);
         }
-        if ($request->has('suburb') && !$request->has('city')) {
-            $request->merge(['city' => $request->suburb]);
+        if ($request->has('suburbs') && !$request->has('city')) {
+            $request->merge(['city' => $request->suburbs]);
         }
         if ($request->has('confirm_password') && !$request->has('password_confirmation')) {
             $request->merge(['password_confirmation' => $request->confirm_password]);
@@ -367,6 +538,7 @@ class AuthController extends Controller
             'password' => 'required|string|min:6|confirmed',
             'confirm_password' => 'required_without:password_confirmation|string|min:6',
             'password_confirmation' => 'required_without:confirm_password|string|min:6',
+            'otp' => 'nullable|string|size:6',
             'pincode' => 'nullable|string|max:20',
             'postcode' => 'nullable|string|max:20',
             'address' => 'nullable|string',
@@ -389,70 +561,195 @@ class AuthController extends Controller
         }
 
         $email = strtolower(trim($request->email));
-        if (Customer::where('email', $email)->exists()) {
+        $existingCustomer = Customer::where('email', $email)->first();
+
+        // Check if user provided OTP with the registration form
+        $providedOtp = $request->filled('otp') ? trim($request->otp) : null;
+
+        if ($providedOtp) {
+            $otpRecord = PasswordOtp::where('email', $email)
+                ->where('otp', $providedOtp)
+                ->where('expires_at', '>', Carbon::now())
+                ->first();
+
+            if (!$otpRecord) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid or expired OTP. Please verify the code and try again.',
+                ], 422);
+            }
+
+            // If customer exists and is already verified
+            if ($existingCustomer && $existingCustomer->is_verified) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'A verified customer account with this email already exists. Please log in.',
+                ], 422);
+            }
+
+            $token = Str::random(60);
+
+            if ($existingCustomer) {
+                // Update existing unverified customer
+                $existingCustomer->update([
+                    'name' => trim($request->name),
+                    'phone' => trim($request->phone),
+                    'password' => Hash::make($request->password),
+                    'street_address' => $streetAddress,
+                    'city' => $city,
+                    'pincode' => $pincode ?: trim($request->pincode),
+                    'address' => $formattedAddress ?: trim($request->address),
+                    'api_token' => $token,
+                    'is_verified' => true,
+                    'email_verified_at' => Carbon::now(),
+                    'fcm_token' => $request->input('fcm_token') ?: $existingCustomer->fcm_token,
+                ]);
+                $customer = $existingCustomer;
+            } else {
+                // Create new verified customer
+                $customer = Customer::create([
+                    'name' => trim($request->name),
+                    'email' => $email,
+                    'phone' => trim($request->phone),
+                    'password' => Hash::make($request->password),
+                    'street_address' => $streetAddress,
+                    'city' => $city,
+                    'pincode' => $pincode ?: trim($request->pincode),
+                    'address' => $formattedAddress ?: trim($request->address),
+                    'api_token' => $token,
+                    'user_type' => 'customer',
+                    'is_verified' => true,
+                    'email_verified_at' => Carbon::now(),
+                    'fcm_token' => $request->input('fcm_token'),
+                ]);
+            }
+
+            // Create or update default address
+            $defaultAddr = $customer->addresses()->updateOrCreate(
+                ['customer_id' => $customer->id, 'is_default' => true],
+                [
+                    'type' => 'Home',
+                    'street_address' => $streetAddress,
+                    'city' => $city,
+                    'address_line' => $formattedAddress ?: trim($request->address),
+                    'pincode' => $pincode ?: trim($request->pincode),
+                ]
+            );
+
+            // Delete consumed OTP
+            $otpRecord->delete();
+
+            // Send branded welcome email and admin alert
+            try {
+                Mail::to($customer->email)->send(new CustomerWelcomeMail($customer));
+                Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "New customer {$customer->name} ({$customer->email}) has registered."));
+            } catch (\Exception $e) {
+                Log::warning("Customer registration email triggers failed: " . $e->getMessage());
+            }
+
+            $formattedAddrRecord = AddressHelper::formatAddressRecord($defaultAddr);
+            $customerData = array_merge([
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'first_name' => $customer->first_name,
+                'last_name' => $customer->last_name,
+                'email' => $customer->email,
+                'phone' => $customer->phone,
+                'profile_image' => null,
+                'status' => 'Active',
+                'is_verified' => true,
+                'email_verified_at' => $customer->email_verified_at,
+                'user_type' => $customer->user_type,
+                'addresses' => [$formattedAddrRecord],
+            ], AddressHelper::formatResponsePayload($customer));
+
             return response()->json([
-                'success' => false,
-                'message' => 'A customer with this email already exists.',
-            ], 422);
+                'success' => true,
+                'message' => 'Registration and verification successful. Welcome to KP\'s Kitchen!',
+                'token' => $token,
+                'user_type' => $customer->user_type,
+                'customer' => $customerData,
+                'data' => [
+                    'token' => $token,
+                    'customer' => $customerData,
+                    'user' => $customerData,
+                ]
+            ], 201);
         }
 
-        $token = Str::random(60);
+        // If no OTP provided, create or update unverified customer and send verification OTP
+        if ($existingCustomer) {
+            if ($existingCustomer->is_verified) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'A customer with this email already exists. Please log in.',
+                ], 422);
+            }
 
-        $customer = Customer::create([
-            'name' => trim($request->name),
+            $existingCustomer->update([
+                'name' => trim($request->name),
+                'phone' => trim($request->phone),
+                'password' => Hash::make($request->password),
+                'street_address' => $streetAddress,
+                'city' => $city,
+                'pincode' => $pincode ?: trim($request->pincode),
+                'address' => $formattedAddress ?: trim($request->address),
+                'fcm_token' => $request->input('fcm_token') ?: $existingCustomer->fcm_token,
+            ]);
+            $customer = $existingCustomer;
+        } else {
+            $customer = Customer::create([
+                'name' => trim($request->name),
+                'email' => $email,
+                'phone' => trim($request->phone),
+                'password' => Hash::make($request->password),
+                'street_address' => $streetAddress,
+                'city' => $city,
+                'pincode' => $pincode ?: trim($request->pincode),
+                'address' => $formattedAddress ?: trim($request->address),
+                'api_token' => null,
+                'user_type' => 'customer',
+                'is_verified' => false,
+                'email_verified_at' => null,
+                'fcm_token' => $request->input('fcm_token'),
+            ]);
+        }
+
+        // Save default address for customer
+        $customer->addresses()->updateOrCreate(
+            ['customer_id' => $customer->id, 'is_default' => true],
+            [
+                'type' => 'Home',
+                'street_address' => $streetAddress,
+                'city' => $city,
+                'address_line' => $formattedAddress ?: trim($request->address),
+                'pincode' => $pincode ?: trim($request->pincode),
+            ]
+        );
+
+        // Generate and send 6-digit OTP
+        $otp = (string)rand(100000, 999999);
+        PasswordOtp::where('email', $email)->delete();
+        PasswordOtp::create([
             'email' => $email,
-            'phone' => trim($request->phone),
-            'password' => Hash::make($request->password),
-            'street_address' => $streetAddress,
-            'city' => $city,
-            'pincode' => $pincode ?: trim($request->pincode),
-            'address' => $formattedAddress ?: trim($request->address),
-            'api_token' => $token,
-            'user_type' => 'customer',
-            'fcm_token' => $request->input('fcm_token'),
+            'otp' => $otp,
+            'expires_at' => Carbon::now()->addMinutes(10),
         ]);
 
-        $defaultAddr = $customer->addresses()->create([
-            'type' => 'Home',
-            'street_address' => $streetAddress,
-            'city' => $city,
-            'address_line' => $formattedAddress ?: trim($request->address),
-            'pincode' => $pincode ?: trim($request->pincode),
-            'is_default' => true,
-        ]);
+        Log::info("Customer Registration Verification OTP for {$email}: {$otp}");
 
         try {
-            Mail::to($customer->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen!", "Thank you {$customer->name} for registering in KP's Kitchen. We are excited to serve you delicious meals!"));
-            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$customer->name} have registerd"));
+            Mail::to($email)->send(new SendOtpMail($otp, null, 'verification'));
         } catch (\Exception $e) {
-            Log::warning("Customer registration email triggers failed: " . $e->getMessage());
+            Log::warning("Customer registration OTP email dispatch failed: " . $e->getMessage());
         }
-
-        $formattedAddrRecord = AddressHelper::formatAddressRecord($defaultAddr);
-        $customerData = array_merge([
-            'id' => $customer->id,
-            'name' => $customer->name,
-            'first_name' => $customer->first_name,
-            'last_name' => $customer->last_name,
-            'email' => $customer->email,
-            'phone' => $customer->phone,
-            'profile_image' => null,
-            'status' => 'Active',
-            'user_type' => $customer->user_type,
-            'addresses' => [$formattedAddrRecord],
-        ], AddressHelper::formatResponsePayload($customer));
 
         return response()->json([
             'success' => true,
-            'message' => 'Registration successful.',
-            'token' => $token,
-            'user_type' => $customer->user_type,
-            'customer' => $customerData,
-            'data' => [
-                'token' => $token,
-                'customer' => $customerData,
-                'user' => $customerData,
-            ]
+            'requires_verification' => true,
+            'is_verified' => false,
+            'message' => 'Registration details submitted. A 6-digit verification code (OTP) has been sent to your email. Please enter the OTP to verify your account.',
+            'email' => $email,
         ], 201);
     }
 
@@ -480,6 +777,33 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Invalid credentials.',
             ], 401);
+        }
+
+        // Gate: Customer must be verified before logging in
+        if ($customer->is_verified === false || $customer->is_verified === 0) {
+            $otp = (string)rand(100000, 999999);
+            PasswordOtp::where('email', $customer->email)->delete();
+            PasswordOtp::create([
+                'email' => $customer->email,
+                'otp' => $otp,
+                'expires_at' => Carbon::now()->addMinutes(10),
+            ]);
+
+            Log::info("Unverified login attempt - OTP generated for {$customer->email}: {$otp}");
+
+            try {
+                Mail::to($customer->email)->send(new SendOtpMail($otp, null, 'verification'));
+            } catch (\Exception $e) {
+                Log::warning("Customer login unverified OTP dispatch failed: " . $e->getMessage());
+            }
+
+            return response()->json([
+                'success' => false,
+                'requires_verification' => true,
+                'is_verified' => false,
+                'message' => 'Your email address is not verified yet. A 6-digit verification OTP has been sent to your email. Please verify your account to log in.',
+                'email' => $customer->email,
+            ], 403);
         }
 
         $token = Str::random(60);
@@ -569,6 +893,8 @@ class AuthController extends Controller
             'user_type' => $customer->user_type,
             'status' => $customer->status ?? 'Active',
             'account_status' => $customer->status ?? 'Active',
+            'is_verified' => true,
+            'email_verified_at' => $customer->email_verified_at,
             'addresses' => $formattedAddresses,
         ], AddressHelper::formatResponsePayload($customer));
 
@@ -839,11 +1165,17 @@ class AuthController extends Controller
             'outstanding_balance' => round($outstandingBalance, 2),
             'total_amount_due' => round($outstandingBalance > 0 ? $outstandingBalance : $totalAmount, 2),
             'all_due_amount' => round($outstandingBalance > 0 ? $outstandingBalance : $totalAmount, 2),
+            'can_order' => TimezoneHelper::canPlaceOrder(),
+            'is_cutoff' => TimezoneHelper::isOrderCutoffPassed(),
+            'ordering_status' => TimezoneHelper::getOrderingCutoffDetails(),
         ];
 
         return response()->json([
             'success' => true,
-            'data' => $data
+            'data' => $data,
+            'ordering_status' => TimezoneHelper::getOrderingCutoffDetails(),
+            'is_cutoff' => TimezoneHelper::isOrderCutoffPassed(),
+            'can_order' => TimezoneHelper::canPlaceOrder(),
         ]);
     }
 
@@ -857,6 +1189,21 @@ class AuthController extends Controller
             return response()->json(['success' => false, 'message' => 'Customer not found or unauthorized.'], 401);
         }
         $customer = \App\Models\Customer::find($customer->id) ?: $customer;
+
+        // Daily Kitchen Cut-off Validation (11:00 PM Adelaide Time)
+        if (TimezoneHelper::isOrderCutoffPassed()) {
+            $cutoffDetails = TimezoneHelper::getOrderingCutoffDetails();
+            return response()->json([
+                'success' => false,
+                'message' => 'Orders are closed for today. Kitchen order cut-off time is 11:00 PM Adelaide time. Please place your order tomorrow.',
+                'is_cutoff' => true,
+                'can_order' => false,
+                'cutoff_time' => '11:00 PM',
+                'timezone' => TimezoneHelper::ADELAIDE_TIMEZONE,
+                'current_time' => TimezoneHelper::getAdelaideNow()->format('g:i A'),
+                'cutoff_details' => $cutoffDetails,
+            ], 400);
+        }
 
         $now = Carbon::now();
         // Unpaid outstanding invoices from previous weeks (due date is strictly in the past)
@@ -1046,7 +1393,7 @@ class AuthController extends Controller
             'area' => $orderPincode,
             'amount' => $amount,
             'status' => 'Pending',
-            'date' => Carbon::now()->toDateString(),
+            'date' => $request->filled('date') ? $request->input('date') : ($request->filled('delivery_date') ? $request->input('delivery_date') : TimezoneHelper::getAdelaideNow()->toDateString()),
             'add_ons' => json_encode($addonsData),
             'selections' => $selectionsData,
             'note' => $request->input('note'),
@@ -1711,7 +2058,9 @@ class AuthController extends Controller
             'customer_id' => $customer->id,
             'customer_name' => $customer->name,
             'account_status' => $customer->status,
-            'can_order' => ($customer->status === 'Active') || !$hasOverdue,
+            'can_order' => (($customer->status === 'Active') || !$hasOverdue) && TimezoneHelper::canPlaceOrder(),
+            'is_cutoff' => TimezoneHelper::isOrderCutoffPassed(),
+            'ordering_status' => TimezoneHelper::getOrderingCutoffDetails(),
             'outstanding_balance' => round($outstandingBalance, 2),
             'overdue_balance' => round($overdueBalance, 2),
             'overdue_amount' => round($overdueBalance, 2),
@@ -2613,6 +2962,26 @@ class AuthController extends Controller
     }
 
     /**
+     * Get current ordering cutoff status and Adelaide time details.
+     */
+    public function getOrderingStatus(Request $request)
+    {
+        $details = TimezoneHelper::getOrderingCutoffDetails();
+        return response()->json([
+            'success' => true,
+            'data' => $details,
+            'ordering_status' => $details,
+            'is_cutoff' => $details['is_cutoff'],
+            'can_order' => $details['can_order'],
+            'cutoff_time' => $details['cutoff_time'],
+            'timezone' => $details['timezone'],
+            'current_time' => $details['current_time'],
+            'current_date' => $details['current_date'],
+            'message' => $details['message'],
+        ]);
+    }
+
+    /**
      * Get cart items.
      */
     public function getCart(Request $request)
@@ -2673,9 +3042,14 @@ class AuthController extends Controller
             ];
         });
 
+        $cutoffDetails = TimezoneHelper::getOrderingCutoffDetails();
+
         return response()->json([
             'success' => true,
-            'cart' => $cartItems
+            'cart' => $cartItems,
+            'ordering_status' => $cutoffDetails,
+            'is_cutoff' => $cutoffDetails['is_cutoff'],
+            'can_order' => $cutoffDetails['can_order'],
         ]);
     }
 
@@ -4619,7 +4993,7 @@ class AuthController extends Controller
 
             if (!$exists) {
                 if ($grp['total'] > 0) {
-                    \App\Models\Invoice::create([
+                    $newInv = \App\Models\Invoice::create([
                         'id' => $prefix . '-001',
                         'customer_id' => $customer->id,
                         'order_id' => $orderIdStr,
@@ -4627,6 +5001,29 @@ class AuthController extends Controller
                         'status' => $isPast ? 'Unpaid' : 'Pending',
                         'due_date' => $grp['end'],
                     ]);
+
+                    $dueDateStr = Carbon::parse($newInv->due_date)->format('d M Y');
+                    $formattedAmount = number_format($newInv->amount, 2);
+
+                    \App\Models\Notification::create([
+                        'title' => 'Weekly Invoice Generated',
+                        'message' => "Your weekly invoice #{$newInv->id} for AUD {$formattedAmount} has been generated (Due: {$dueDateStr}). Please review and settle your weekly bill.",
+                        'user_type' => 'customer',
+                        'user_id' => $customer->id,
+                        'read_status' => false
+                    ]);
+
+                    \App\Services\FcmService::sendToCustomer(
+                        $customer->id,
+                        'Weekly Invoice Generated',
+                        "Your weekly invoice #{$newInv->id} for AUD {$formattedAmount} is now available (Due: {$dueDateStr}).",
+                        [
+                            'type' => 'weekly_invoice',
+                            'invoice_id' => (string)$newInv->id,
+                            'amount' => (string)$newInv->amount,
+                            'due_date' => (string)$newInv->due_date
+                        ]
+                    );
                 }
             } else {
                 if (in_array($exists->status, ['Pending', 'Unpaid']) && (float)$exists->amount != (float)$grp['total'] && $grp['total'] > 0) {

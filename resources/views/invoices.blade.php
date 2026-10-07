@@ -31,6 +31,15 @@
           <option value="Pending" {{ request('status') == 'Pending' ? 'selected' : '' }}>Pending</option>
         </select>
       </form>
+      <form method="POST" action="{{ route('invoices.generate-and-notify') }}" style="display: inline;" onsubmit="return confirm('Generate weekly invoices and send notifications to all customers with pending weekly orders?');">
+        @csrf
+        <button type="submit" class="kp_kitchen_admin_panel_button kp_kitchen_admin_panel_button_primary" style="padding: 6px 12px; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+          <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24">
+            <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z"/>
+          </svg>
+          <span>Generate & Notify Weekly Invoices</span>
+        </button>
+      </form>
     </div>
   </div>
 
@@ -61,6 +70,12 @@
               </td>
               <td class="kp_kitchen_admin_panel_table_cell">
                 <div class="kp_kitchen_admin_panel_table_actions">
+                  <form method="POST" action="{{ route('invoices.notify', $invoice->id) }}" style="display: inline;" onsubmit="return confirm('Send weekly invoice notification and push alert to {{ addslashes($invoice->customer->name ?? 'customer') }}?');">
+                    @csrf
+                    <button type="submit" class="kp_kitchen_admin_panel_action_button" style="background-color: #f39c12; color: #fff; border-color: #e67e22; padding: 4px 8px; font-size: 0.78rem;" title="Send push notification & in-app reminder">
+                      📢 Notify
+                    </button>
+                  </form>
                   <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_edit edit-invoice-btn"
                     data-id="{{ $invoice->id }}"
                     data-customer_id="{{ $invoice->customer_id }}"

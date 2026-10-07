@@ -25,6 +25,8 @@ class Customer extends Authenticatable
         'profile_image',
         'status',
         'fcm_token',
+        'is_verified',
+        'email_verified_at',
     ];
 
     protected $appends = [
@@ -53,6 +55,8 @@ class Customer extends Authenticatable
     {
         return [
             'password' => 'hashed',
+            'is_verified' => 'boolean',
+            'email_verified_at' => 'datetime',
         ];
     }
 

@@ -44,15 +44,15 @@ class AddressHelper
             return null;
         };
 
-        $streetKeys = ['street_address', 'street', 'address_line', 'address_line_1', 'street_name'];
-        $cityKeys = ['suburbs', 'suburb', 'city', 'town', 'city_suburb', 'area_name'];
-        $pincodeKeys = ['postcode', 'pincode', 'postal_code', 'zip', 'assigned_zip', 'area'];
+        $streetKeys = ['street_address', 'street address', 'street', 'address_line', 'address_line_1', 'address_line1', 'address1', 'street_name', 'streetAddress', 'addressLine1'];
+        $cityKeys = ['suburbs', 'suburb', 'city', 'town', 'city_suburb', 'area_name', 'suburb_name', 'suburbs_name'];
+        $pincodeKeys = ['postcode', 'post code', 'pincode', 'pin code', 'postal_code', 'postalCode', 'zip', 'zipcode', 'assigned_zip', 'area'];
         $rawAddressKeys = ['address', 'delivery_address', 'full_address', 'customer_address'];
 
         // 1. Extract Street Address
         $street = $getFromInput($streetKeys) ?: $getFromFallback($streetKeys);
 
-        // 2. Extract City / Suburb / Town
+        // 2. Extract Suburbs / City / Suburb / Town
         $city = $getFromInput($cityKeys) ?: $getFromFallback($cityKeys);
 
         // 3. Extract Postcode / Pincode / Zip
@@ -350,23 +350,23 @@ class AddressHelper
 
         return [
             'street_address' => $street,
-            'city' => $city,
-            'suburb' => $city,
             'suburbs' => $city,
+            'postcode' => $pincode,
+            'suburb' => $city,
+            'city' => $city,
             'town' => $city,
             'city_suburb' => $city,
             'pincode' => $pincode,
-            'postcode' => $pincode,
             'postal_code' => $pincode,
             'address' => $formatted,
             'formatted_address' => $formatted,
             'address_details' => [
                 'street_address' => $street,
-                'city' => $city,
-                'suburb' => $city,
                 'suburbs' => $city,
-                'town' => $city,
                 'postcode' => $pincode,
+                'suburb' => $city,
+                'city' => $city,
+                'town' => $city,
                 'pincode' => $pincode,
             ],
         ];
@@ -400,12 +400,12 @@ class AddressHelper
             'customer_id' => $address->customer_id ?? null,
             'type' => $address->type ?? 'Home',
             'street_address' => $street,
-            'city' => $city,
-            'suburb' => $city,
             'suburbs' => $city,
+            'postcode' => $pincode,
+            'suburb' => $city,
+            'city' => $city,
             'town' => $city,
             'pincode' => $pincode,
-            'postcode' => $pincode,
             'postal_code' => $pincode,
             'address_line' => $formatted,
             'address' => $formatted,
@@ -413,10 +413,10 @@ class AddressHelper
             'is_default' => (bool)($address->is_default ?? false),
             'address_details' => [
                 'street_address' => $street,
-                'city' => $city,
-                'suburb' => $city,
                 'suburbs' => $city,
                 'postcode' => $pincode,
+                'suburb' => $city,
+                'city' => $city,
                 'pincode' => $pincode,
             ],
             'created_at' => $address->created_at ?? null,

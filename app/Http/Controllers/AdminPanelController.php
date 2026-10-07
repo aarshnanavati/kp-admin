@@ -21,6 +21,9 @@ use Illuminate\Support\Facades\Hash;
 use App\Services\FcmService;
 use App\Helpers\AddressHelper;
 use App\Helpers\ImageUploadHelper;
+use App\Helpers\TimezoneHelper;
+use App\Mail\CustomerWelcomeMail;
+
 class AdminPanelController extends Controller
 {
     // --- Page Views ---
@@ -363,11 +366,7 @@ class AdminPanelController extends Controller
                 'end_date' => $wEndCursor->toDateString(),
                 'total_orders' => 0,
                 'total_tiffins' => 0,
-                'total_rotis' => 0,
-                'total_curries' => 0,
-                'total_rice' => 0,
-                'total_salads' => 0,
-                'total_desserts' => 0,
+                'categories' => [],
             ];
             $wCursor = $wEndCursor->copy()->addDay();
             $wIdx++;
@@ -447,17 +446,188 @@ class AdminPanelController extends Controller
             ->where('status', '!=', 'Cancelled')
             ->get();
 
-        $allItems = Item::with('category')->get()->keyBy('id');
+        $dbCategories = Category::orderBy('id', 'asc')->get();
+        $allItems = Item::with('category')->get();
+        $itemsKeyedById = $allItems->keyBy('id');
         $allTiffins = Tiffin::with('category')->get()->keyBy('id');
+
+        // Color palette for dynamic category cards
+        $colorPalette = [
+            ['border' => '#FF6B6B', 'text' => '#FF6B6B', 'bg' => 'rgba(255, 107, 107, 0.12)'],
+            ['border' => '#F59E0B', 'text' => '#D97706', 'bg' => 'rgba(245, 158, 11, 0.12)'],
+            ['border' => '#10B981', 'text' => '#059669', 'bg' => 'rgba(16, 185, 129, 0.12)'],
+            ['border' => '#0EA5E9', 'text' => '#0284C7', 'bg' => 'rgba(14, 165, 233, 0.12)'],
+            ['border' => '#8B5CF6', 'text' => '#7C3AED', 'bg' => 'rgba(139, 92, 246, 0.12)'],
+            ['border' => '#EC4899', 'text' => '#DB2777', 'bg' => 'rgba(236, 72, 153, 0.12)'],
+            ['border' => '#6366F1', 'text' => '#4F46E5', 'bg' => 'rgba(99, 102, 241, 0.12)'],
+            ['border' => '#14B8A6', 'text' => '#0D9488', 'bg' => 'rgba(20, 184, 166, 0.12)'],
+        ];
+
+        $getCategoryIcon = function ($categoryName) {
+            $cn = mb_strtolower(trim((string)$categoryName));
+            if (stripos($cn, 'bread') !== false || stripos($cn, 'roti') !== false) return '🫓';
+            if (stripos($cn, 'subzi') !== false || stripos($cn, 'sabji') !== false || stripos($cn, 'curry') !== false || stripos($cn, 'dal') !== false || stripos($cn, 'main') !== false) return '🍲';
+            if (stripos($cn, 'rice') !== false || stripos($cn, 'biryani') !== false || stripos($cn, 'pulaw') !== false || stripos($cn, 'pulao') !== false) return '🍚';
+            if (stripos($cn, 'salad') !== false || stripos($cn, 'side') !== false || stripos($cn, 'raita') !== false) return '🥗';
+            if (stripos($cn, 'dessert') !== false || stripos($cn, 'sweet') !== false) return '🍮';
+            if (stripos($cn, 'beverage') !== false || stripos($cn, 'drink') !== false || stripos($cn, 'chaas') !== false || stripos($cn, 'tea') !== false) return '🥤';
+            if (stripos($cn, 'extra') !== false || stripos($cn, 'snack') !== false) return '✨';
+            return '🍱';
+        };
+
+        // Initialize Category Cards for all existing categories in database
+        $categoryCards = [];
+        foreach ($dbCategories as $catIdx => $dbCat) {
+            $slug = \Illuminate\Support\Str::slug($dbCat->name) ?: 'cat_' . $dbCat->id;
+            $colors = $colorPalette[$catIdx % count($colorPalette)];
+            $isBread = (stripos($dbCat->name, 'bread') !== false || stripos($dbCat->name, 'roti') !== false);
+
+            $categoryCards[$slug] = [
+                'id' => $dbCat->id,
+                'name' => $dbCat->name,
+                'slug' => $slug,
+                'icon' => $getCategoryIcon($dbCat->name),
+                'total_qty' => 0,
+                'orders_count' => 0,
+                'is_bread' => $isBread,
+                'unit' => $isBread ? 'Rotis' : 'Portions',
+                'hint' => $isBread ? 'Total rotis to prepare / bake' : ($dbCat->description ?: 'Portions / items to prepare'),
+                'colors' => $colors,
+            ];
+        }
+
+        // Map Item names to Category
+        $itemByName = [];
+        foreach ($allItems as $it) {
+            $itemByName[mb_strtolower(trim($it->name))] = $it;
+        }
+
+        $resolveCategory = function ($name, $component = '') use ($dbCategories, $itemByName) {
+            $normName = mb_strtolower(trim((string)$name));
+
+            // 1. Direct match in Item table
+            if (isset($itemByName[$normName]) && $itemByName[$normName]->category) {
+                $cat = $itemByName[$normName]->category;
+                return [
+                    'id' => $cat->id,
+                    'name' => $cat->name,
+                    'slug' => \Illuminate\Support\Str::slug($cat->name) ?: 'cat_' . $cat->id,
+                ];
+            }
+
+            // 2. Component match with Category name
+            if ($component) {
+                $normComp = mb_strtolower(trim($component));
+                $matched = $dbCategories->first(function ($c) use ($normComp) {
+                    $cName = mb_strtolower(trim($c->name));
+                    return $cName === $normComp || stripos($normComp, $cName) !== false || stripos($cName, $normComp) !== false;
+                });
+                if ($matched) {
+                    return [
+                        'id' => $matched->id,
+                        'name' => $matched->name,
+                        'slug' => \Illuminate\Support\Str::slug($matched->name) ?: 'cat_' . $matched->id,
+                    ];
+                }
+            }
+
+            // 3. Name contains Category name
+            foreach ($dbCategories as $cat) {
+                $cName = mb_strtolower(trim($cat->name));
+                $stem = rtrim($cName, 's');
+                if (stripos($normName, $cName) !== false || (strlen($stem) >= 3 && stripos($normName, $stem) !== false)) {
+                    return [
+                        'id' => $cat->id,
+                        'name' => $cat->name,
+                        'slug' => \Illuminate\Support\Str::slug($cat->name) ?: 'cat_' . $cat->id,
+                    ];
+                }
+            }
+
+            // 4. Keyword heuristics
+            // Breads
+            if (stripos($normName, 'roti') !== false || stripos($normName, 'thepla') !== false ||
+                stripos($normName, 'bhakhri') !== false || stripos($normName, 'bhakri') !== false ||
+                stripos($normName, 'paratha') !== false || stripos($normName, 'naan') !== false ||
+                stripos($normName, 'puri') !== false || stripos($normName, 'bread') !== false ||
+                stripos($component, 'bread') !== false) {
+                $breadCat = $dbCategories->first(fn($c) => stripos($c->name, 'bread') !== false || stripos($c->name, 'roti') !== false);
+                return [
+                    'id' => $breadCat ? $breadCat->id : 0,
+                    'name' => $breadCat ? $breadCat->name : 'Breads',
+                    'slug' => $breadCat ? (\Illuminate\Support\Str::slug($breadCat->name) ?: 'cat_' . $breadCat->id) : 'bread',
+                ];
+            }
+
+            // Rice
+            if (stripos($normName, 'rice') !== false || stripos($normName, 'biryani') !== false || stripos($normName, 'pulaw') !== false || stripos($normName, 'pulao') !== false || stripos($normName, 'khichdi') !== false) {
+                $riceCat = $dbCategories->first(fn($c) => stripos($c->name, 'rice') !== false);
+                return [
+                    'id' => $riceCat ? $riceCat->id : 0,
+                    'name' => $riceCat ? $riceCat->name : 'Rice Dishes',
+                    'slug' => $riceCat ? (\Illuminate\Support\Str::slug($riceCat->name) ?: 'cat_' . $riceCat->id) : 'rice',
+                ];
+            }
+
+            // Salads
+            if (stripos($normName, 'salad') !== false || stripos($normName, 'raita') !== false || stripos($normName, 'papad') !== false || stripos($normName, 'chutney') !== false || stripos($normName, 'pickle') !== false) {
+                $saladCat = $dbCategories->first(fn($c) => stripos($c->name, 'salad') !== false);
+                return [
+                    'id' => $saladCat ? $saladCat->id : 0,
+                    'name' => $saladCat ? $saladCat->name : 'Salads',
+                    'slug' => $saladCat ? (\Illuminate\Support\Str::slug($saladCat->name) ?: 'cat_' . $saladCat->id) : 'salad',
+                ];
+            }
+
+            // Desserts
+            if (stripos($normName, 'jamun') !== false || stripos($normName, 'halwa') !== false || stripos($normName, 'malai') !== false || stripos($normName, 'kheer') !== false || stripos($normName, 'jalebi') !== false || stripos($normName, 'kulfi') !== false || stripos($normName, 'sweet') !== false || stripos($normName, 'dessert') !== false) {
+                $dessertCat = $dbCategories->first(fn($c) => stripos($c->name, 'dessert') !== false || stripos($c->name, 'sweet') !== false);
+                return [
+                    'id' => $dessertCat ? $dessertCat->id : 0,
+                    'name' => $dessertCat ? $dessertCat->name : 'Desserts',
+                    'slug' => $dessertCat ? (\Illuminate\Support\Str::slug($dessertCat->name) ?: 'cat_' . $dessertCat->id) : 'dessert',
+                ];
+            }
+
+            // Beverages
+            if (stripos($normName, 'lassi') !== false || stripos($normName, 'chaas') !== false || stripos($normName, 'buttermilk') !== false || stripos($normName, 'tea') !== false || stripos($normName, 'coffee') !== false || stripos($normName, 'soda') !== false || stripos($normName, 'shake') !== false || stripos($normName, 'coca') !== false || stripos($normName, 'drink') !== false || stripos($normName, 'beverage') !== false) {
+                $bevCat = $dbCategories->first(fn($c) => stripos($c->name, 'beverage') !== false || stripos($c->name, 'drink') !== false);
+                return [
+                    'id' => $bevCat ? $bevCat->id : 0,
+                    'name' => $bevCat ? $bevCat->name : 'Beverages',
+                    'slug' => $bevCat ? (\Illuminate\Support\Str::slug($bevCat->name) ?: 'cat_' . $bevCat->id) : 'beverage',
+                ];
+            }
+
+            // Default fallback: Curries / Subzi
+            $curryCat = $dbCategories->first(fn($c) => stripos($c->name, 'curry') !== false || stripos($c->name, 'subzi') !== false || stripos($c->name, 'sabji') !== false || stripos($c->name, 'main') !== false);
+            if ($curryCat) {
+                return [
+                    'id' => $curryCat->id,
+                    'name' => $curryCat->name,
+                    'slug' => \Illuminate\Support\Str::slug($curryCat->name) ?: 'cat_' . $curryCat->id,
+                ];
+            }
+
+            $firstCat = $dbCategories->first();
+            if ($firstCat) {
+                return [
+                    'id' => $firstCat->id,
+                    'name' => $firstCat->name,
+                    'slug' => \Illuminate\Support\Str::slug($firstCat->name) ?: 'cat_' . $firstCat->id,
+                ];
+            }
+
+            return [
+                'id' => 0,
+                'name' => 'General',
+                'slug' => 'general',
+            ];
+        };
 
         $itemTotals = [];
         $totalOrdersCount = $orders->count();
         $totalTiffinsCount = 0;
-        $totalRotisCount = 0;
-        $totalCurriesCount = 0;
-        $totalRiceCount = 0;
-        $totalSaladsCount = 0;
-        $totalDessertsCount = 0;
 
         foreach ($orders as $order) {
             $orderQty = (int)($order->quantity ?: 1);
@@ -526,7 +696,7 @@ class AdminPanelController extends Controller
                         if (is_array($rawItems)) {
                             $itemList = isset($rawItems['basic']) ? $rawItems['basic'] : (isset($rawItems[0]) ? $rawItems : []);
                             foreach ($itemList as $rawIt) {
-                                $itName = is_numeric($rawIt) ? optional($allItems->get($rawIt))->name : (string)$rawIt;
+                                $itName = is_numeric($rawIt) ? optional($itemsKeyedById->get($rawIt))->name : (string)$rawIt;
                                 if ($itName) {
                                     $resolvedItems[] = [
                                         'name' => $itName,
@@ -546,10 +716,16 @@ class AdminPanelController extends Controller
                 $component = $rItem['component'];
                 $baseQty = $rItem['qty'];
 
+                $catInfo = $resolveCategory($name, $component);
+                $catName = $catInfo['name'];
+                $catSlug = $catInfo['slug'];
+
                 $isBread = (stripos($name, 'roti') !== false || stripos($name, 'thepla') !== false ||
                             stripos($name, 'bhakhri') !== false || stripos($name, 'bhakri') !== false ||
                             stripos($name, 'paratha') !== false || stripos($name, 'naan') !== false ||
-                            stripos($name, 'puri') !== false || stripos($component, 'bread') !== false);
+                            stripos($name, 'puri') !== false || stripos($name, 'bread') !== false ||
+                            stripos($catName, 'bread') !== false || stripos($catName, 'roti') !== false ||
+                            stripos($component, 'bread') !== false);
 
                 $multiplier = $isBread ? 4 : 1;
                 if (preg_match('/\((\d+)\s*pcs?\)/i', $name, $m)) {
@@ -559,38 +735,36 @@ class AdminPanelController extends Controller
                 $itemTotalUnits = $orderQty * $baseQty * $multiplier;
                 $unit = $isBread ? 'Rotis' : (preg_match('/\((\d+)\s*pcs?\)/i', $name) ? 'Pieces' : 'Portions');
 
-                // Category determination
-                $cat = 'Curries & Mains';
-                $catKey = 'curry';
-                if ($isBread) {
-                    $cat = 'Breads / Rotis';
-                    $catKey = 'bread';
-                    $totalRotisCount += $itemTotalUnits;
-                } elseif (stripos($name, 'salad') !== false) {
-                    $cat = 'Salads & Sides';
-                    $catKey = 'salad';
-                    $totalSaladsCount += $itemTotalUnits;
-                } elseif (stripos($name, 'rice') !== false || stripos($name, 'biryani') !== false || stripos($name, 'pulaw') !== false) {
-                    $cat = 'Rice Dishes';
-                    $catKey = 'rice';
-                    $totalRiceCount += $itemTotalUnits;
-                } elseif (stripos($name, 'jamun') !== false || stripos($name, 'halwa') !== false || stripos($name, 'malai') !== false || stripos($name, 'kheer') !== false || stripos($name, 'jalebi') !== false || stripos($name, 'kulfi') !== false) {
-                    $cat = 'Desserts & Sweets';
-                    $catKey = 'dessert';
-                    $totalDessertsCount += $itemTotalUnits;
-                } elseif (stripos($name, 'lassi') !== false || stripos($name, 'tea') !== false || stripos($name, 'buttermilk') !== false || stripos($name, 'soda') !== false || stripos($name, 'shake') !== false || stripos($name, 'coca') !== false) {
-                    $cat = 'Beverages';
-                    $catKey = 'beverage';
-                } else {
-                    $totalCurriesCount += $itemTotalUnits;
+                // Update Category Card
+                if (!isset($categoryCards[$catSlug])) {
+                    $cIdx = count($categoryCards);
+                    $colors = $colorPalette[$cIdx % count($colorPalette)];
+                    $categoryCards[$catSlug] = [
+                        'id' => $catInfo['id'],
+                        'name' => $catName,
+                        'slug' => $catSlug,
+                        'icon' => $getCategoryIcon($catName),
+                        'total_qty' => 0,
+                        'orders_count' => 0,
+                        'is_bread' => $isBread,
+                        'unit' => $unit,
+                        'hint' => $isBread ? 'Total rotis to prepare / bake' : 'Portions / items to prepare',
+                        'colors' => $colors,
+                    ];
                 }
+                $categoryCards[$catSlug]['total_qty'] += $itemTotalUnits;
+                $categoryCards[$catSlug]['orders_count']++;
 
                 $normKey = mb_strtolower(trim($name));
                 if (!isset($itemTotals[$normKey])) {
+                    $colors = $categoryCards[$catSlug]['colors'] ?? $colorPalette[0];
                     $itemTotals[$normKey] = [
                         'name' => $name,
-                        'category' => $cat,
-                        'cat_key' => $catKey,
+                        'category' => $catName,
+                        'cat_key' => $catSlug,
+                        'cat_icon' => $categoryCards[$catSlug]['icon'] ?? '🍽️',
+                        'cat_bg' => $colors['bg'],
+                        'cat_text' => $colors['text'],
                         'unit' => $unit,
                         'total_qty' => 0,
                         'tiffin_qty' => 0,
@@ -604,12 +778,14 @@ class AdminPanelController extends Controller
                 $itemTotals[$normKey]['orders_count']++;
 
                 // Track week breakdown within month
-                foreach ($monthWeeks as $wNum => $wInfo) {
+                foreach ($monthWeeks as $wNum => &$wInfo) {
                     if ($orderDate >= $wInfo['start_date'] && $orderDate <= $wInfo['end_date']) {
                         $itemTotals[$normKey]['week_breakdown'][$wNum] += $itemTotalUnits;
+                        $wInfo['categories'][$catSlug] = ($wInfo['categories'][$catSlug] ?? 0) + $itemTotalUnits;
                         break;
                     }
                 }
+                unset($wInfo);
             }
 
             // 2. Process Add-ons
@@ -621,43 +797,48 @@ class AdminPanelController extends Controller
                         if (!$name) continue;
                         $aQty = (int)($addon['qty'] ?? 1) * $orderQty;
 
+                        $catInfo = $resolveCategory($name, 'Addon');
+                        $catName = $catInfo['name'];
+                        $catSlug = $catInfo['slug'];
+
                         $isBread = (stripos($name, 'roti') !== false || stripos($name, 'thepla') !== false ||
                                     stripos($name, 'bhakhri') !== false || stripos($name, 'bhakri') !== false ||
-                                    stripos($name, 'paratha') !== false || stripos($name, 'naan') !== false);
+                                    stripos($name, 'paratha') !== false || stripos($name, 'naan') !== false ||
+                                    stripos($name, 'bread') !== false || stripos($catName, 'bread') !== false ||
+                                    stripos($catName, 'roti') !== false);
 
                         $unit = $isBread ? 'Rotis' : (preg_match('/\((\d+)\s*pcs?\)/i', $name) ? 'Pieces' : 'Portions');
 
-                        $cat = 'Curries & Mains';
-                        $catKey = 'curry';
-                        if ($isBread) {
-                            $cat = 'Breads / Rotis';
-                            $catKey = 'bread';
-                            $totalRotisCount += $aQty;
-                        } elseif (stripos($name, 'salad') !== false) {
-                            $cat = 'Salads & Sides';
-                            $catKey = 'salad';
-                            $totalSaladsCount += $aQty;
-                        } elseif (stripos($name, 'rice') !== false || stripos($name, 'biryani') !== false) {
-                            $cat = 'Rice Dishes';
-                            $catKey = 'rice';
-                            $totalRiceCount += $aQty;
-                        } elseif (stripos($name, 'jamun') !== false || stripos($name, 'halwa') !== false) {
-                            $cat = 'Desserts & Sweets';
-                            $catKey = 'dessert';
-                            $totalDessertsCount += $aQty;
-                        } elseif (stripos($name, 'lassi') !== false || stripos($name, 'tea') !== false || stripos($name, 'soda') !== false) {
-                            $cat = 'Beverages';
-                            $catKey = 'beverage';
-                        } else {
-                            $totalCurriesCount += $aQty;
+                        // Update Category Card
+                        if (!isset($categoryCards[$catSlug])) {
+                            $cIdx = count($categoryCards);
+                            $colors = $colorPalette[$cIdx % count($colorPalette)];
+                            $categoryCards[$catSlug] = [
+                                'id' => $catInfo['id'],
+                                'name' => $catName,
+                                'slug' => $catSlug,
+                                'icon' => $getCategoryIcon($catName),
+                                'total_qty' => 0,
+                                'orders_count' => 0,
+                                'is_bread' => $isBread,
+                                'unit' => $unit,
+                                'hint' => $isBread ? 'Total rotis to prepare / bake' : 'Portions / items to prepare',
+                                'colors' => $colors,
+                            ];
                         }
+                        $categoryCards[$catSlug]['total_qty'] += $aQty;
+                        $categoryCards[$catSlug]['orders_count']++;
 
                         $normKey = mb_strtolower(trim($name));
                         if (!isset($itemTotals[$normKey])) {
+                            $colors = $categoryCards[$catSlug]['colors'] ?? $colorPalette[0];
                             $itemTotals[$normKey] = [
                                 'name' => $name,
-                                'category' => $cat,
-                                'cat_key' => $catKey,
+                                'category' => $catName,
+                                'cat_key' => $catSlug,
+                                'cat_icon' => $categoryCards[$catSlug]['icon'] ?? '🍽️',
+                                'cat_bg' => $colors['bg'],
+                                'cat_text' => $colors['text'],
                                 'unit' => $unit,
                                 'total_qty' => 0,
                                 'tiffin_qty' => 0,
@@ -671,12 +852,14 @@ class AdminPanelController extends Controller
                         $itemTotals[$normKey]['orders_count']++;
 
                         // Track week breakdown within month
-                        foreach ($monthWeeks as $wNum => $wInfo) {
+                        foreach ($monthWeeks as $wNum => &$wInfo) {
                             if ($orderDate >= $wInfo['start_date'] && $orderDate <= $wInfo['end_date']) {
                                 $itemTotals[$normKey]['week_breakdown'][$wNum] += $aQty;
+                                $wInfo['categories'][$catSlug] = ($wInfo['categories'][$catSlug] ?? 0) + $aQty;
                                 break;
                             }
                         }
+                        unset($wInfo);
                     }
                 }
             }
@@ -694,25 +877,6 @@ class AdminPanelController extends Controller
                 }
             }
             unset($wRef);
-        }
-
-        // Populate weekly summary sums from item totals
-        foreach ($itemTotals as $item) {
-            foreach ($item['week_breakdown'] as $wNum => $qty) {
-                if (isset($monthWeeks[$wNum])) {
-                    if ($item['cat_key'] === 'bread') {
-                        $monthWeeks[$wNum]['total_rotis'] += $qty;
-                    } elseif ($item['cat_key'] === 'curry') {
-                        $monthWeeks[$wNum]['total_curries'] += $qty;
-                    } elseif ($item['cat_key'] === 'rice') {
-                        $monthWeeks[$wNum]['total_rice'] += $qty;
-                    } elseif ($item['cat_key'] === 'salad') {
-                        $monthWeeks[$wNum]['total_salads'] += $qty;
-                    } elseif ($item['cat_key'] === 'dessert') {
-                        $monthWeeks[$wNum]['total_desserts'] += $qty;
-                    }
-                }
-            }
         }
 
         // Filter items by category & search query if requested
@@ -751,17 +915,14 @@ class AdminPanelController extends Controller
 
         return [
             'items' => array_values($filteredItems),
+            'category_cards' => array_values($categoryCards),
             'summary' => [
                 'total_orders' => $totalOrdersCount,
                 'total_tiffins' => $totalTiffinsCount,
-                'total_rotis' => $totalRotisCount,
-                'total_curries' => $totalCurriesCount,
-                'total_rice' => $totalRiceCount,
-                'total_salads' => $totalSaladsCount,
-                'total_desserts' => $totalDessertsCount,
             ],
             'month_weeks' => array_values($monthWeeks),
             'available_months' => $availableMonths,
+            'categories' => $dbCategories,
             'filters' => [
                 'filter_type' => $filterType,
                 'selected_date' => $selectedDate,
@@ -1507,6 +1668,12 @@ class AdminPanelController extends Controller
                 ]);
             }
 
+            try {
+                \Illuminate\Support\Facades\Mail::to($customer->email)->send(new CustomerWelcomeMail($customer));
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("Admin saveCustomer welcome email failed: " . $e->getMessage());
+            }
+
             $msg = 'Customer registered successfully.';
         }
 
@@ -1632,14 +1799,166 @@ class AdminPanelController extends Controller
             while (Invoice::where('id', $invId)->exists()) {
                 $invId = 'INV' . rand(100000, 999999);
             }
-            Invoice::create(array_merge($data, [
+            $invoice = Invoice::create(array_merge($data, [
                 'id' => $invId,
                 'order_id' => 'KP' . rand(1101, 9999)
             ]));
             $msg = 'Invoice generated successfully.';
         }
 
+        // Send In-App & Push Notification to Customer for Generated / Updated Invoice
+        if ($invoice && in_array($invoice->status, ['Pending', 'Unpaid'])) {
+            $customer = Customer::find($invoice->customer_id);
+            if ($customer) {
+                $dueDateStr = Carbon::parse($invoice->due_date)->format('d M Y');
+                $formattedAmount = number_format($invoice->amount, 2);
+
+                \App\Models\Notification::create([
+                    'title' => 'Weekly Invoice Generated',
+                    'message' => "Your weekly invoice #{$invoice->id} for AUD {$formattedAmount} has been generated (Due: {$dueDateStr}). Please review and settle your weekly bill.",
+                    'user_type' => 'customer',
+                    'user_id' => $customer->id,
+                    'read_status' => false
+                ]);
+
+                \App\Services\FcmService::sendToCustomer(
+                    $customer->id,
+                    'Weekly Invoice Generated',
+                    "Your weekly invoice #{$invoice->id} for AUD {$formattedAmount} is now available (Due: {$dueDateStr}).",
+                    [
+                        'type' => 'weekly_invoice',
+                        'invoice_id' => (string)$invoice->id,
+                        'amount' => (string)$invoice->amount,
+                        'due_date' => (string)$invoice->due_date,
+                    ]
+                );
+            }
+        }
+
         return redirect()->back()->with('success', $msg);
+    }
+
+    /**
+     * Send individual invoice notification / reminder to a customer.
+     */
+    public function sendInvoiceNotification($id)
+    {
+        $invoice = Invoice::findOrFail($id);
+        $customer = Customer::find($invoice->customer_id);
+        if (!$customer) {
+            return redirect()->back()->with('error', 'Customer not found for this invoice.');
+        }
+
+        $dueDateStr = Carbon::parse($invoice->due_date)->format('d M Y');
+        $formattedAmount = number_format($invoice->amount, 2);
+
+        \App\Models\Notification::create([
+            'title' => 'Weekly Payment Due',
+            'message' => "Reminder: Your weekly invoice #{$invoice->id} for AUD {$formattedAmount} is due on {$dueDateStr}. Please review and settle your bill.",
+            'user_type' => 'customer',
+            'user_id' => $customer->id,
+            'read_status' => false
+        ]);
+
+        \App\Services\FcmService::sendToCustomer(
+            $customer->id,
+            'Weekly Payment Due',
+            "Reminder: Your weekly invoice #{$invoice->id} for AUD {$formattedAmount} is due on {$dueDateStr}.",
+            [
+                'type' => 'weekly_invoice',
+                'invoice_id' => (string)$invoice->id,
+                'amount' => (string)$invoice->amount,
+                'due_date' => (string)$invoice->due_date,
+            ]
+        );
+
+        return redirect()->back()->with('success', "Notification sent successfully to {$customer->name}.");
+    }
+
+    /**
+     * Bulk generate weekly invoices for all customers with orders and dispatch notifications.
+     */
+    public function generateAndNotifyAllWeeklyInvoices(Request $request)
+    {
+        $customers = Customer::all();
+        $notifiedCount = 0;
+        $invoicesCreated = 0;
+
+        foreach ($customers as $customer) {
+            $orders = $customer->orders()->get();
+            $weeklyGroups = [];
+            foreach ($orders as $order) {
+                $dt = Carbon::parse($order->date);
+                $wStart = $dt->copy()->startOfWeek()->toDateString();
+                $wEnd = $dt->copy()->endOfWeek()->toDateString();
+                $wYear = $dt->year;
+                $wWeekNum = $dt->weekOfYear;
+                $key = $wYear . '_' . $wWeekNum;
+                if (!isset($weeklyGroups[$key])) {
+                    $weeklyGroups[$key] = [
+                        'start' => $wStart,
+                        'end' => $wEnd,
+                        'year' => $wYear,
+                        'week_num' => $wWeekNum,
+                        'orders' => [],
+                        'total' => 0.0,
+                    ];
+                }
+                $weeklyGroups[$key]['orders'][] = $order->id;
+                $weeklyGroups[$key]['total'] += (float) $order->amount;
+            }
+
+            foreach ($weeklyGroups as $key => $grp) {
+                $prefix = 'INV-W' . $grp['year'] . str_pad((string)$grp['week_num'], 2, '0', STR_PAD_LEFT) . '-' . $customer->id;
+                $exists = Invoice::where('customer_id', $customer->id)
+                    ->where(function ($q) use ($prefix, $grp) {
+                        $q->where('id', 'like', $prefix . '%')
+                          ->orWhereBetween('due_date', [$grp['start'], $grp['end']]);
+                    })
+                    ->first();
+
+                $orderIdStr = count($grp['orders']) <= 3 ? implode(', ', $grp['orders']) : 'KP-W' . $grp['year'] . '-' . count($grp['orders']) . 'orders';
+                $isPast = Carbon::parse($grp['end'])->lt(Carbon::today());
+
+                if (!$exists && $grp['total'] > 0) {
+                    $newInv = Invoice::create([
+                        'id' => $prefix . '-001',
+                        'customer_id' => $customer->id,
+                        'order_id' => $orderIdStr,
+                        'amount' => $grp['total'],
+                        'status' => $isPast ? 'Unpaid' : 'Pending',
+                        'due_date' => $grp['end'],
+                    ]);
+                    $invoicesCreated++;
+
+                    $dueDateStr = Carbon::parse($newInv->due_date)->format('d M Y');
+                    $formattedAmount = number_format($newInv->amount, 2);
+
+                    \App\Models\Notification::create([
+                        'title' => 'Weekly Invoice Generated',
+                        'message' => "Your weekly invoice #{$newInv->id} for AUD {$formattedAmount} has been generated (Due: {$dueDateStr}). Please review and settle your weekly bill.",
+                        'user_type' => 'customer',
+                        'user_id' => $customer->id,
+                        'read_status' => false
+                    ]);
+
+                    \App\Services\FcmService::sendToCustomer(
+                        $customer->id,
+                        'Weekly Invoice Generated',
+                        "Your weekly invoice #{$newInv->id} for AUD {$formattedAmount} is now available (Due: {$dueDateStr}).",
+                        [
+                            'type' => 'weekly_invoice',
+                            'invoice_id' => (string)$newInv->id,
+                            'amount' => (string)$newInv->amount,
+                            'due_date' => (string)$newInv->due_date
+                        ]
+                    );
+                    $notifiedCount++;
+                }
+            }
+        }
+
+        return redirect()->back()->with('success', "Generated {$invoicesCreated} weekly invoices and dispatched notifications to {$notifiedCount} customers.");
     }
 
     public function deleteInvoice($id)
@@ -1899,13 +2218,20 @@ class AdminPanelController extends Controller
             || ($req && str_contains($uri, 'customer/tiffin'));
 
         if ($isTiffinPlansRoute) {
+            $cutoffDetails = TimezoneHelper::getOrderingCutoffDetails();
             return response()->json([
                 'success' => true,
                 'tiffin_plans' => $formatted,
                 'tiffins' => $formatted,
+                'ordering_status' => $cutoffDetails,
+                'is_cutoff' => $cutoffDetails['is_cutoff'],
+                'can_order' => $cutoffDetails['can_order'],
                 'data' => [
                     'tiffin_plans' => $formatted,
                     'data' => $formatted,
+                    'ordering_status' => $cutoffDetails,
+                    'is_cutoff' => $cutoffDetails['is_cutoff'],
+                    'can_order' => $cutoffDetails['can_order'],
                 ]
             ]);
         }
@@ -2033,6 +2359,7 @@ class AdminPanelController extends Controller
                 $categories = [];
             }
 
+            $cutoffDetails = TimezoneHelper::getOrderingCutoffDetails();
             return response()->json([
                 'success' => true,
                 'available' => true,
@@ -2042,6 +2369,9 @@ class AdminPanelController extends Controller
                 'items_grouped' => (object) $grouped,
                 'categories' => $categories,
                 'source' => "today's active tiffin plans",
+                'ordering_status' => $cutoffDetails,
+                'is_cutoff' => $cutoffDetails['is_cutoff'],
+                'can_order' => $cutoffDetails['can_order'],
             ]);
         } catch (\Throwable $e) {
             return response()->json([

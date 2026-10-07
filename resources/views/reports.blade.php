@@ -96,84 +96,36 @@
     </form>
   </div>
 
-  <!-- Summary KPI Cards Grid -->
+  <!-- Summary KPI Cards Grid (Dynamic from Categories) -->
   <div class="kp_kitchen_admin_panel_stats_grid prep-kpi-grid">
-    
-    <!-- Rotis / Breads Card (Highlighted) -->
-    <article class="kp_kitchen_admin_panel_stat_card hover-card prep-kpi-card prep-kpi-rotis">
-      <div class="prep-kpi-inner">
-        <div>
-          <span class="prep-kpi-label">🫓 Rotis &amp; Breads</span>
-          <h3 id="kpiRotisCount" class="prep-kpi-number prep-rotis-color">
-            {{ number_format($kitchenPrep['summary']['total_rotis']) }}
-          </h3>
-          <span class="prep-kpi-hint">Total rotis to prepare / bake</span>
+    @foreach($kitchenPrep['category_cards'] as $catCard)
+      <article class="kp_kitchen_admin_panel_stat_card hover-card prep-kpi-card" style="border-left: 4px solid {{ $catCard['colors']['border'] }} !important;">
+        <div class="prep-kpi-inner">
+          <div>
+            <span class="prep-kpi-label">{{ $catCard['icon'] }} {{ $catCard['name'] }}</span>
+            <h3 class="prep-kpi-number" style="color: {{ $catCard['colors']['text'] }};">
+              {{ number_format($catCard['total_qty']) }}
+            </h3>
+            <span class="prep-kpi-hint">{{ $catCard['hint'] }} ({{ $catCard['unit'] }})</span>
+          </div>
+          <div class="prep-kpi-icon-box" style="background: {{ $catCard['colors']['bg'] }}; color: {{ $catCard['colors']['text'] }}; font-size: 1.4rem; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 10px;">
+            <span>{{ $catCard['icon'] }}</span>
+          </div>
         </div>
-        <div class="prep-kpi-icon-box prep-rotis-icon-bg">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="4"></circle><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"></line><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"></line><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"></line><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"></line></svg>
-        </div>
-      </div>
-    </article>
-
-    <!-- Curries & Dals Card -->
-    <article class="kp_kitchen_admin_panel_stat_card hover-card prep-kpi-card prep-kpi-curries">
-      <div class="prep-kpi-inner">
-        <div>
-          <span class="prep-kpi-label">🍲 Curries &amp; Dals</span>
-          <h3 id="kpiCurriesCount" class="prep-kpi-number prep-curries-color">
-            {{ number_format($kitchenPrep['summary']['total_curries']) }}
-          </h3>
-          <span class="prep-kpi-hint">Portions / bowls to cook</span>
-        </div>
-        <div class="prep-kpi-icon-box prep-curries-icon-bg">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg>
-        </div>
-      </div>
-    </article>
-
-    <!-- Rice Dishes Card -->
-    <article class="kp_kitchen_admin_panel_stat_card hover-card prep-kpi-card prep-kpi-rice">
-      <div class="prep-kpi-inner">
-        <div>
-          <span class="prep-kpi-label">🍚 Rice Dishes</span>
-          <h3 id="kpiRiceCount" class="prep-kpi-number prep-rice-color">
-            {{ number_format($kitchenPrep['summary']['total_rice']) }}
-          </h3>
-          <span class="prep-kpi-hint">Portions of rice &amp; pulaw</span>
-        </div>
-        <div class="prep-kpi-icon-box prep-rice-icon-bg">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"></path><path d="M12 6v6l4 2"></path></svg>
-        </div>
-      </div>
-    </article>
-
-    <!-- Salads & Sides Card -->
-    <article class="kp_kitchen_admin_panel_stat_card hover-card prep-kpi-card prep-kpi-salads">
-      <div class="prep-kpi-inner">
-        <div>
-          <span class="prep-kpi-label">🥗 Salads &amp; Sides</span>
-          <h3 id="kpiSaladsCount" class="prep-kpi-number prep-salads-color">
-            {{ number_format($kitchenPrep['summary']['total_salads']) }}
-          </h3>
-          <span class="prep-kpi-hint">Salads &amp; side items</span>
-        </div>
-        <div class="prep-kpi-icon-box prep-salads-icon-bg">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"></path><line x1="16" y1="8" x2="2" y2="22"></line><line x1="17.5" y1="15" x2="9" y2="15"></line></svg>
-        </div>
-      </div>
-    </article>
+      </article>
+    @endforeach
 
     <!-- Total Tiffins / Orders Card -->
-    <article class="kp_kitchen_admin_panel_stat_card hover-card prep-kpi-card prep-kpi-tiffins">
+    <article class="kp_kitchen_admin_panel_stat_card hover-card prep-kpi-card prep-kpi-tiffins" style="border-left: 4px solid #8B5CF6 !important;">
       <div class="prep-kpi-inner">
         <div>
           <span class="prep-kpi-label">🍱 Tiffins &amp; Orders</span>
-          <h3 id="kpiTiffinsCount" class="prep-kpi-number prep-tiffins-color">
+          <h3 id="kpiTiffinsCount" class="prep-kpi-number prep-tiffins-color" style="color: #7C3AED;">
             {{ number_format($kitchenPrep['summary']['total_tiffins']) }}
           </h3>
           <span class="prep-kpi-hint">Across {{ $kitchenPrep['summary']['total_orders'] }} orders</span>
         </div>
-        <div class="prep-kpi-icon-box prep-tiffins-icon-bg">
+        <div class="prep-kpi-icon-box prep-tiffins-icon-bg" style="background: rgba(139, 92, 246, 0.12); color: #7C3AED; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 10px;">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
         </div>
       </div>
@@ -193,7 +145,7 @@
             {{ \Carbon\Carbon::parse($kitchenPrep['filters']['selected_month'] . '-01')->format('F Y') }} &mdash; 4 to 5 Weeks Order History Breakdown
           </h3>
           <p class="prep-week-history-subtitle">
-            Compare total rotis, curries, and meal orders across each week of the month. Click any week card to isolate its prep sheet.
+            Compare order quantities across each category for every week of the month. Click any week card to isolate its prep sheet.
           </p>
         </div>
       </div>
@@ -232,15 +184,16 @@
           </div>
 
           <div class="prep-week-stats-container">
-            <div class="prep-week-stat-row">
-              <span class="prep-week-stat-label">🫓 Rotis:</span>
-              <strong class="prep-week-stat-val-rotis">{{ number_format($w['total_rotis']) }}</strong>
-            </div>
-            <div class="prep-week-stat-row">
-              <span class="prep-week-stat-label">🍲 Curries:</span>
-              <strong class="prep-week-stat-val-curries">{{ number_format($w['total_curries']) }}</strong>
-            </div>
-            <div class="prep-week-stat-row">
+            @foreach($kitchenPrep['category_cards'] as $catCard)
+              @php
+                $weekCatQty = $w['categories'][$catCard['slug']] ?? 0;
+              @endphp
+              <div class="prep-week-stat-row">
+                <span class="prep-week-stat-label">{{ $catCard['icon'] }} {{ $catCard['name'] }}:</span>
+                <strong style="color: {{ $catCard['colors']['text'] }};">{{ number_format($weekCatQty) }}</strong>
+              </div>
+            @endforeach
+            <div class="prep-week-stat-row" style="border-top: 1px dashed var(--panel-border, rgba(0,0,0,0.08)); padding-top: 0.3rem; margin-top: 0.2rem;">
               <span class="prep-week-stat-label">🍱 Tiffins:</span>
               <strong class="prep-week-stat-val-tiffins">{{ number_format($w['total_tiffins']) }}</strong>
             </div>
@@ -257,15 +210,14 @@
     <!-- Table Toolbar: Category Tabs & Search Bar -->
     <div class="prep-table-toolbar">
       
-      <!-- Category Filter Tabs -->
+      <!-- Category Filter Tabs (Dynamic) -->
       <div class="prep-cat-tabs-wrap" id="categoryFilterTabs">
         <button type="button" class="prep-cat-tab prep-cat-active" onclick="filterCategory('all', this)">All Food Items ({{ count($kitchenPrep['items']) }})</button>
-        <button type="button" class="prep-cat-tab" onclick="filterCategory('bread', this)">🫓 Breads &amp; Rotis</button>
-        <button type="button" class="prep-cat-tab" onclick="filterCategory('curry', this)">🍲 Curries &amp; Dals</button>
-        <button type="button" class="prep-cat-tab" onclick="filterCategory('rice', this)">🍚 Rice Dishes</button>
-        <button type="button" class="prep-cat-tab" onclick="filterCategory('salad', this)">🥗 Salads &amp; Sides</button>
-        <button type="button" class="prep-cat-tab" onclick="filterCategory('dessert', this)">🍮 Sweets &amp; Desserts</button>
-        <button type="button" class="prep-cat-tab" onclick="filterCategory('beverage', this)">🥤 Beverages</button>
+        @foreach($kitchenPrep['category_cards'] as $catCard)
+          <button type="button" class="prep-cat-tab" onclick="filterCategory('{{ $catCard['slug'] }}', this)">
+            {{ $catCard['icon'] }} {{ $catCard['name'] }}
+          </button>
+        @endforeach
       </div>
 
       <!-- Live Search Box -->
@@ -306,26 +258,16 @@
                 <div class="prep-item-title">{{ $item['name'] }}</div>
               </td>
 
-              <!-- Category Badge -->
+              <!-- Category Badge (Dynamic) -->
               <td class="prep-td">
-                @if($item['cat_key'] === 'bread')
-                  <span class="prep-badge prep-badge-bread">🫓 Breads / Rotis</span>
-                @elseif($item['cat_key'] === 'curry')
-                  <span class="prep-badge prep-badge-curry">🍲 Curries &amp; Mains</span>
-                @elseif($item['cat_key'] === 'rice')
-                  <span class="prep-badge prep-badge-rice">🍚 Rice Dishes</span>
-                @elseif($item['cat_key'] === 'salad')
-                  <span class="prep-badge prep-badge-salad">🥗 Salads &amp; Sides</span>
-                @elseif($item['cat_key'] === 'dessert')
-                  <span class="prep-badge prep-badge-dessert">🍮 Desserts</span>
-                @else
-                  <span class="prep-badge prep-badge-other">{{ $item['category'] }}</span>
-                @endif
+                <span class="prep-badge" style="background: {{ $item['cat_bg'] }}; color: {{ $item['cat_text'] }}; font-weight: 700;">
+                  {{ $item['cat_icon'] }} {{ $item['category'] }}
+                </span>
               </td>
 
               <!-- Total Quantity To Prepare -->
               <td class="prep-td">
-                <div class="prep-qty-main {{ $item['cat_key'] === 'bread' ? 'prep-qty-rotis' : '' }}">
+                <div class="prep-qty-main" style="color: {{ $item['cat_text'] }};">
                   {{ number_format($item['total_qty']) }} <span class="prep-qty-unit">{{ $item['unit'] }}</span>
                 </div>
               </td>
@@ -365,6 +307,106 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="prep-empty-icon"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
                 <p class="prep-empty-title">No orders found for the selected time range.</p>
                 <p class="prep-empty-subtitle">Try selecting "This Week" or a different Month/Date range above.</p>
+              </td>
+            </tr>
+          @endforelse
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Detailed Kitchen Orders Preparation Sheet Card (8 Detailed Columns: ID, Name, Tiffin Plan, Optional Item Choosen, Add-ons, Note, Amount, Address) -->
+  <div class="kp_kitchen_admin_panel_card prep-orders-detail-card" id="detailedOrdersSection">
+    <div class="prep-table-toolbar">
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <div class="prep-history-badge-icon" style="width: 38px; height: 38px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        </div>
+        <div>
+          <h3 class="prep-week-history-title" style="font-size: 1.05rem;">Detailed Kitchen Orders Breakdown ({{ count($kitchenPrep['orders_list'] ?? []) }} Orders)</h3>
+          <p class="prep-week-history-subtitle">Individual order-by-order breakdown with optional item choices, add-ons, notes, and delivery address.</p>
+        </div>
+      </div>
+      <div class="prep-search-wrap">
+        <input type="text" id="orderSearchInput" class="kp_kitchen_admin_panel_form_input prep-search-input" placeholder="Search order ID, customer, address..." onkeyup="searchOrdersTable(this.value)">
+        <svg class="prep-search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      </div>
+    </div>
+
+    <div class="prep-table-scroll">
+      <table class="kp_kitchen_admin_panel_table prep-table" id="detailedOrdersTable">
+        <thead>
+          <tr class="prep-table-head-row">
+            <th class="prep-th" style="width: 100px;">ID</th>
+            <th class="prep-th">Name</th>
+            <th class="prep-th">Tiffin Plan</th>
+            <th class="prep-th">Optional Item Choosen</th>
+            <th class="prep-th">Add-ons</th>
+            <th class="prep-th">Note</th>
+            <th class="prep-th" style="text-align: right; width: 100px;">Amount</th>
+            <th class="prep-th">Address</th>
+          </tr>
+        </thead>
+        <tbody id="detailedOrdersTableBody">
+          @forelse(($kitchenPrep['orders_list'] ?? []) as $oRow)
+            <tr class="prep-order-row" data-search="{{ strtolower($oRow['id'] . ' ' . $oRow['name'] . ' ' . $oRow['tiffin_plan'] . ' ' . $oRow['optional_item_choosen'] . ' ' . $oRow['add_ons'] . ' ' . $oRow['note'] . ' ' . $oRow['address']) }}">
+              <!-- 1. ID -->
+              <td class="prep-td">
+                <span class="prep-order-id-badge">#{{ $oRow['id'] }}</span>
+              </td>
+
+              <!-- 2. Name -->
+              <td class="prep-td">
+                <div class="prep-item-title" style="font-size: 0.9rem;">{{ $oRow['name'] }}</div>
+              </td>
+
+              <!-- 3. Tiffin Plan -->
+              <td class="prep-td">
+                <span class="prep-plan-pill">{{ $oRow['tiffin_plan'] }}</span>
+              </td>
+
+              <!-- 4. Optional Item Choosen -->
+              <td class="prep-td prep-choices-cell">
+                @if($oRow['optional_item_choosen'] !== '-')
+                  <div class="prep-choices-text">{{ $oRow['optional_item_choosen'] }}</div>
+                @else
+                  <span class="prep-empty-dash">&mdash;</span>
+                @endif
+              </td>
+
+              <!-- 5. Add-ons -->
+              <td class="prep-td prep-addons-cell">
+                @if($oRow['add_ons'] !== '-')
+                  <div class="prep-addon-text">{{ $oRow['add_ons'] }}</div>
+                @else
+                  <span class="prep-empty-dash">&mdash;</span>
+                @endif
+              </td>
+
+              <!-- 6. Note -->
+              <td class="prep-td prep-note-cell">
+                @if($oRow['note'] !== '-')
+                  <div class="prep-note-text">📝 {{ $oRow['note'] }}</div>
+                @else
+                  <span class="prep-empty-dash">&mdash;</span>
+                @endif
+              </td>
+
+              <!-- 7. Amount -->
+              <td class="prep-td" style="text-align: right; font-weight: 700; color: var(--text-primary, #0F172A);">
+                {{ $oRow['amount_formatted'] }}
+              </td>
+
+              <!-- 8. Address -->
+              <td class="prep-td prep-address-cell">
+                <div class="prep-address-text">{{ $oRow['address'] }}</div>
+              </td>
+            </tr>
+          @empty
+            <tr>
+              <td colspan="8" class="prep-empty-cell">
+                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="prep-empty-icon"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                <p class="prep-empty-title">No orders found for the selected time range.</p>
               </td>
             </tr>
           @endforelse
@@ -991,6 +1033,68 @@
   color: var(--text-muted, #94A3B8);
 }
 
+/* Detailed Orders Sheet Card & Cells */
+.prep-orders-detail-card {
+  padding: 1.5rem;
+  border-radius: var(--border-radius, 16px);
+  background-color: var(--panel-bg, #FFFFFF);
+  border: 1px solid var(--panel-border, rgba(0,0,0,0.05));
+  box-shadow: var(--glass-shadow, 0 8px 32px 0 rgba(0,0,0,0.04));
+  margin-bottom: 2rem;
+}
+.prep-order-id-badge {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--primary-color, #FF6B6B);
+  font-weight: 700;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  display: inline-block;
+  font-family: monospace;
+}
+.prep-plan-pill {
+  background: var(--bg-color, #F8FAFC);
+  border: 1px solid var(--panel-border, #E2E8F0);
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary, #1E293B);
+  display: inline-block;
+}
+.prep-choices-text {
+  font-size: 0.84rem;
+  color: var(--text-primary, #334155);
+  line-height: 1.35;
+  max-width: 240px;
+}
+.prep-addon-text {
+  font-size: 0.82rem;
+  color: #10B981;
+  font-weight: 600;
+  line-height: 1.35;
+  max-width: 200px;
+}
+.prep-note-text {
+  font-size: 0.82rem;
+  color: #D97706;
+  background: rgba(245, 158, 11, 0.1);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  display: inline-block;
+  max-width: 200px;
+  font-weight: 500;
+}
+.prep-address-text {
+  font-size: 0.82rem;
+  color: var(--text-secondary, #64748B);
+  line-height: 1.35;
+  max-width: 260px;
+}
+.prep-empty-dash {
+  color: var(--text-muted, #94A3B8);
+}
+
 /* =========================================================================
    DARK THEME EXPLICIT OVERRIDES [data-kp-theme="dark"]
    ========================================================================= */
@@ -1056,11 +1160,23 @@
   background: rgba(15, 23, 42, 0.8);
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
-[data-kp-theme="dark"] .prep-item-row:hover {
+[data-kp-theme="dark"] .prep-item-row:hover,
+[data-kp-theme="dark"] .prep-order-row:hover {
   background-color: rgba(255, 107, 107, 0.08);
 }
 [data-kp-theme="dark"] .prep-item-done {
   background-color: rgba(16, 185, 129, 0.15) !important;
+}
+[data-kp-theme="dark"] .prep-plan-pill {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #F8FAFC;
+}
+[data-kp-theme="dark"] .prep-choices-text {
+  color: #E2E8F0;
+}
+[data-kp-theme="dark"] .prep-address-text {
+  color: #94A3B8;
 }
 
 /* Print Sheet Styling */
@@ -1071,7 +1187,7 @@
   #reportsPage, #reportsPage * {
     visibility: visible;
   }
-  #sidebar, .kp_kitchen_admin_panel_sidebar, .kp_kitchen_admin_panel_topbar, #kitchenPrepFilterForm, .prep-top-toolbar button, #exportPrepCsvBtn, #categoryFilterTabs, .prep-search-wrap, .kp_kitchen_admin_panel_stats_grid_three {
+  #sidebar, .kp_kitchen_admin_panel_sidebar, .kp_kitchen_admin_panel_topbar, #kitchenPrepFilterForm, .prep-top-toolbar button, #exportPrepCsvBtn, #categoryFilterTabs, .prep-search-wrap, .kp_kitchen_admin_panel_stats_grid_three, .prep-action-buttons, .prep-pills-row, .prep-checkbox-label {
     display: none !important;
   }
   #reportsPage {
@@ -1080,15 +1196,39 @@
     top: 0;
     width: 100%;
     margin: 0;
-    padding: 10px;
+    padding: 15px;
     background: #fff !important;
     color: #000 !important;
   }
   .kp_kitchen_admin_panel_stat_card, .kp_kitchen_admin_panel_card {
     box-shadow: none !important;
-    border: 1px solid #ddd !important;
+    border: 1px solid #cbd5e1 !important;
     background: #fff !important;
     color: #000 !important;
+    page-break-inside: avoid;
+    margin-bottom: 1.25rem !important;
+  }
+  .prep-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 8.5pt !important;
+  }
+  .prep-table th, .prep-table td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 5px 7px !important;
+    color: #000 !important;
+  }
+  .prep-table-head-row {
+    background: #f1f5f9 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .prep-order-id-badge, .prep-plan-pill, .prep-badge {
+    border: 1px solid #cbd5e1 !important;
+    background: #f8fafc !important;
+    color: #000 !important;
+    padding: 2px 4px !important;
+    font-size: 7.5pt !important;
   }
 }
 </style>
@@ -1140,6 +1280,19 @@ function searchPrepTable(query) {
   rows.forEach(row => {
     const name = row.getAttribute('data-name') || '';
     if (!query || name.includes(query)) {
+      row.style.display = '';
+    } else {
+      row.style.display = 'none';
+    }
+  });
+}
+
+function searchOrdersTable(query) {
+  query = (query || '').toLowerCase().trim();
+  const rows = document.querySelectorAll('.prep-order-row');
+  rows.forEach(row => {
+    const text = (row.getAttribute('data-search') || '').toLowerCase();
+    if (!query || text.includes(query)) {
       row.style.display = '';
     } else {
       row.style.display = 'none';
