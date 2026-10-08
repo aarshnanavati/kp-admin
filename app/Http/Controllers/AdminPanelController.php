@@ -626,6 +626,7 @@ class AdminPanelController extends Controller
         };
 
         $itemTotals = [];
+        $ordersList = [];
         $totalOrdersCount = $orders->count();
         $totalTiffinsCount = 0;
 
@@ -641,6 +642,7 @@ class AdminPanelController extends Controller
             }
 
             $resolvedItems = [];
+            $choicesDisplayList = [];
 
             if (is_array($selections) && !empty($selections['choices'])) {
                 foreach ($selections['choices'] as $choice) {
@@ -652,16 +654,19 @@ class AdminPanelController extends Controller
                         'component' => $component,
                         'qty' => 1,
                     ];
+                    $choicesDisplayList[] = $component ? "{$component}: {$name}" : $name;
                 }
             } elseif (is_array($selections) && !empty($selections['custom_items'])) {
                 foreach ($selections['custom_items'] as $cItem) {
                     $name = trim($cItem['name'] ?? '');
                     if (!$name) continue;
+                    $cQty = (int)($cItem['qty'] ?? 1);
                     $resolvedItems[] = [
                         'name' => $name,
                         'component' => 'Custom Choice',
-                        'qty' => (int)($cItem['qty'] ?? 1),
+                        'qty' => $cQty,
                     ];
+                    $choicesDisplayList[] = $cQty > 1 ? "{$name} (x{$cQty})" : $name;
                 }
             } else {
                 // Fallback to base tiffin components / items
@@ -689,6 +694,7 @@ class AdminPanelController extends Controller
                                     'component' => $comp['label'],
                                     'qty' => 1,
                                 ];
+                                $choicesDisplayList[] = $comp['label'] . ': ' . $def['name'];
                             }
                         }
                     } elseif (!empty($tiffin->items)) {
@@ -703,6 +709,7 @@ class AdminPanelController extends Controller
                                         'component' => 'Included Item',
                                         'qty' => 1,
                                     ];
+                                    $choicesDisplayList[] = $itName;
                                 }
                             }
                         }
@@ -789,6 +796,7 @@ class AdminPanelController extends Controller
             }
 
             // 2. Process Add-ons
+            $addonsDisplayList = [];
             if ($order->add_ons) {
                 $addons = is_array($order->add_ons) ? $order->add_ons : json_decode($order->add_ons, true);
                 if (is_array($addons)) {
@@ -796,16 +804,17 @@ class AdminPanelController extends Controller
                         $name = trim($addon['name'] ?? '');
                         if (!$name) continue;
                         $aQty = (int)($addon['qty'] ?? 1) * $orderQty;
+                        $addonsDisplayList[] = $aQty > 1 ? "{$name} (x{$aQty})" : $name;
 
                         $catInfo = $resolveCategory($name, 'Addon');
                         $catName = $catInfo['name'];
                         $catSlug = $catInfo['slug'];
 
                         $isBread = (stripos($name, 'roti') !== false || stripos($name, 'thepla') !== false ||
-                                    stripos($name, 'bhakhri') !== false || stripos($name, 'bhakri') !== false ||
-                                    stripos($name, 'paratha') !== false || stripos($name, 'naan') !== false ||
-                                    stripos($name, 'bread') !== false || stripos($catName, 'bread') !== false ||
-                                    stripos($catName, 'roti') !== false);
+                            stripos($name, 'bhakhri') !== false || stripos($name, 'bhakri') !== false ||
+                            stripos($name, 'paratha') !== false || stripos($name, 'naan') !== false ||
+                            stripos($name, 'bread') !== false || stripos($catName, 'bread') !== false ||
+                            stripos($catName, 'roti') !== false);
 
                         $unit = $isBread ? 'Rotis' : (preg_match('/\((\d+)\s*pcs?\)/i', $name) ? 'Pieces' : 'Portions');
 
@@ -863,6 +872,44 @@ class AdminPanelController extends Controller
                     }
                 }
             }
+
+            // Build detailed order record for Detailed Kitchen Orders Breakdown
+            $custName = is_string($order->customer) && !empty(trim($order->customer))
+                ? trim($order->customer)
+                : (is_object($order->customer) && isset($order->customer->name)
+                    ? $order->customer->name
+                    : (optional($order->customerRelation)->name ?: ($order->customer_id ? 'Customer #' . $order->customer_id : 'Customer')));
+
+            $tiffinPlanName = $order->tiffin ?: ($order->tiffin_id ? optional($allTiffins->get($order->tiffin_id))->name : 'Standard Tiffin');
+            if ($orderQty > 1) {
+                $tiffinPlanName .= " (x{$orderQty})";
+            }
+            $optionalItemChosen = !empty($choicesDisplayList) ? implode(', ', $choicesDisplayList) : '-';
+            $addonsStr = !empty($addonsDisplayList) ? implode(', ', $addonsDisplayList) : '-';
+            $note = trim((string)($order->note ?: $order->delivery_instructions ?: $order->special_instructions ?: ''));
+            $noteStr = !empty($note) ? $note : '-';
+            $amount = (float)($order->amount ?: 0);
+            $amountFormatted = '$' . number_format($amount, 2);
+
+            $custModel = $order->customerRelation ?: (is_object($order->customer) ? $order->customer : null);
+            $addrDetails = AddressHelper::extractAndFormat($order, $custModel);
+            $formattedAddress = $addrDetails['address'] ?: ($order->customer_address ?: 'No address specified');
+
+            $ordersList[] = [
+                'id' => $order->id,
+                'order_number' => $order->order_number ?: ('#' . $order->id),
+                'name' => $custName,
+                'customer_id' => $order->customer_id,
+                'tiffin_plan' => $tiffinPlanName,
+                'optional_item_choosen' => $optionalItemChosen,
+                'add_ons' => $addonsStr,
+                'note' => $noteStr,
+                'amount' => $amount,
+                'amount_formatted' => $amountFormatted,
+                'address' => $formattedAddress,
+                'date' => $order->date,
+                'status' => $order->status,
+            ];
         }
 
         // Calculate Month Weeks Summary from month orders for week-by-week trends
@@ -920,6 +967,7 @@ class AdminPanelController extends Controller
                 'total_orders' => $totalOrdersCount,
                 'total_tiffins' => $totalTiffinsCount,
             ],
+            'orders_list' => $ordersList,
             'month_weeks' => array_values($monthWeeks),
             'available_months' => $availableMonths,
             'categories' => $dbCategories,
