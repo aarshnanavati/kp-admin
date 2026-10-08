@@ -23,6 +23,7 @@ use App\Helpers\AddressHelper;
 use App\Helpers\ImageUploadHelper;
 use App\Helpers\TimezoneHelper;
 use App\Mail\CustomerWelcomeMail;
+use App\Mail\DriverWelcomeMail;
 
 class AdminPanelController extends Controller
 {
@@ -1485,11 +1486,20 @@ class AdminPanelController extends Controller
             $msg = 'Driver details updated successfully.';
         } else {
             // Drivers the admin adds directly are pre-approved.
-            Driver::create($data + [
+            $driver = Driver::create($data + [
                 'approval_status' => 'Approved',
                 'reviewed_at' => now(),
                 'reviewed_by' => optional($request->user())->id,
             ]);
+
+            if ($driver->email) {
+                try {
+                    \Illuminate\Support\Facades\Mail::to($driver->email)->send(new DriverWelcomeMail($driver, 'approved'));
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::warning("Admin saveDriver welcome email failed: " . $e->getMessage());
+                }
+            }
+
             $msg = 'Driver registered successfully.';
         }
 
@@ -2821,10 +2831,7 @@ class AdminPanelController extends Controller
                 ['type' => 'driver_approved']
             );
             if ($driver->email) {
-                \Illuminate\Support\Facades\Mail::to($driver->email)->send(new \App\Mail\KitchenAlertMail(
-                    "Your KP's Kitchen driver account is approved",
-                    "Good news {$driver->name}! Your driver account has been approved. You can now log in to the KP's Kitchen driver app."
-                ));
+                \Illuminate\Support\Facades\Mail::to($driver->email)->send(new DriverWelcomeMail($driver, 'approved'));
             }
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::warning("Driver approval side-effects failed: " . $e->getMessage());
@@ -3273,6 +3280,14 @@ class AdminPanelController extends Controller
                     'reviewed_at' => now(),
                     'reviewed_by' => optional($request->user())->id,
                 ]);
+
+                if ($driver->email) {
+                    try {
+                        \Illuminate\Support\Facades\Mail::to($driver->email)->send(new DriverWelcomeMail($driver, 'approved'));
+                    } catch (\Exception $e) {
+                        \Illuminate\Support\Facades\Log::warning("Admin manageDriver welcome email failed: " . $e->getMessage());
+                    }
+                }
 
                 return response()->json(['success' => true, 'driver' => $driver]);
             } else {

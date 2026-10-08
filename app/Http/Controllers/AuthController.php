@@ -11,6 +11,7 @@ use App\Models\PasswordOtp;
 use App\Mail\SendOtpMail;
 use App\Mail\KitchenAlertMail;
 use App\Mail\CustomerWelcomeMail;
+use App\Mail\DriverWelcomeMail;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -2481,7 +2482,7 @@ class AuthController extends Controller
         }
 
         try {
-            Mail::to($driver->email)->send(new KitchenAlertMail("Registration received - pending approval", "Thank you {$driver->name} for registering with KP's Kitchen. Your profile has been submitted and is now pending review by our team. You will be able to log in once an admin approves your account."));
+            Mail::to($driver->email)->send(new DriverWelcomeMail($driver, 'registration'));
             Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New Driver Awaiting Approval", "Driver {$driver->name} ({$driver->email}) has registered and needs review in the admin panel."));
         } catch (\Exception $e) {
             Log::warning("Driver registration email triggers failed: " . $e->getMessage());
