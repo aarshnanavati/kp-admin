@@ -331,9 +331,15 @@
           <p class="prep-week-history-subtitle">Individual order-by-order breakdown with optional item choices, add-ons, notes, and delivery address.</p>
         </div>
       </div>
-      <div class="prep-search-wrap">
-        <input type="text" id="orderSearchInput" class="kp_kitchen_admin_panel_form_input prep-search-input" placeholder="Search order ID, customer, address..." onkeyup="searchOrdersTable(this.value)">
-        <svg class="prep-search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+        <div class="prep-search-wrap">
+          <input type="text" id="orderSearchInput" class="kp_kitchen_admin_panel_form_input prep-search-input" placeholder="Search order ID, customer, address..." onkeyup="searchOrdersTable(this.value)">
+          <svg class="prep-search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        </div>
+        <a id="exportDetailedOrdersPdfBtn" href="{{ route('reports.export-pdf', ['type' => 'detailed_orders', 'filter_type' => $kitchenPrep['filters']['filter_type'], 'selected_date' => $kitchenPrep['filters']['selected_date'], 'selected_month' => $kitchenPrep['filters']['selected_month'], 'selected_week' => $kitchenPrep['filters']['selected_week'], 'start_date' => $kitchenPrep['filters']['start_date'] ?? '', 'end_date' => $kitchenPrep['filters']['end_date'] ?? '', 'category' => $kitchenPrep['filters']['category'] ?? 'all', 'search' => $kitchenPrep['filters']['search'] ?? '']) }}" target="_blank" class="kp_kitchen_admin_panel_primary_button prep-btn-pdf" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.4rem; padding: 0.55rem 0.95rem; font-size: 0.85rem; background: linear-gradient(135deg, #e11d48, #be123c); border-color: #be123c; color: #fff; white-space: nowrap; border-radius: 8px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          Download Orders PDF
+        </a>
       </div>
     </div>
 
@@ -400,7 +406,7 @@
               <!-- 7. Note -->
               <td class="prep-td prep-note-cell">
                 @if($oRow['note'] !== '-')
-                  <div class="prep-note-text">📝 {{ $oRow['note'] }}</div>
+                  <div class="prep-note-text"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; margin-right: 4px; display: inline-block;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>{{ $oRow['note'] }}</div>
                 @else
                   <span class="prep-empty-dash">&mdash;</span>
                 @endif
@@ -1244,7 +1250,7 @@
   #reportsPage, #reportsPage * {
     visibility: visible;
   }
-  #sidebar, .kp_kitchen_admin_panel_sidebar, .kp_kitchen_admin_panel_topbar, #kitchenPrepFilterForm, .prep-top-toolbar button, #exportPrepCsvBtn, #exportPrepPdfBtn, #categoryFilterTabs, .prep-search-wrap, .kp_kitchen_admin_panel_stats_grid_three, .prep-action-buttons, .prep-pills-row, .prep-checkbox-label {
+  #sidebar, .kp_kitchen_admin_panel_sidebar, .kp_kitchen_admin_panel_topbar, #kitchenPrepFilterForm, .prep-top-toolbar button, #exportPrepCsvBtn, #exportPrepPdfBtn, #exportDetailedOrdersPdfBtn, #categoryFilterTabs, .prep-search-wrap, .kp_kitchen_admin_panel_stats_grid_three, .prep-action-buttons, .prep-pills-row, .prep-checkbox-label {
     display: none !important;
   }
   #reportsPage {
@@ -1355,6 +1361,19 @@ function searchOrdersTable(query) {
       row.style.display = 'none';
     }
   });
+
+  const btn = document.getElementById('exportDetailedOrdersPdfBtn');
+  if (btn) {
+    try {
+      const url = new URL(btn.href, window.location.origin);
+      if (query) {
+        url.searchParams.set('search', query);
+      } else {
+        url.searchParams.delete('search');
+      }
+      btn.href = url.pathname + url.search;
+    } catch(e) {}
+  }
 }
 
 function togglePrepDone(checkbox) {

@@ -989,6 +989,18 @@ class AdminPanelController extends Controller
             return strcmp($a['category'], $b['category']);
         });
 
+        if ($searchQuery !== '') {
+            $ordersList = array_values(array_filter($ordersList, function ($o) use ($searchQuery) {
+                return stripos((string)$o['id'], $searchQuery) !== false
+                    || stripos((string)$o['name'], $searchQuery) !== false
+                    || stripos((string)$o['tiffin_plan'], $searchQuery) !== false
+                    || stripos((string)($o['order_type_label'] ?? ''), $searchQuery) !== false
+                    || stripos((string)($o['order_type'] ?? ''), $searchQuery) !== false
+                    || stripos((string)$o['address'], $searchQuery) !== false
+                    || stripos((string)$o['note'], $searchQuery) !== false;
+            }));
+        }
+
         // Available Months list for dropdown (last 12 months)
         $availableMonths = [];
         for ($m = 0; $m < 12; $m++) {
@@ -3291,6 +3303,21 @@ class AdminPanelController extends Controller
             $fileName = 'Kitchen_Prep_Report_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
 
             $pdf = Pdf::loadView('pdf.kitchen_prep_pdf', [
+                'kitchenPrep' => $kitchenPrep,
+                'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
+            ])->setPaper('a4', 'landscape');
+
+            if ($request->has('inline') && $request->input('inline') == '1') {
+                return $pdf->stream($fileName);
+            }
+            return $pdf->download($fileName);
+        }
+
+        if ($type === 'detailed_orders' || $type === 'orders' || $type === 'breakdown') {
+            $kitchenPrep = $this->calculateKitchenPrepReport($request);
+            $fileName = 'Detailed_Kitchen_Orders_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
+
+            $pdf = Pdf::loadView('pdf.detailed_orders_pdf', [
                 'kitchenPrep' => $kitchenPrep,
                 'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
             ])->setPaper('a4', 'landscape');
