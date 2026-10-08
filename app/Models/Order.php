@@ -28,6 +28,7 @@ class Order extends Model
         'driver',
         'amount',
         'delivery_fee',
+        'order_type',
         'status',
         'date',
         'add_ons',
@@ -50,7 +51,13 @@ class Order extends Model
         'week_range',
         'subtotal',
         'order_value',
+        'is_pickup',
     ];
+
+    public function getIsPickupAttribute()
+    {
+        return ($this->order_type ?? 'delivery') === 'pickup';
+    }
 
     public function getDeliveryFeeAttribute($value)
     {

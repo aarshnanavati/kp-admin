@@ -1071,6 +1071,8 @@ class AuthController extends Controller
                     'delivery_fee' => (float) ($order->delivery_fee ?? 0.00),
                     'subtotal' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
                     'order_value' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
+                    'order_type' => $order->order_type ?: 'delivery',
+                    'is_pickup' => ($order->order_type ?? 'delivery') === 'pickup',
                     'delivery_date' => $order->date,
                     'date' => $order->date,
                     'status' => $orderStatus,
@@ -1441,9 +1443,20 @@ class AuthController extends Controller
         $orderPincode = $orderAddressInfo['pincode'] ?: $customer->pincode;
         $orderFormattedAddress = $orderAddressInfo['address'] ?: $customer->address;
 
+        $rawOrderType = strtolower(trim((string) (
+            $request->input('order_type')
+            ?? $request->input('delivery_type')
+            ?? $request->input('fulfillment_type')
+            ?? $request->input('type')
+            ?? ''
+        )));
+        $isPickup = in_array($rawOrderType, ['pickup', 'pick_up', 'self_pickup', 'store_pickup', 'collection'])
+            || filter_var($request->input('pickup') ?? $request->input('is_pickup'), FILTER_VALIDATE_BOOLEAN);
+        $orderType = $isPickup ? 'pickup' : 'delivery';
+
         $foodAmount = round((float) $amount, 2);
-        // Delivery fee rule: $5.00 delivery fee if order value is less than $12.00
-        $deliveryFee = ($foodAmount > 0 && $foodAmount < 12.00) ? 5.00 : 0.00;
+        // Delivery fee rule: $5.00 delivery fee if order value is less than $12.00 ONLY for delivery orders (not applicable for pickup)
+        $deliveryFee = (!$isPickup && $foodAmount > 0 && $foodAmount < 12.00) ? 5.00 : 0.00;
         $totalAmount = round($foodAmount + $deliveryFee, 2);
 
         $order = \App\Models\Order::create([
@@ -1460,6 +1473,7 @@ class AuthController extends Controller
             'area' => $orderPincode,
             'amount' => $totalAmount,
             'delivery_fee' => $deliveryFee,
+            'order_type' => $orderType,
             'status' => 'Pending',
             'date' => $request->filled('date') ? $request->input('date') : ($request->filled('delivery_date') ? $request->input('delivery_date') : TimezoneHelper::getAdelaideNow()->toDateString()),
             'add_ons' => json_encode($addonsData),
@@ -1516,25 +1530,26 @@ class AuthController extends Controller
         $choicesLine = ($selectionsData && !empty($selectionsData['summary']))
             ? " Choices: {$selectionsData['summary']}."
             : '';
+        $orderTypeLabel = $isPickup ? 'pickup' : 'delivery';
         $feeNote = $deliveryFee > 0 ? " (includes AUD 5.00 delivery fee for order under AUD 12.00)" : "";
 
         \App\Models\Notification::create([
-            'title' => 'New Order Placed',
-            'message' => "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}{$feeNote}).{$choicesLine} Weekly bill {$invoice->id} updated (Total AUD " . number_format($totalWeeklyAmount, 2) . ").",
+            'title' => 'New ' . ucfirst($orderTypeLabel) . ' Order Placed',
+            'message' => "Customer {$customer->name} placed {$orderTypeLabel} order {$order->id} (AUD {$order->amount}{$feeNote}).{$choicesLine} Weekly bill {$invoice->id} updated (Total AUD " . number_format($totalWeeklyAmount, 2) . ").",
             'user_type' => 'admin',
             'user_id' => null,
             'read_status' => false
         ]);
 
         FcmService::sendToAdmin(
-            'New Order Placed',
-            "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}{$feeNote}).{$choicesLine}",
-            ['order_id' => $order->id, 'type' => 'new_order']
+            'New ' . ucfirst($orderTypeLabel) . ' Order Placed',
+            "Customer {$customer->name} placed {$orderTypeLabel} order {$order->id} (AUD {$order->amount}{$feeNote}).{$choicesLine}",
+            ['order_id' => $order->id, 'type' => 'new_order', 'order_type' => $orderType]
         );
 
         \App\Models\Notification::create([
             'title' => 'Order Placed Successfully',
-            'message' => "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}{$feeNote}) has been placed successfully. Weekly bill total: AUD " . number_format($totalWeeklyAmount, 2) . ".",
+            'message' => "Your " . ($isPickup ? "pickup " : "") . "order {$order->id} for {$order->tiffin} (AUD {$order->amount}{$feeNote}) has been placed successfully. Weekly bill total: AUD " . number_format($totalWeeklyAmount, 2) . ".",
             'user_type' => 'customer',
             'user_id' => $customer->id,
             'read_status' => false
@@ -1543,14 +1558,16 @@ class AuthController extends Controller
         FcmService::sendToCustomer(
             $customer->id,
             'Order Placed Successfully',
-            "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}{$feeNote}) has been placed successfully.",
-            ['order_id' => $order->id, 'type' => 'order_placed']
+            "Your " . ($isPickup ? "pickup " : "") . "order {$order->id} for {$order->tiffin} (AUD {$order->amount}{$feeNote}) has been placed successfully.",
+            ['order_id' => $order->id, 'type' => 'order_placed', 'order_type' => $orderType]
         );
 
         return response()->json([
             'success' => true,
             'message' => 'Order placed successfully. Weekly bill updated.',
             'order' => $order,
+            'order_type' => $orderType,
+            'is_pickup' => $isPickup,
             'subtotal' => $foodAmount,
             'delivery_fee' => $deliveryFee,
             'delivery_fee_threshold' => 12.00,
@@ -2111,6 +2128,8 @@ class AuthController extends Controller
                     'amount' => (float) $ord->amount,
                     'delivery_fee' => (float) ($ord->delivery_fee ?? 0.00),
                     'subtotal' => round((float) $ord->amount - (float) ($ord->delivery_fee ?? 0.00), 2),
+                    'order_type' => $ord->order_type ?: 'delivery',
+                    'is_pickup' => ($ord->order_type ?? 'delivery') === 'pickup',
                     'status' => $ord->status,
                     'add_ons' => $ord->add_ons,
                     'selections' => $ord->selections,
@@ -2232,6 +2251,8 @@ class AuthController extends Controller
                     'amount' => (float) $ord->amount,
                     'delivery_fee' => (float) ($ord->delivery_fee ?? 0.00),
                     'subtotal' => round((float) $ord->amount - (float) ($ord->delivery_fee ?? 0.00), 2),
+                    'order_type' => $ord->order_type ?: 'delivery',
+                    'is_pickup' => ($ord->order_type ?? 'delivery') === 'pickup',
                     'status' => $ord->status,
                     'add_ons' => $ord->add_ons,
                     'selections' => $ord->selections,
@@ -3119,9 +3140,20 @@ class AuthController extends Controller
             ];
         });
 
+        $rawOrderType = strtolower(trim((string) (
+            $request->input('order_type')
+            ?? $request->input('delivery_type')
+            ?? $request->input('fulfillment_type')
+            ?? $request->input('type')
+            ?? ''
+        )));
+        $isPickup = in_array($rawOrderType, ['pickup', 'pick_up', 'self_pickup', 'store_pickup', 'collection'])
+            || filter_var($request->input('pickup') ?? $request->input('is_pickup'), FILTER_VALIDATE_BOOLEAN);
+        $orderType = $isPickup ? 'pickup' : 'delivery';
+
         $subtotal = round((float) $cartItems->sum('line_total'), 2);
-        // Delivery fee rule: $5.00 delivery fee if order value is less than $12.00
-        $deliveryFee = ($subtotal > 0 && $subtotal < 12.00) ? 5.00 : 0.00;
+        // Delivery fee rule: $5.00 delivery fee if order value is less than $12.00 ONLY for delivery orders (not applicable for pickup)
+        $deliveryFee = (!$isPickup && $subtotal > 0 && $subtotal < 12.00) ? 5.00 : 0.00;
         $total = round($subtotal + $deliveryFee, 2);
 
         $cutoffDetails = TimezoneHelper::getOrderingCutoffDetails();
@@ -3129,6 +3161,8 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'cart' => $cartItems,
+            'order_type' => $orderType,
+            'is_pickup' => $isPickup,
             'subtotal' => $subtotal,
             'delivery_fee' => $deliveryFee,
             'delivery_fee_threshold' => 12.00,
@@ -3438,6 +3472,8 @@ class AuthController extends Controller
                     'total_amount' => (string)$order->amount,
                     'delivery_fee' => (float) ($order->delivery_fee ?? 0.00),
                     'subtotal' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
+                    'order_type' => $order->order_type ?: 'delivery',
+                    'is_pickup' => ($order->order_type ?? 'delivery') === 'pickup',
                     'status' => $cleanStatus,
                     'display_status' => $order->status,
                     'area' => $order->area,
@@ -3518,6 +3554,8 @@ class AuthController extends Controller
             'total_amount' => (string)$order->amount,
             'delivery_fee' => (float) ($order->delivery_fee ?? 0.00),
             'subtotal' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
+            'order_type' => $order->order_type ?: 'delivery',
+            'is_pickup' => ($order->order_type ?? 'delivery') === 'pickup',
             'status' => $cleanStatus,
             'display_status' => $order->status,
             'area' => $order->area,

@@ -20,12 +20,33 @@
     ========================================================== --}}
     <div class="kp_kitchen_admin_panel_orders_toolbar">
 
-        {{-- Top Row: Heading and Action Buttons --}}
-        <div class="kp_kitchen_admin_panel_orders_top_row">
-            <div class="kp_kitchen_admin_panel_orders_heading">
-                <h2 class="kp_kitchen_admin_panel_orders_title">
+        {{-- Top Row: Heading, Delivery/Pickup Tabs, and Action Buttons --}}
+        <div class="kp_kitchen_admin_panel_orders_top_row" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+            <div class="kp_kitchen_admin_panel_orders_heading" style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+                <h2 class="kp_kitchen_admin_panel_orders_title" style="margin: 0;">
                     {{ $showPrevious ? 'Previous Customer Orders' : 'Customer Orders' }}
                 </h2>
+
+                {{-- Delivery / Pickup Tabs Switcher --}}
+                <div class="kp_kitchen_admin_panel_order_type_switcher" style="display: inline-flex; background: rgba(255, 255, 255, 0.04); padding: 4px; border-radius: 10px; border: 1px solid var(--panel-border); gap: 4px;">
+                    <a
+                        href="{{ route('orders', array_merge(request()->query(), ['order_type' => 'delivery'])) }}"
+                        class="kp_kitchen_admin_panel_order_type_tab {{ ($orderType ?? 'delivery') === 'delivery' ? 'kp_kitchen_admin_panel_order_type_tab_active' : '' }}"
+                        style="display: inline-flex; align-items: center; gap: 8px; padding: 7px 16px; border-radius: 8px; font-size: 0.88rem; font-weight: 600; text-decoration: none; transition: all 0.2s; {{ ($orderType ?? 'delivery') === 'delivery' ? 'background: #3498DB; color: #fff; box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);' : 'color: var(--text-secondary); background: transparent;' }}"
+                    >
+                        <span>🚚 To Be Delivered Orders</span>
+                        <span style="background: {{ ($orderType ?? 'delivery') === 'delivery' ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)' }}; padding: 2px 8px; border-radius: 12px; font-size: 0.78rem;">{{ $deliveryCount ?? 0 }}</span>
+                    </a>
+
+                    <a
+                        href="{{ route('orders', array_merge(request()->query(), ['order_type' => 'pickup'])) }}"
+                        class="kp_kitchen_admin_panel_order_type_tab {{ ($orderType ?? 'delivery') === 'pickup' ? 'kp_kitchen_admin_panel_order_type_tab_active' : '' }}"
+                        style="display: inline-flex; align-items: center; gap: 8px; padding: 7px 16px; border-radius: 8px; font-size: 0.88rem; font-weight: 600; text-decoration: none; transition: all 0.2s; {{ ($orderType ?? 'delivery') === 'pickup' ? 'background: #E67E22; color: #fff; box-shadow: 0 2px 8px rgba(230, 126, 34, 0.3);' : 'color: var(--text-secondary); background: transparent;' }}"
+                    >
+                        <span>🛍️ Pickup Orders</span>
+                        <span style="background: {{ ($orderType ?? 'delivery') === 'pickup' ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)' }}; padding: 2px 8px; border-radius: 12px; font-size: 0.78rem;">{{ $pickupCount ?? 0 }}</span>
+                    </a>
+                </div>
             </div>
 
             <div class="kp_kitchen_admin_panel_orders_top_actions">
@@ -85,6 +106,11 @@
                     type="hidden"
                     name="show_previous"
                     value="{{ $showPrevious ? 1 : 0 }}"
+                >
+                <input
+                    type="hidden"
+                    name="order_type"
+                    value="{{ $orderType ?? 'delivery' }}"
                 >
 
                 {{-- Search --}}
@@ -370,6 +396,17 @@
                                     <span class="kp_kitchen_admin_panel_table_secondary">
                                         {{ $order->date }}
                                     </span>
+
+                                    @if (($order->order_type ?? 'delivery') === 'pickup')
+                                        <div style="margin-top: 4px;">
+                                            <span
+                                                class="kp_kitchen_admin_panel_tiffin_item_chip kp_kitchen_admin_panel_chip_orange"
+                                                style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; padding: 2px 7px; font-weight: 600;"
+                                            >
+                                                🛍️ Pickup
+                                            </span>
+                                        </div>
+                                    @endif
 
                                 </td>
 

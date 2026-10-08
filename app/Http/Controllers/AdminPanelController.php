@@ -152,6 +152,40 @@ class AdminPanelController extends Controller
             }
         }
 
+        $baseDateQuery = Order::query();
+        if (!$showPrevious) {
+            $baseDateQuery->whereDate('date', \Carbon\Carbon::today()->toDateString());
+        } else {
+            $baseDateQuery->whereDate('date', '<', \Carbon\Carbon::today()->toDateString());
+
+            if ($request->filled('start_date')) {
+                $baseDateQuery->whereDate('date', '>=', $request->start_date);
+            }
+            if ($request->filled('end_date')) {
+                $baseDateQuery->whereDate('date', '<=', $request->end_date);
+            }
+        }
+
+        $deliveryCount = (clone $baseDateQuery)->where(function($q) {
+            $q->where('order_type', 'delivery')
+              ->orWhereNull('order_type')
+              ->orWhere('order_type', '');
+        })->count();
+
+        $pickupCount = (clone $baseDateQuery)->where('order_type', 'pickup')->count();
+
+        $orderType = $request->query('order_type', 'delivery');
+        if ($orderType === 'pickup') {
+            $query->where('order_type', 'pickup');
+        } else {
+            $orderType = 'delivery';
+            $query->where(function($q) {
+                $q->where('order_type', 'delivery')
+                  ->orWhereNull('order_type')
+                  ->orWhere('order_type', '');
+            });
+        }
+
         if ($request->filled('area') && $request->area !== 'all') {
             $query->where('area', $request->area);
         }
@@ -196,7 +230,7 @@ class AdminPanelController extends Controller
         $drivers = Driver::all();
         $uniqueAreas = Order::pluck('area')->unique()->filter()->values()->toArray();
 
-        return view('orders', compact('orders', 'drivers', 'uniqueAreas', 'showPrevious'));
+        return view('orders', compact('orders', 'drivers', 'uniqueAreas', 'showPrevious', 'orderType', 'deliveryCount', 'pickupCount'));
     }
 
     public function payments()
@@ -2581,6 +2615,8 @@ class AdminPanelController extends Controller
                 'delivery_fee' => (float)($order->delivery_fee ?? 0.00),
                 'subtotal' => round((float)$order->amount - (float)($order->delivery_fee ?? 0.00), 2),
                 'order_value' => round((float)$order->amount - (float)($order->delivery_fee ?? 0.00), 2),
+                'order_type' => $order->order_type ?: 'delivery',
+                'is_pickup' => ($order->order_type ?? 'delivery') === 'pickup',
                 'status' => $order->status,
                 'raw_addons' => $addons,
                 'proof_of_delivery_photo' => $order->proof_of_delivery_photo,
@@ -2937,6 +2973,8 @@ class AdminPanelController extends Controller
                 'delivery_fee' => (float)($order->delivery_fee ?? 0.00),
                 'subtotal' => round((float)$order->amount - (float)($order->delivery_fee ?? 0.00), 2),
                 'order_value' => round((float)$order->amount - (float)($order->delivery_fee ?? 0.00), 2),
+                'order_type' => $order->order_type ?: 'delivery',
+                'is_pickup' => ($order->order_type ?? 'delivery') === 'pickup',
                 'status' => $order->status,
                 'add_ons' => json_decode($order->add_ons, true) ?: [],
                 'selections' => $choices,

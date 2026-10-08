@@ -1538,7 +1538,7 @@
               <tr class="item">
                 <td style="text-align: left; padding: 12px 10px;">
                   <strong style="font-size: 1rem; color: #222;">${escapeHtml(order.tiffin)}</strong> (Qty: <strong>${order.quantity || 1}</strong>)<br>
-                  <span style="font-size: 0.75rem; color: #777;">Daily Subscription Plan Meal</span>
+                  <span style="font-size: 0.75rem; color: #777;">Daily Subscription Plan Meal (${order.order_type === 'pickup' ? 'Store Pickup' : 'Home Delivery'})</span>
                   ${customItemsHtml}
                 </td>
                 <td style="text-align: right; padding: 12px 10px; font-weight: 600;">
@@ -1651,7 +1651,7 @@
           <tr class="item ${index === weekOrders.length - 1 ? 'last' : ''}">
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: middle;">
               <strong style="color: #333;">Order #${escapeHtml(order.id)}</strong> <span style="font-size: 0.8rem; color: #888; margin-left: 8px;">(${escapeHtml(formatDateDMY(order.date))})</span>
-              <div style="font-size: 0.85rem; color: #555; margin-top: 4px;"><strong>Tiffin:</strong> ${escapeHtml(order.tiffin)} (Qty: <strong>${order.quantity || 1}</strong>)</div>
+              <div style="font-size: 0.85rem; color: #555; margin-top: 4px;"><strong>Tiffin:</strong> ${escapeHtml(order.tiffin)} (Qty: <strong>${order.quantity || 1}</strong>) - <span style="color: ${order.order_type === 'pickup' ? '#e67e22' : '#3498DB'}; font-weight: 600;">${order.order_type === 'pickup' ? '🛍️ Store Pickup' : '🚚 Home Delivery'}</span></div>
               ${customItemsHtml}
               ${addonsListHtml}
               ${deliveryFeeHtml}
@@ -2697,6 +2697,12 @@
                   <h4 style="margin: 0 0 16px 0; color: var(--primary-color); font-size: 1.05rem; font-weight: 600; border-bottom: 1px solid var(--panel-border); padding-bottom: 10px;">📋 Order Metadata</h4>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Order ID: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.id)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Date Placed: <strong style="color: var(--text-primary);">${escapeHtml(formatDateDMY(order.date))}</strong></p>
+                  <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">
+                    Fulfillment Type: 
+                    <strong style="color: ${order.order_type === 'pickup' ? '#e67e22' : '#3498DB'};">
+                      ${order.order_type === 'pickup' ? '🛍️ Pickup (Self Collection)' : '🚚 Delivery (To Be Delivered)'}
+                    </strong>
+                  </p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Total Amount: <strong style="color: #2ECC71; font-size: 1.15rem;">$${Number(order.amount).toFixed(2)}</strong></p>
                   ${Number(order.delivery_fee) > 0 ? `
                     <p style="margin: -4px 0 8px 0; font-size: 0.82rem; color: #e67e22; line-height: 1.4; font-weight: 500;">
