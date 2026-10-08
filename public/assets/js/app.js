@@ -527,20 +527,39 @@
     const tiffinFields = tiffin => {
         const addonIds = getTiffinAddonIds(tiffin);
 
+        const isTodaysSpecialCategory = catName => {
+            const lc = String(catName || '').toLowerCase();
+            return lc.includes('special');
+        };
+        const isExtraFallbackCategory = catName => {
+            const lc = String(catName || '').toLowerCase();
+            return lc.includes('extra');
+        };
+
+        const activeItems = items.filter(item => (item.status || 'Active') === 'Active');
+        const specialCatIds = categories.filter(c => isTodaysSpecialCategory(c.name)).map(c => Number(c.id));
+        let specialItems = activeItems.filter(i => specialCatIds.includes(Number(i.category_id)));
+        if (specialItems.length === 0) {
+            const fallbackCatIds = categories.filter(c => isExtraFallbackCategory(c.name)).map(c => Number(c.id));
+            specialItems = activeItems.filter(i => fallbackCatIds.includes(Number(i.category_id)));
+        }
+
+        const hasSavedSpecial = specialItems.some(i => addonIds.includes(Number(i.id)));
+
         const renderCheckboxGroup = (itemsToRender) => {
             if (itemsToRender.length === 0) {
-                return `<div style="opacity:0.6; font-size:0.8rem; padding: 4px 0; color: var(--text-secondary);">None</div>`;
+                return `<div style="opacity:0.6; font-size:0.8rem; padding: 4px 0; color: var(--text-secondary);">No Today&#39;s Special items found. Add an item under the &quot;Today&#39;s Special&quot; category in Menu Items.</div>`;
             }
             const grouped = {};
             categories.forEach(cat => {
-                grouped[cat.name] = itemsToRender.filter(i => i.category_id === cat.id);
+                grouped[cat.name] = itemsToRender.filter(i => Number(i.category_id) === Number(cat.id));
             });
 
             return Object.entries(grouped)
                 .map(([catName, catItems]) => {
                     if (catItems.length === 0) return '';
                     const checkboxes = catItems.map(item => {
-                        const isChecked = addonIds.includes(item.id) ? 'checked' : '';
+                        const isChecked = (hasSavedSpecial ? addonIds.includes(Number(item.id)) : true) ? 'checked' : '';
                         return `
               <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; margin-bottom: 6px;">
                 <input type="checkbox" name="tiffin_addons[]" value="${item.id}" data-price="${item.price}" ${isChecked} style="width: auto; margin: 0;">
@@ -560,7 +579,7 @@
                 }).filter(Boolean).join('');
         };
 
-        const addOnHtml = renderCheckboxGroup(items.filter(item => item.status === 'Active'));
+        const addOnHtml = renderCheckboxGroup(specialItems);
         const catOptions = categories.map(c => `<option value="${c.id}" ${c.id === tiffin?.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
 
         return `
@@ -615,7 +634,7 @@
         </datalist>
       </div>
       <div class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 6px; display: block;">Extra Add-Ons (Increases Plan Price)</span>
+        <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 6px; display: block;">Extra Add-Ons (Today&#39;s Special Only)</span>
         <div class="tiffin-items-checkboxes-container" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 16px; max-height: 180px; overflow-y: auto;">
           ${addOnHtml}
         </div>

@@ -155,6 +155,24 @@
             </div>
           @endif
 
+          @if (!$tiffin->is_customizable)
+            @php
+              $addonModels = $tiffin->resolvedAddonItems();
+            @endphp
+            <div style="font-size: 0.75rem; font-weight:600; color: var(--primary-color); margin: 4px 0 4px 0;">
+              Add-Ons (Today's Special):
+            </div>
+            <div class="kp_kitchen_admin_panel_tiffin_item_chips" style="margin-bottom: 12px; display:flex; flex-wrap:wrap; gap:6px;">
+              @forelse ($addonModels as $addonItem)
+                <span class="kp_kitchen_admin_panel_tiffin_item_chip" style="border: 1px solid rgba(46, 204, 113, 0.45); background: rgba(46, 204, 113, 0.08);">
+                  {{ $addonItem->name }} <small style="opacity:0.8;">(+${{ number_format($addonItem->price, 2) }})</small>
+                </span>
+              @empty
+                <span style="opacity:0.5; font-size:0.75rem;">None</span>
+              @endforelse
+            </div>
+          @endif
+
           <div class="kp_kitchen_admin_panel_tiffin_footer">
             <strong class="kp_kitchen_admin_panel_tiffin_price">
               @if ($tiffin->is_customizable)

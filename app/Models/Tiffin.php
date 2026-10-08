@@ -268,6 +268,182 @@ class Tiffin extends Model
     }
 
     /* -----------------------------------------------------------------
+     |  "Today's Special" Add-Ons Resolution
+     | ----------------------------------------------------------------- */
+
+    /**
+     * Identify category IDs that represent "Today's Special" add-ons.
+     * Prioritizes categories containing "special" (e.g. "Today's Special").
+     * Falls back to categories containing "extra" (e.g. "Extrazzz") if no
+     * "special" category exists yet.
+     */
+    public static function todaysSpecialCategoryIds(): array
+    {
+        try {
+            $categories = Category::all();
+            $specialCatIds = $categories->filter(function ($cat) {
+                $name = strtolower(trim(str_replace(['’', '`'], "'", (string) $cat->name)));
+                return str_contains($name, 'special');
+            })->pluck('id')->map(fn ($id) => (int) $id)->values()->toArray();
+
+            if (!empty($specialCatIds)) {
+                $hasActiveSpecialItems = Item::whereIn('category_id', $specialCatIds)
+                    ->where('status', 'Active')
+                    ->exists();
+                if ($hasActiveSpecialItems) {
+                    return $specialCatIds;
+                }
+            }
+
+            $extraCatIds = $categories->filter(function ($cat) {
+                $name = strtolower(trim((string) $cat->name));
+                return str_contains($name, 'extra');
+            })->pluck('id')->map(fn ($id) => (int) $id)->values()->toArray();
+
+            return array_values(array_unique(array_merge($specialCatIds, $extraCatIds)));
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Retrieve all active "Today's Special" catalog items that are eligible
+     * to be displayed as add-ons in tiffin plans.
+     */
+    public static function todaysSpecialItems(): \Illuminate\Support\Collection
+    {
+        $itemsById = collect();
+
+        try {
+            $catIds = static::todaysSpecialCategoryIds();
+            if (!empty($catIds)) {
+                $catItems = Item::with('category')
+                    ->whereIn('category_id', $catIds)
+                    ->where('status', 'Active')
+                    ->get();
+                foreach ($catItems as $item) {
+                    $itemsById->put((int) $item->id, $item);
+                }
+            }
+
+            // Also check if any active Tiffin plan is named "Today's Special"
+            // (e.g. when the admin created a "Today's Special" entry under Tiffins)
+            // and include its linked catalog items.
+            $specialTiffins = static::where('status', 'Active')
+                ->whereRaw('LOWER(name) LIKE ?', ['%special%'])
+                ->get();
+
+            foreach ($specialTiffins as $spTiffin) {
+                foreach ($spTiffin->components as $comp) {
+                    foreach (($comp['options'] ?? []) as $opt) {
+                        $matchedItem = null;
+                        if (!empty($opt['item_id'])) {
+                            $matchedItem = Item::with('category')->where('status', 'Active')->find((int) $opt['item_id']);
+                        }
+                        if (!$matchedItem && !empty($opt['name'])) {
+                            $matchedItem = Item::with('category')
+                                ->where('status', 'Active')
+                                ->whereRaw('LOWER(name) = ?', [mb_strtolower(trim($opt['name']))])
+                                ->first();
+                        }
+                        if ($matchedItem) {
+                            $itemsById->put((int) $matchedItem->id, $matchedItem);
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Safe fallback
+        }
+
+        return $itemsById->values();
+    }
+
+    /**
+     * Resolve the add-on Item models for this tiffin plan.
+     * Strictly restricts add-ons to "Today's Special" items only (excluding
+     * Bread, Subzi, Rice, Salads, Refreshments, etc.), and automatically
+     * populates active "Today's Special" items if none are explicitly linked.
+     */
+    public function resolvedAddonItems(): \Illuminate\Support\Collection
+    {
+        if ($this->is_customizable) {
+            return collect();
+        }
+
+        $specialItems = static::todaysSpecialItems()->keyBy(fn ($i) => (int) $i->id);
+        if ($specialItems->isEmpty()) {
+            return collect();
+        }
+
+        $itemsData = $this->items;
+        $savedAddonIds = (is_array($itemsData) && isset($itemsData['addons']) && is_array($itemsData['addons']))
+            ? array_map('intval', $itemsData['addons'])
+            : [];
+
+        $filtered = collect();
+        foreach ($savedAddonIds as $addonId) {
+            if ($specialItems->has($addonId)) {
+                $filtered->put($addonId, $specialItems->get($addonId));
+            }
+        }
+
+        // If the tiffin plan has no Today's Special add-ons saved (or only had old
+        // non-special items), automatically return all active Today's Special items.
+        if ($filtered->isEmpty()) {
+            return $specialItems->values();
+        }
+
+        return $filtered->values();
+    }
+
+    /**
+     * Synchronize all fixed tiffin plans so their stored `items.addons` array
+     * contains ONLY active "Today's Special" item IDs.
+     */
+    public static function syncTodaysSpecialAddons(): void
+    {
+        try {
+            $specialIds = static::todaysSpecialItems()
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->toArray();
+
+            $tiffins = static::all();
+            foreach ($tiffins as $tiffin) {
+                if ($tiffin->is_customizable) {
+                    continue;
+                }
+                $itemsData = is_array($tiffin->items) ? $tiffin->items : [];
+                $existingAddons = isset($itemsData['addons']) && is_array($itemsData['addons'])
+                    ? array_map('intval', $itemsData['addons'])
+                    : [];
+
+                // Keep only valid Today's Special IDs, or default to all Today's Special IDs
+                $validAddons = array_values(array_intersect($existingAddons, $specialIds));
+                if (empty($validAddons)) {
+                    $validAddons = $specialIds;
+                } else {
+                    // Also include any newly added Today's Special items
+                    $validAddons = array_values(array_unique(array_merge($validAddons, $specialIds)));
+                }
+
+                if (($itemsData['addons'] ?? null) !== $validAddons) {
+                    $itemsData['addons'] = $validAddons;
+                    if (!isset($itemsData['basic'])) {
+                        $itemsData['basic'] = [];
+                    }
+                    $tiffin->items = $itemsData;
+                    $tiffin->save();
+                }
+            }
+        } catch (\Throwable $e) {
+            // Ignore errors if table/columns are migrating
+        }
+    }
+
+    /* -----------------------------------------------------------------
      |  Customizable ("Build Your Own") tiffin
      | ----------------------------------------------------------------- */
 
@@ -305,14 +481,8 @@ class Tiffin extends Model
                     }
                 }
 
-                $addons = (is_array($tiffin->items) && is_array($tiffin->items['addons'] ?? null))
-                    ? $tiffin->items['addons']
-                    : [];
-                foreach ($addons as $addonId) {
-                    $item = Item::with('category')->find($addonId);
-                    if ($item) {
-                        static::pushPoolEntry($pool, $item->id, $item->name, $item->price);
-                    }
+                foreach ($tiffin->resolvedAddonItems() as $addonItem) {
+                    static::pushPoolEntry($pool, $addonItem->id, $addonItem->name, $addonItem->price);
                 }
             } catch (\Throwable $e) {
                 // Skip problematic tiffin entries

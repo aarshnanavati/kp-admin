@@ -1282,6 +1282,7 @@ class AuthController extends Controller
             'tiffin_id' => 'required|exists:tiffins,id',
             'add_ons' => 'nullable',
             'adons' => 'nullable',
+            'addons' => 'nullable',
             'note' => 'nullable|string',
             'quantity' => 'nullable|integer|min:1',
             'selections' => 'nullable',
@@ -1309,6 +1310,7 @@ class AuthController extends Controller
                 ?? $request->input('selections')
                 ?? $request->input('add_ons')
                 ?? $request->input('adons')
+                ?? $request->input('addons')
                 ?? [];
             $resolved = $tiffin->resolveCustomItems($picked);
             if (!empty($resolved['errors'])) {
@@ -1345,49 +1347,83 @@ class AuthController extends Controller
         $unitPrice = $customUnitPrice ?? ((float)$tiffin->price + $selectionDelta);
         $amount = ($unitPrice * $quantity);
 
-        // Extract addon IDs from array or grouped object (e.g. adons: { salad: [...], roti: [...] })
-        $rawAddons = $request->input('add_ons') ?? $request->input('adons');
+        // Extract add-ons from array, single object, JSON string, or grouped object (e.g. adons: { "today's special": [...] })
+        $rawAddons = $request->input('add_ons') ?? $request->input('adons') ?? $request->input('addons');
         if ($tiffin->is_customizable && !$hasExplicitCustomItems) {
             $rawAddons = [];
         }
-        $extractedAddonIds = [];
+        if (is_string($rawAddons) && trim($rawAddons) !== '') {
+            $decodedAddons = json_decode($rawAddons, true);
+            if (is_array($decodedAddons)) {
+                $rawAddons = $decodedAddons;
+            }
+        }
 
-        if (is_array($rawAddons)) {
-            $isAssoc = array_keys($rawAddons) !== range(0, count($rawAddons) - 1);
-            if ($isAssoc) {
-                foreach ($rawAddons as $groupKey => $groupItems) {
-                    if (is_array($groupItems)) {
-                        foreach ($groupItems as $itemEntry) {
-                            if (is_array($itemEntry) && isset($itemEntry['id'])) {
-                                $extractedAddonIds[] = (int)$itemEntry['id'];
-                            } elseif (is_numeric($itemEntry)) {
-                                $extractedAddonIds[] = (int)$itemEntry;
+        $extractedAddons = [];
+        $pushAddonEntry = function ($entry) use (&$extractedAddons) {
+            if (is_numeric($entry)) {
+                $extractedAddons[] = ['id' => (int) $entry, 'name' => null, 'qty' => 1];
+            } elseif (is_string($entry) && trim($entry) !== '') {
+                $extractedAddons[] = ['id' => null, 'name' => trim($entry), 'qty' => 1];
+            } elseif (is_array($entry)) {
+                $id = $entry['id'] ?? $entry['item_id'] ?? null;
+                $name = isset($entry['name']) ? trim((string) $entry['name']) : null;
+                $qty = max(1, (int) ($entry['qty'] ?? $entry['quantity'] ?? 1));
+                if ($id !== null || $name) {
+                    $extractedAddons[] = [
+                        'id' => is_numeric($id) ? (int) $id : null,
+                        'name' => $name ?: null,
+                        'qty' => $qty,
+                    ];
+                }
+            }
+        };
+
+        if (is_array($rawAddons) && !empty($rawAddons)) {
+            if (isset($rawAddons['id']) || isset($rawAddons['item_id']) || isset($rawAddons['name'])) {
+                $pushAddonEntry($rawAddons);
+            } else {
+                $isAssoc = array_keys($rawAddons) !== range(0, count($rawAddons) - 1);
+                if ($isAssoc) {
+                    foreach ($rawAddons as $groupKey => $groupItems) {
+                        if (is_array($groupItems)) {
+                            if (isset($groupItems['id']) || isset($groupItems['item_id']) || isset($groupItems['name'])) {
+                                $pushAddonEntry($groupItems);
+                            } else {
+                                foreach ($groupItems as $itemEntry) {
+                                    $pushAddonEntry($itemEntry);
+                                }
                             }
+                        } else {
+                            $pushAddonEntry($groupItems);
                         }
                     }
-                }
-            } else {
-                foreach ($rawAddons as $itemEntry) {
-                    if (is_array($itemEntry) && isset($itemEntry['id'])) {
-                        $extractedAddonIds[] = (int)$itemEntry['id'];
-                    } elseif (is_numeric($itemEntry)) {
-                        $extractedAddonIds[] = (int)$itemEntry;
+                } else {
+                    foreach ($rawAddons as $itemEntry) {
+                        $pushAddonEntry($itemEntry);
                     }
                 }
             }
         }
 
         $addonsData = [];
-        if (!empty($extractedAddonIds)) {
-            foreach ($extractedAddonIds as $addonId) {
-                $item = \App\Models\Item::find($addonId);
+        if (!empty($extractedAddons)) {
+            foreach ($extractedAddons as $addonSpec) {
+                $item = null;
+                if (!empty($addonSpec['id'])) {
+                    $item = \App\Models\Item::find($addonSpec['id']);
+                }
+                if (!$item && !empty($addonSpec['name'])) {
+                    $item = \App\Models\Item::whereRaw('LOWER(name) = ?', [mb_strtolower($addonSpec['name'])])->first();
+                }
                 if ($item) {
-                    $amount += (float)$item->price;
+                    $addonQty = max(1, (int) ($addonSpec['qty'] ?? 1));
+                    $amount += ((float) $item->price * $addonQty);
                     $addonsData[] = [
                         'id' => $item->id,
                         'name' => $item->name,
                         'price' => $item->price,
-                        'qty' => 1
+                        'qty' => $addonQty,
                     ];
                 }
             }

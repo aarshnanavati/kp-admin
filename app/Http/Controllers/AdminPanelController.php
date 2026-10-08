@@ -96,6 +96,8 @@ class AdminPanelController extends Controller
 
     public function tiffins(Request $request)
     {
+        Tiffin::syncTodaysSpecialAddons();
+
         $search = $request->query('search');
         $tab = $request->query('tab', 'fixed');
 
@@ -1139,6 +1141,8 @@ class AdminPanelController extends Controller
                 : 'Item created successfully.';
         }
 
+        Tiffin::syncTodaysSpecialAddons();
+
         return redirect()->back()->with('success', $msg);
     }
 
@@ -1146,6 +1150,7 @@ class AdminPanelController extends Controller
     {
         $item = Item::findOrFail($id);
         $item->delete();
+        Tiffin::syncTodaysSpecialAddons();
         return redirect()->back()->with('success', 'Item deleted successfully.');
     }
 
@@ -1179,6 +1184,13 @@ class AdminPanelController extends Controller
                 'basic' => array_values(array_filter(array_map('strval', $basicMenuItems))),
                 'addons' => array_values(array_map('intval', $tiffinAddons)),
             ];
+        }
+
+        // Restrict add-ons strictly to Today's Special items only.
+        $specialIds = Tiffin::todaysSpecialItems()->pluck('id')->map(fn ($i) => (int) $i)->values()->toArray();
+        $items['addons'] = array_values(array_intersect($items['addons'], $specialIds));
+        if (empty($items['addons']) && !filter_var($request->input('is_customizable'), FILTER_VALIDATE_BOOLEAN)) {
+            $items['addons'] = $specialIds;
         }
 
         // Choice "slot" components (fixed items + "Or" alternatives).
@@ -2099,6 +2111,8 @@ class AdminPanelController extends Controller
                 ];
             })->sortByDesc('created_at')->values();
 
+        Tiffin::syncTodaysSpecialAddons();
+
         return response()->json([
             'drivers' => Driver::all(),
             'tiffins' => Tiffin::with('category')->get(),
@@ -2122,6 +2136,8 @@ class AdminPanelController extends Controller
 
     public function getTiffins(Request $request = null)
     {
+        Tiffin::syncTodaysSpecialAddons();
+
         $type = $request ? $request->query('type', 'fixed') : 'fixed';
 
         $query = Tiffin::with('category');
@@ -2161,14 +2177,6 @@ class AdminPanelController extends Controller
                             $resolvedItems[] = $b;
                         }
                     }
-
-                    $addons = $itemsData['addons'] ?? [];
-                    foreach ($addons as $addonId) {
-                        $item = \App\Models\Item::find($addonId);
-                        if ($item) {
-                            $resolvedItems[] = $item->name;
-                        }
-                    }
                 } else {
                     foreach ($itemsData as $itemId) {
                         $item = \App\Models\Item::find($itemId);
@@ -2189,12 +2197,6 @@ class AdminPanelController extends Controller
                         ? ($names[0] ?? '')
                         : implode(' / ', $names);
                 }
-                foreach (($itemsData['addons'] ?? []) as $addonId) {
-                    $addonItem = \App\Models\Item::find($addonId);
-                    if ($addonItem) {
-                        $resolvedItems[] = $addonItem->name;
-                    }
-                }
                 $resolvedItems = array_values(array_filter($resolvedItems));
             }
 
@@ -2211,35 +2213,32 @@ class AdminPanelController extends Controller
                 }
             }
 
-            // Resolve and group addons into "adons" key
+            // Resolve ONLY "Today's Special" add-ons for fixed tiffin plans.
             $adons = [];
-            if (is_array($itemsData) && isset($itemsData['addons'])) {
-                $addonsIds = $itemsData['addons'];
-                foreach ($addonsIds as $addonId) {
-                    $item = \App\Models\Item::with('category')->find($addonId);
-                    if ($item) {
-                        $catName = $item->category ? $item->category->name : 'other';
-                        $groupKey = strtolower($catName);
-                        if ($groupKey === 'bread') {
-                            $groupKey = 'roti';
-                        } elseif ($groupKey === 'desserts') {
-                            $groupKey = 'sweet';
-                        } elseif ($groupKey === 'salads') {
-                            $groupKey = 'salad';
-                        }
+            $flatAddons = [];
+            $addonModels = $tiffin->resolvedAddonItems();
 
-                        $itemArray = $item->toArray();
-                        if ($item->image) {
-                            if (!str_starts_with($item->image, 'http://') && !str_starts_with($item->image, 'https://')) {
-                                $itemArray['image'] = asset($item->image);
-                            }
-                        }
-
-                        $adons[$groupKey][] = $itemArray;
+            foreach ($addonModels as $item) {
+                $itemArray = $item->toArray();
+                $itemArray['item_id'] = (int) $item->id;
+                $itemArray['price'] = number_format((float) $item->price, 2, '.', '');
+                $itemArray['category_name'] = "Today's Special";
+                if (isset($itemArray['category']) && is_array($itemArray['category'])) {
+                    $itemArray['category']['name'] = "Today's Special";
+                }
+                if ($item->image) {
+                    if (!str_starts_with($item->image, 'http://') && !str_starts_with($item->image, 'https://')) {
+                        $itemArray['image'] = asset($item->image);
                     }
                 }
+
+                $adons["today's special"][] = $itemArray;
+                $flatAddons[] = $itemArray;
             }
-            $tiffinArray['adons'] = (object)$adons;
+
+            $tiffinArray['adons'] = (object) $adons;
+            $tiffinArray['add_ons'] = $flatAddons;
+            $tiffinArray['addons'] = $flatAddons;
 
             // Build-Your-Own (customizable) tiffin: attach today's dynamic item pool.
             $tiffinArray['is_customizable'] = (bool) $tiffin->is_customizable;
@@ -3355,16 +3354,18 @@ class AdminPanelController extends Controller
 
             if ($action === 'create') {
                 $tiffin = Tiffin::create($data);
+                Tiffin::syncTodaysSpecialAddons();
 
-                return response()->json(['success' => true, 'tiffin' => $tiffin]);
+                return response()->json(['success' => true, 'tiffin' => $tiffin->fresh()]);
             } else {
                 $tiffin = Tiffin::findOrFail($request->id);
                 if ($tiffin->image && $tiffin->image !== $imagePath && File::exists(public_path($tiffin->image))) {
                     File::delete(public_path($tiffin->image));
                 }
                 $tiffin->update($data);
+                Tiffin::syncTodaysSpecialAddons();
 
-                return response()->json(['success' => true, 'tiffin' => $tiffin]);
+                return response()->json(['success' => true, 'tiffin' => $tiffin->fresh()]);
             }
         }
 
@@ -3808,6 +3809,7 @@ class AdminPanelController extends Controller
 
             if ($action === 'create') {
                 $item = Item::create($data);
+                Tiffin::syncTodaysSpecialAddons();
 
                 return response()->json(['success' => true, 'item' => $item]);
             } else {
@@ -3816,6 +3818,7 @@ class AdminPanelController extends Controller
                     File::delete(public_path($item->image));
                 }
                 $item->update($data);
+                Tiffin::syncTodaysSpecialAddons();
 
                 return response()->json(['success' => true, 'item' => $item]);
             }
@@ -3827,6 +3830,7 @@ class AdminPanelController extends Controller
                 File::delete(public_path($item->image));
             }
             $item->delete();
+            Tiffin::syncTodaysSpecialAddons();
 
             return response()->json(['success' => true]);
         }
