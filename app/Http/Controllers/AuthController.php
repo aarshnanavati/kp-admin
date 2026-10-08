@@ -1068,6 +1068,9 @@ class AuthController extends Controller
                     'quantity' => $order->quantity,
                     'amount' => $order->amount,
                     'total_amount' => (string)$order->amount,
+                    'delivery_fee' => (float) ($order->delivery_fee ?? 0.00),
+                    'subtotal' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
+                    'order_value' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
                     'delivery_date' => $order->date,
                     'date' => $order->date,
                     'status' => $orderStatus,
@@ -1438,6 +1441,11 @@ class AuthController extends Controller
         $orderPincode = $orderAddressInfo['pincode'] ?: $customer->pincode;
         $orderFormattedAddress = $orderAddressInfo['address'] ?: $customer->address;
 
+        $foodAmount = round((float) $amount, 2);
+        // Delivery fee rule: $5.00 delivery fee if order value is less than $12.00
+        $deliveryFee = ($foodAmount > 0 && $foodAmount < 12.00) ? 5.00 : 0.00;
+        $totalAmount = round($foodAmount + $deliveryFee, 2);
+
         $order = \App\Models\Order::create([
             'id' => $orderId,
             'customer_id' => $customer->id,
@@ -1450,7 +1458,8 @@ class AuthController extends Controller
             'tiffin' => $tiffin->name,
             'quantity' => $quantity,
             'area' => $orderPincode,
-            'amount' => $amount,
+            'amount' => $totalAmount,
+            'delivery_fee' => $deliveryFee,
             'status' => 'Pending',
             'date' => $request->filled('date') ? $request->input('date') : ($request->filled('delivery_date') ? $request->input('delivery_date') : TimezoneHelper::getAdelaideNow()->toDateString()),
             'add_ons' => json_encode($addonsData),
@@ -1507,10 +1516,11 @@ class AuthController extends Controller
         $choicesLine = ($selectionsData && !empty($selectionsData['summary']))
             ? " Choices: {$selectionsData['summary']}."
             : '';
+        $feeNote = $deliveryFee > 0 ? " (includes AUD 5.00 delivery fee for order under AUD 12.00)" : "";
 
         \App\Models\Notification::create([
             'title' => 'New Order Placed',
-            'message' => "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}).{$choicesLine} Weekly bill {$invoice->id} updated (Total AUD " . number_format($totalWeeklyAmount, 2) . ").",
+            'message' => "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}{$feeNote}).{$choicesLine} Weekly bill {$invoice->id} updated (Total AUD " . number_format($totalWeeklyAmount, 2) . ").",
             'user_type' => 'admin',
             'user_id' => null,
             'read_status' => false
@@ -1518,13 +1528,13 @@ class AuthController extends Controller
 
         FcmService::sendToAdmin(
             'New Order Placed',
-            "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}).{$choicesLine}",
+            "Customer {$customer->name} placed order {$order->id} (AUD {$order->amount}{$feeNote}).{$choicesLine}",
             ['order_id' => $order->id, 'type' => 'new_order']
         );
 
         \App\Models\Notification::create([
             'title' => 'Order Placed Successfully',
-            'message' => "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}) has been placed successfully. Weekly bill total: AUD " . number_format($totalWeeklyAmount, 2) . ".",
+            'message' => "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}{$feeNote}) has been placed successfully. Weekly bill total: AUD " . number_format($totalWeeklyAmount, 2) . ".",
             'user_type' => 'customer',
             'user_id' => $customer->id,
             'read_status' => false
@@ -1533,7 +1543,7 @@ class AuthController extends Controller
         FcmService::sendToCustomer(
             $customer->id,
             'Order Placed Successfully',
-            "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}) has been placed successfully.",
+            "Your order {$order->id} for {$order->tiffin} (AUD {$order->amount}{$feeNote}) has been placed successfully.",
             ['order_id' => $order->id, 'type' => 'order_placed']
         );
 
@@ -1541,6 +1551,10 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Order placed successfully. Weekly bill updated.',
             'order' => $order,
+            'subtotal' => $foodAmount,
+            'delivery_fee' => $deliveryFee,
+            'delivery_fee_threshold' => 12.00,
+            'total' => $totalAmount,
             'invoice' => $invoice,
             'weekly_bill' => $invoice,
             'total_weekly_amount' => $totalWeeklyAmount,
@@ -2095,6 +2109,8 @@ class AuthController extends Controller
                     'tiffin' => $ord->tiffin,
                     'quantity' => $ord->quantity ?: 1,
                     'amount' => (float) $ord->amount,
+                    'delivery_fee' => (float) ($ord->delivery_fee ?? 0.00),
+                    'subtotal' => round((float) $ord->amount - (float) ($ord->delivery_fee ?? 0.00), 2),
                     'status' => $ord->status,
                     'add_ons' => $ord->add_ons,
                     'selections' => $ord->selections,
@@ -2214,6 +2230,8 @@ class AuthController extends Controller
                     'tiffin' => $ord->tiffin,
                     'quantity' => $ord->quantity ?: 1,
                     'amount' => (float) $ord->amount,
+                    'delivery_fee' => (float) ($ord->delivery_fee ?? 0.00),
+                    'subtotal' => round((float) $ord->amount - (float) ($ord->delivery_fee ?? 0.00), 2),
                     'status' => $ord->status,
                     'add_ons' => $ord->add_ons,
                     'selections' => $ord->selections,
@@ -3101,11 +3119,20 @@ class AuthController extends Controller
             ];
         });
 
+        $subtotal = round((float) $cartItems->sum('line_total'), 2);
+        // Delivery fee rule: $5.00 delivery fee if order value is less than $12.00
+        $deliveryFee = ($subtotal > 0 && $subtotal < 12.00) ? 5.00 : 0.00;
+        $total = round($subtotal + $deliveryFee, 2);
+
         $cutoffDetails = TimezoneHelper::getOrderingCutoffDetails();
 
         return response()->json([
             'success' => true,
             'cart' => $cartItems,
+            'subtotal' => $subtotal,
+            'delivery_fee' => $deliveryFee,
+            'delivery_fee_threshold' => 12.00,
+            'total' => $total,
             'ordering_status' => $cutoffDetails,
             'is_cutoff' => $cutoffDetails['is_cutoff'],
             'can_order' => $cutoffDetails['can_order'],
@@ -3409,6 +3436,8 @@ class AuthController extends Controller
                     'quantity' => $order->quantity,
                     'amount' => $order->amount,
                     'total_amount' => (string)$order->amount,
+                    'delivery_fee' => (float) ($order->delivery_fee ?? 0.00),
+                    'subtotal' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
                     'status' => $cleanStatus,
                     'display_status' => $order->status,
                     'area' => $order->area,
@@ -3487,6 +3516,8 @@ class AuthController extends Controller
             'quantity' => $order->quantity,
             'amount' => $order->amount,
             'total_amount' => (string)$order->amount,
+            'delivery_fee' => (float) ($order->delivery_fee ?? 0.00),
+            'subtotal' => round((float) $order->amount - (float) ($order->delivery_fee ?? 0.00), 2),
             'status' => $cleanStatus,
             'display_status' => $order->status,
             'area' => $order->area,

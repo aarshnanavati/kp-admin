@@ -27,6 +27,7 @@ class Order extends Model
         'driver_id',
         'driver',
         'amount',
+        'delivery_fee',
         'status',
         'date',
         'add_ons',
@@ -39,6 +40,7 @@ class Order extends Model
 
     protected $casts = [
         'selections' => 'array',
+        'delivery_fee' => 'float',
     ];
 
     protected $appends = [
@@ -46,7 +48,24 @@ class Order extends Model
         'bill_id',
         'week_id',
         'week_range',
+        'subtotal',
+        'order_value',
     ];
+
+    public function getDeliveryFeeAttribute($value)
+    {
+        return (float) ($value ?? 0.00);
+    }
+
+    public function getSubtotalAttribute()
+    {
+        return round((float) $this->amount - (float) ($this->delivery_fee ?? 0.00), 2);
+    }
+
+    public function getOrderValueAttribute()
+    {
+        return $this->subtotal;
+    }
 
     public function getWeeklyBillIdAttribute()
     {

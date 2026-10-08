@@ -1542,10 +1542,20 @@
                   ${customItemsHtml}
                 </td>
                 <td style="text-align: right; padding: 12px 10px; font-weight: 600;">
-                  $${(Number(order.amount) - (order.raw_addons ? order.raw_addons.reduce((sum, a) => sum + Number(a.price), 0) : 0)).toFixed(2)}
+                  $${(Number(order.amount) - Number(order.delivery_fee || 0) - (order.raw_addons ? order.raw_addons.reduce((sum, a) => sum + Number(a.price), 0) : 0)).toFixed(2)}
                 </td>
               </tr>
               ${addonsHtml}
+              ${Number(order.delivery_fee) > 0 ? `
+              <tr class="item">
+                <td style="text-align: left; padding: 10px; border-bottom: 1px solid #eee; color: #e67e22;">
+                  <strong>Delivery Fee</strong> (Order value under $12.00)
+                </td>
+                <td style="text-align: right; padding: 10px; border-bottom: 1px solid #eee; color: #e67e22; font-weight: 600;">
+                  $${Number(order.delivery_fee).toFixed(2)}
+                </td>
+              </tr>
+              ` : ''}
               <tr class="total">
                 <td></td>
                 <td style="text-align: right;">Total Amount Due: $${Number(order.amount).toFixed(2)}</td>
@@ -1628,6 +1638,15 @@
           `;
                 }
 
+                let deliveryFeeHtml = '';
+                if (Number(order.delivery_fee) > 0) {
+                    deliveryFeeHtml = `
+            <div style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #e67e22; font-size: 0.8rem; color: #e67e22;">
+              <strong>Delivery Fee:</strong> $${Number(order.delivery_fee).toFixed(2)} (Order value &lt; $12.00)
+            </div>
+          `;
+                }
+
                 ordersHtml += `
           <tr class="item ${index === weekOrders.length - 1 ? 'last' : ''}">
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: left; vertical-align: middle;">
@@ -1635,6 +1654,7 @@
               <div style="font-size: 0.85rem; color: #555; margin-top: 4px;"><strong>Tiffin:</strong> ${escapeHtml(order.tiffin)} (Qty: <strong>${order.quantity || 1}</strong>)</div>
               ${customItemsHtml}
               ${addonsListHtml}
+              ${deliveryFeeHtml}
             </td>
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; vertical-align: middle; font-weight: 600;">
               $${Number(order.amount).toFixed(2)}
@@ -1937,7 +1957,12 @@
                           </td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;"><strong>${escapeHtml(order.quantity || 1)}</strong></td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(order.addons)}</td>
-                          <td class="kp_kitchen_admin_panel_table_cell"><strong>$${Number(order.amount).toFixed(2)}</strong></td>
+                          <td class="kp_kitchen_admin_panel_table_cell">
+                            <strong>$${Number(order.amount).toFixed(2)}</strong>
+                            ${Number(order.delivery_fee) > 0 ? `
+                              <div style="font-size: 0.72rem; color: #e67e22; font-weight: 500;">(+$${Number(order.delivery_fee).toFixed(2)} del.)</div>
+                            ` : ''}
+                          </td>
                           <td class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">
                             <span class="kp_kitchen_admin_panel_status kp_kitchen_admin_panel_status_${(order.status || 'Pending').toLowerCase().replace(/ /g, '_')}">
                               ${escapeHtml(order.status || 'Pending')}
@@ -2673,6 +2698,11 @@
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Order ID: <strong style="color: var(--text-primary); font-size: 1rem;">${escapeHtml(order.id)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Date Placed: <strong style="color: var(--text-primary);">${escapeHtml(formatDateDMY(order.date))}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Total Amount: <strong style="color: #2ECC71; font-size: 1.15rem;">$${Number(order.amount).toFixed(2)}</strong></p>
+                  ${Number(order.delivery_fee) > 0 ? `
+                    <p style="margin: -4px 0 8px 0; font-size: 0.82rem; color: #e67e22; line-height: 1.4; font-weight: 500;">
+                      (Includes $${Number(order.delivery_fee).toFixed(2)} delivery fee for order under $12.00)
+                    </p>
+                  ` : ''}
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">Assigned Driver: <strong style="color: var(--text-primary);">${escapeHtml(order.driver_name)}</strong></p>
                   <p style="margin: 8px 0; font-size: 0.9rem; line-height: 1.5;">
                     Current Status:

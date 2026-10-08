@@ -586,6 +586,11 @@
                                     <strong>
                                         ${{ number_format($order->amount, 2) }}
                                     </strong>
+                                    @if((float)($order->delivery_fee ?? 0) > 0)
+                                        <div style="font-size: 0.72rem; color: #e67e22; font-weight: 500; margin-top: 2px;">
+                                            (incl. ${{ number_format($order->delivery_fee, 2) }} delivery)
+                                        </div>
+                                    @endif
 
                                 </td>
 
