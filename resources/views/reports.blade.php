@@ -20,9 +20,13 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
         Print Kitchen Prep Sheet
       </button>
-      <a id="exportPrepCsvBtn" href="{{ url('/api/reports/export?type=kitchen_prep&filter_type=' . $kitchenPrep['filters']['filter_type'] . '&selected_date=' . $kitchenPrep['filters']['selected_date'] . '&selected_month=' . $kitchenPrep['filters']['selected_month'] . '&selected_week=' . $kitchenPrep['filters']['selected_week']) }}" class="kp_kitchen_admin_panel_primary_button prep-btn-primary">
+      <a id="exportPrepCsvBtn" href="{{ url('/api/reports/export?type=kitchen_prep&filter_type=' . $kitchenPrep['filters']['filter_type'] . '&selected_date=' . $kitchenPrep['filters']['selected_date'] . '&selected_month=' . $kitchenPrep['filters']['selected_month'] . '&selected_week=' . $kitchenPrep['filters']['selected_week'] . '&category=' . ($kitchenPrep['filters']['category'] ?? 'all') . '&search=' . urlencode($kitchenPrep['filters']['search'] ?? '')) }}" class="kp_kitchen_admin_panel_secondary_button prep-btn-secondary">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         Export Prep CSV
+      </a>
+      <a id="exportPrepPdfBtn" href="{{ route('reports.export-pdf', ['type' => 'kitchen_prep', 'filter_type' => $kitchenPrep['filters']['filter_type'], 'selected_date' => $kitchenPrep['filters']['selected_date'], 'selected_month' => $kitchenPrep['filters']['selected_month'], 'selected_week' => $kitchenPrep['filters']['selected_week'], 'category' => $kitchenPrep['filters']['category'] ?? 'all', 'search' => $kitchenPrep['filters']['search'] ?? '']) }}" target="_blank" class="kp_kitchen_admin_panel_primary_button prep-btn-pdf" style="background: linear-gradient(135deg, #e11d48, #be123c); border-color: #be123c; color: #fff;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        Download Prep PDF
       </a>
     </div>
   </div>
@@ -340,6 +344,7 @@
             <th class="prep-th" style="width: 100px;">ID</th>
             <th class="prep-th">Name</th>
             <th class="prep-th">Tiffin Plan</th>
+            <th class="prep-th" style="text-align: center; width: 140px;">Fulfillment</th>
             <th class="prep-th">Optional Item Choosen</th>
             <th class="prep-th">Add-ons</th>
             <th class="prep-th">Note</th>
@@ -349,7 +354,7 @@
         </thead>
         <tbody id="detailedOrdersTableBody">
           @forelse(($kitchenPrep['orders_list'] ?? []) as $oRow)
-            <tr class="prep-order-row" data-search="{{ strtolower($oRow['id'] . ' ' . $oRow['name'] . ' ' . $oRow['tiffin_plan'] . ' ' . $oRow['optional_item_choosen'] . ' ' . $oRow['add_ons'] . ' ' . $oRow['note'] . ' ' . $oRow['address']) }}">
+            <tr class="prep-order-row" data-search="{{ strtolower($oRow['id'] . ' ' . $oRow['name'] . ' ' . $oRow['tiffin_plan'] . ' ' . ($oRow['order_type_label'] ?? '') . ' ' . ($oRow['order_type'] ?? '') . ' ' . $oRow['optional_item_choosen'] . ' ' . $oRow['add_ons'] . ' ' . $oRow['note'] . ' ' . $oRow['address']) }}">
               <!-- 1. ID -->
               <td class="prep-td">
                 <span class="prep-order-id-badge">#{{ $oRow['id'] }}</span>
@@ -365,7 +370,16 @@
                 <span class="prep-plan-pill">{{ $oRow['tiffin_plan'] }}</span>
               </td>
 
-              <!-- 4. Optional Item Choosen -->
+              <!-- 4. Fulfillment: Home Delivery vs Customer Pickup -->
+              <td class="prep-td" style="text-align: center;">
+                @if(($oRow['order_type'] ?? '') === 'pickup')
+                  <span class="prep-fulfillment-pill prep-fulfillment-pickup">🛍️ Customer Pickup</span>
+                @else
+                  <span class="prep-fulfillment-pill prep-fulfillment-delivery">🚚 Home Delivery</span>
+                @endif
+              </td>
+
+              <!-- 5. Optional Item Choosen -->
               <td class="prep-td prep-choices-cell">
                 @if($oRow['optional_item_choosen'] !== '-')
                   <div class="prep-choices-text">{{ $oRow['optional_item_choosen'] }}</div>
@@ -374,7 +388,7 @@
                 @endif
               </td>
 
-              <!-- 5. Add-ons -->
+              <!-- 6. Add-ons -->
               <td class="prep-td prep-addons-cell">
                 @if($oRow['add_ons'] !== '-')
                   <div class="prep-addon-text">{{ $oRow['add_ons'] }}</div>
@@ -383,7 +397,7 @@
                 @endif
               </td>
 
-              <!-- 6. Note -->
+              <!-- 7. Note -->
               <td class="prep-td prep-note-cell">
                 @if($oRow['note'] !== '-')
                   <div class="prep-note-text">📝 {{ $oRow['note'] }}</div>
@@ -392,19 +406,23 @@
                 @endif
               </td>
 
-              <!-- 7. Amount -->
+              <!-- 8. Amount -->
               <td class="prep-td" style="text-align: right; font-weight: 700; color: var(--text-primary, #0F172A);">
                 {{ $oRow['amount_formatted'] }}
               </td>
 
-              <!-- 8. Address -->
+              <!-- 9. Address -->
               <td class="prep-td prep-address-cell">
-                <div class="prep-address-text">{{ $oRow['address'] }}</div>
+                @if(($oRow['order_type'] ?? '') === 'pickup')
+                  <div class="prep-address-text" style="color: #92400E; font-weight: 600;">[Store / Kitchen Pickup]</div>
+                @else
+                  <div class="prep-address-text">{{ $oRow['address'] }}</div>
+                @endif
               </td>
             </tr>
           @empty
             <tr>
-              <td colspan="8" class="prep-empty-cell">
+              <td colspan="9" class="prep-empty-cell">
                 <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="prep-empty-icon"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
                 <p class="prep-empty-title">No orders found for the selected time range.</p>
               </td>
@@ -430,8 +448,17 @@
       </div>
       <div class="kp_kitchen_admin_panel_stat_content" style="flex:1;">
         <span class="kp_kitchen_admin_panel_stat_label">Sales &amp; Orders Log</span>
-        <p class="kp_kitchen_admin_panel_card_subtitle" style="margin: 0.25rem 0 1rem 0;">Download detailed list of orders, plans, and add-ons.</p>
-        <a href="{{ url('/api/reports/export?type=sales') }}" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-block; text-align:center;">Export CSV</a>
+        <p class="kp_kitchen_admin_panel_card_subtitle" style="margin: 0.25rem 0 1rem 0;">Download detailed list of orders, fulfillment method, plans, and add-ons.</p>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <a href="{{ url('/api/reports/export?type=sales') }}" class="kp_kitchen_admin_panel_secondary_button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.4rem; padding: 0.5rem 0.85rem; font-size: 0.85rem;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Export CSV
+          </a>
+          <a href="{{ route('reports.export-pdf', ['type' => 'sales']) }}" target="_blank" class="kp_kitchen_admin_panel_primary_button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.4rem; padding: 0.5rem 0.85rem; font-size: 0.85rem; background: linear-gradient(135deg, #e11d48, #be123c); border-color: #be123c; color: #fff;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            Export PDF
+          </a>
+        </div>
       </div>
     </article>
 
@@ -1062,6 +1089,26 @@
   color: var(--text-primary, #1E293B);
   display: inline-block;
 }
+.prep-fulfillment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+.prep-fulfillment-delivery {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284C7;
+  border: 1px solid rgba(14, 165, 233, 0.25);
+}
+.prep-fulfillment-pickup {
+  background: rgba(245, 158, 11, 0.12);
+  color: #D97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
 .prep-choices-text {
   font-size: 0.84rem;
   color: var(--text-primary, #334155);
@@ -1178,6 +1225,16 @@
 [data-kp-theme="dark"] .prep-address-text {
   color: #94A3B8;
 }
+[data-kp-theme="dark"] .prep-fulfillment-delivery {
+  background: rgba(14, 165, 233, 0.2);
+  color: #38BDF8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+[data-kp-theme="dark"] .prep-fulfillment-pickup {
+  background: rgba(245, 158, 11, 0.2);
+  color: #FBBF24;
+  border-color: rgba(251, 191, 36, 0.3);
+}
 
 /* Print Sheet Styling */
 @media print {
@@ -1187,7 +1244,7 @@
   #reportsPage, #reportsPage * {
     visibility: visible;
   }
-  #sidebar, .kp_kitchen_admin_panel_sidebar, .kp_kitchen_admin_panel_topbar, #kitchenPrepFilterForm, .prep-top-toolbar button, #exportPrepCsvBtn, #categoryFilterTabs, .prep-search-wrap, .kp_kitchen_admin_panel_stats_grid_three, .prep-action-buttons, .prep-pills-row, .prep-checkbox-label {
+  #sidebar, .kp_kitchen_admin_panel_sidebar, .kp_kitchen_admin_panel_topbar, #kitchenPrepFilterForm, .prep-top-toolbar button, #exportPrepCsvBtn, #exportPrepPdfBtn, #categoryFilterTabs, .prep-search-wrap, .kp_kitchen_admin_panel_stats_grid_three, .prep-action-buttons, .prep-pills-row, .prep-checkbox-label {
     display: none !important;
   }
   #reportsPage {
@@ -1223,7 +1280,7 @@
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  .prep-order-id-badge, .prep-plan-pill, .prep-badge {
+  .prep-order-id-badge, .prep-plan-pill, .prep-badge, .prep-fulfillment-pill {
     border: 1px solid #cbd5e1 !important;
     background: #f8fafc !important;
     color: #000 !important;

@@ -39,6 +39,7 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/users', [AdminPanelController::class, 'users'])->name('users');
     Route::get('/reports', [AdminPanelController::class, 'reports'])->name('reports');
     Route::get('/reports/kitchen-prep-data', [AdminPanelController::class, 'getKitchenPrepJson'])->name('reports.kitchen-prep-data');
+    Route::get('/reports/export-pdf', [AdminPanelController::class, 'exportPdf'])->name('reports.export-pdf');
 
     // Operational Web CRUD Routes
     Route::post('/categories/save', [AdminPanelController::class, 'saveCategory'])->name('categories.save');

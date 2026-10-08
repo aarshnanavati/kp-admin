@@ -24,6 +24,7 @@ use App\Helpers\ImageUploadHelper;
 use App\Helpers\TimezoneHelper;
 use App\Mail\CustomerWelcomeMail;
 use App\Mail\DriverWelcomeMail;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class AdminPanelController extends Controller
 {
@@ -938,6 +939,8 @@ class AdminPanelController extends Controller
                 'name' => $custName,
                 'customer_id' => $order->customer_id,
                 'tiffin_plan' => $tiffinPlanName,
+                'order_type' => $order->order_type ?: 'delivery',
+                'order_type_label' => ($order->order_type === 'pickup') ? 'Customer Pickup' : 'Home Delivery',
                 'optional_item_choosen' => $optionalItemChosen,
                 'add_ons' => $addonsStr,
                 'note' => $noteStr,
@@ -3202,7 +3205,7 @@ class AdminPanelController extends Controller
             $file = fopen('php://output', 'w');
 
             if ($type === 'sales') {
-                fputcsv($file, ['Order ID', 'Date', 'Customer', 'Tiffin Plan', 'Choices', 'Area / Postcode', 'Driver', 'Add-ons', 'Amount ($)', 'Status']);
+                fputcsv($file, ['Order ID', 'Date', 'Customer', 'Fulfillment', 'Tiffin Plan', 'Choices', 'Area / Postcode', 'Driver', 'Add-ons', 'Amount ($)', 'Status']);
                 $orders = Order::orderBy('date', 'desc')->get();
                 foreach ($orders as $order) {
                     $addonsStr = '';
@@ -3217,14 +3220,16 @@ class AdminPanelController extends Controller
                     $choicesStr = (is_array($order->selections) && !empty($order->selections['summary']))
                         ? $order->selections['summary']
                         : '';
+                    $fulfillmentStr = ($order->order_type === 'pickup') ? 'Customer Pickup' : 'Home Delivery';
                     fputcsv($file, [
                         $order->id,
                         $order->date,
                         $order->customer,
+                        $fulfillmentStr,
                         $order->tiffin,
                         $choicesStr,
                         $order->area,
-                        $order->driver,
+                        $order->driver ?: ($order->order_type === 'pickup' ? 'N/A (Pickup)' : ''),
                         $addonsStr,
                         $order->amount,
                         $order->status,
@@ -3272,6 +3277,63 @@ class AdminPanelController extends Controller
         };
 
         return response()->stream($callback, 200, $headers);
+    }
+
+    /**
+     * Export Reports as PDF (Kitchen Prep & Food Estimates, Sales & Orders Log)
+     */
+    public function exportPdf(Request $request)
+    {
+        $type = $request->input('type', 'kitchen_prep'); // kitchen_prep, sales
+
+        if ($type === 'kitchen_prep' || $type === 'prep' || $type === 'kitchen') {
+            $kitchenPrep = $this->calculateKitchenPrepReport($request);
+            $fileName = 'Kitchen_Prep_Report_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
+
+            $pdf = Pdf::loadView('pdf.kitchen_prep_pdf', [
+                'kitchenPrep' => $kitchenPrep,
+                'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
+            ])->setPaper('a4', 'landscape');
+
+            if ($request->has('inline') && $request->input('inline') == '1') {
+                return $pdf->stream($fileName);
+            }
+            return $pdf->download($fileName);
+        }
+
+        if ($type === 'sales') {
+            $ordersQuery = Order::orderBy('date', 'desc');
+
+            if ($request->filled('start_date') && $request->filled('end_date')) {
+                $ordersQuery->whereBetween('date', [$request->start_date, $request->end_date]);
+                $filterRange = Carbon::parse($request->start_date)->format('d M Y') . ' to ' . Carbon::parse($request->end_date)->format('d M Y');
+            } elseif ($request->filled('date')) {
+                $ordersQuery->whereDate('date', $request->date);
+                $filterRange = Carbon::parse($request->date)->format('d M Y');
+            } else {
+                $filterRange = 'All Historical Orders';
+            }
+
+            if ($request->filled('status') && $request->status !== 'all') {
+                $ordersQuery->where('status', $request->status);
+            }
+
+            $orders = $ordersQuery->get();
+            $fileName = 'Sales_Orders_Report_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
+
+            $pdf = Pdf::loadView('pdf.sales_report_pdf', [
+                'orders' => $orders,
+                'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
+                'filterRange' => $filterRange,
+            ])->setPaper('a4', 'landscape');
+
+            if ($request->has('inline') && $request->input('inline') == '1') {
+                return $pdf->stream($fileName);
+            }
+            return $pdf->download($fileName);
+        }
+
+        return redirect()->back()->with('error', 'Invalid report type requested.');
     }
 
     /**

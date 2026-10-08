@@ -147,6 +147,7 @@ Route::middleware('api.or.session')->group(function () {
     Route::get('/data', [AdminPanelController::class, 'getData']);
     Route::get('/dashboard-charts', [AdminPanelController::class, 'getDashboardCharts']);
     Route::get('/reports/export', [AdminPanelController::class, 'exportReports']);
+    Route::get('/reports/export-pdf', [AdminPanelController::class, 'exportPdf']);
     Route::get('/reports/kitchen-prep', [AdminPanelController::class, 'getKitchenPrepJson']);
 
     // Drivers API
