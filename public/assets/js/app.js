@@ -634,13 +634,14 @@
         </datalist>
       </div>
       <div class="kp_kitchen_admin_panel_form_group">
-        <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 6px; display: block;">Extra Add-Ons (Today&#39;s Special Only)</span>
+        <span class="kp_kitchen_admin_panel_form_label" style="margin-bottom: 4px; display: block;">Optional Add-Ons (Today&#39;s Special Only)</span>
+        <p style="font-size:0.72rem; opacity:0.75; margin:0 0 8px 0;">Optional for customers &mdash; not compulsory. Customers only pay the extra add-on price if they select it while ordering.</p>
         <div class="tiffin-items-checkboxes-container" style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 16px; max-height: 180px; overflow-y: auto;">
           ${addOnHtml}
         </div>
       </div>
       <div class="tiffin-modal-total-price-bar" style="background: var(--primary-color-light, rgba(255, 107, 107, 0.1)); border: 1px solid var(--primary-color); border-radius: 8px; padding: 12px 16px; margin: 16px 0; display: flex; justify-content: space-between; align-items: center;">
-        <strong style="color: var(--text-primary); font-size: 0.9rem;">Total Plan Price (Base + Options):</strong>
+        <strong style="color: var(--text-primary); font-size: 0.9rem;">Base Plan Price (without Optional Add-Ons):</strong>
         <strong id="tiffinModalTotalPrice" style="font-size: 1.25rem; color: var(--primary-color); font-weight:800;">$0.00</strong>
       </div>
       </div>
@@ -967,11 +968,6 @@
             if (!totalDisplay) return;
             const basePrice = Number(basePriceInput?.value || 0);
             let selectedSum = 0;
-            checkboxes.forEach(cb => {
-                if (cb.checked) {
-                    selectedSum += Number(cb.dataset.price || 0);
-                }
-            });
             if (componentsContainer) {
                 componentsContainer.querySelectorAll('.kp-tiffin-component').forEach(card => {
                     const optRows = [...card.querySelectorAll('.kp-tiffin-opt')];
