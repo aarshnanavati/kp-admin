@@ -17,7 +17,7 @@
       padding: 0;
       background: #ffffff;
     }
-    
+
     /* Header Bar */
     .header-table {
       width: 100%;
@@ -140,7 +140,7 @@
       border-radius: 3px;
       display: inline-block;
     }
-    
+
     /* Fulfillment Badge: Key User Requirement */
     .badge-fulfillment-delivery {
       background-color: #dbeafe;
@@ -197,7 +197,7 @@
     .font-bold {
       font-weight: 700;
     }
-    
+
     .page-break {
       page-break-after: always;
     }
@@ -214,9 +214,38 @@
       border-top: 1px solid #e2e8f0;
       padding-top: 4px;
     }
+    @media print {
+      .no-print {
+        display: none !important;
+      }
+    }
   </style>
 </head>
 <body>
+
+  @if(!empty($isPrintableView))
+    <div class="no-print" style="position: sticky; top: 0; background: #0f172a; color: #ffffff; padding: 10px 16px; margin: -10px -8px 16px -8px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 14px rgba(0,0,0,0.2); z-index: 99999; border-bottom: 2px solid #e11d48; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 13px; font-weight: 700; color: #fff;">📄 KP's Kitchen Report Preview</span>
+        <span style="font-size: 11px; color: #94a3b8;">(Select <strong>Destination: Save as PDF</strong> in print dialog to save)</span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button type="button" onclick="window.print()" style="background: linear-gradient(135deg, #e11d48, #be123c); color: #fff; border: none; padding: 7px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;">
+          🖨️ Save as PDF / Print
+        </button>
+        <button type="button" onclick="window.close()" style="background: #334155; color: #e2e8f0; border: none; padding: 7px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 12px;">
+          Close
+        </button>
+      </div>
+    </div>
+    @if(!empty($autoPrint))
+      <script>
+        window.addEventListener('load', function() {
+          setTimeout(function() { window.print(); }, 350);
+        });
+      </script>
+    @endif
+  @endif
 
   <!-- Header -->
   <table class="header-table">
@@ -258,8 +287,8 @@
           }
         @endphp
         <div class="kpi-value" style="font-size: 9.5pt;">
-          <span style="color: #1e40af;">🚚 Delivery: {{ $deliveryCount }}</span> | 
-          <span style="color: #92400e;">🛍️ Pickup: {{ $pickupCount }}</span>
+          <span style="color: #1e40af;"> Delivery: {{ $deliveryCount }}</span> |
+          <span style="color: #92400e;"> Pickup: {{ $pickupCount }}</span>
         </div>
       </td>
       <td class="kpi-cell">
@@ -368,9 +397,9 @@
           <!-- Fulfillment: Home Delivery vs. Customer Pickup -->
           <td class="text-center">
             @if(($ord['order_type'] ?? '') === 'pickup')
-              <span class="badge-fulfillment-pickup">🛍️ Customer Pickup</span>
+              <span class="badge-fulfillment-pickup"> Customer Pickup</span>
             @else
-              <span class="badge-fulfillment-delivery">🚚 Home Delivery</span>
+              <span class="badge-fulfillment-delivery"> Home Delivery</span>
             @endif
           </td>
 

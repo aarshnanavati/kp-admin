@@ -24,7 +24,6 @@ use App\Helpers\ImageUploadHelper;
 use App\Helpers\TimezoneHelper;
 use App\Mail\CustomerWelcomeMail;
 use App\Mail\DriverWelcomeMail;
-use Barryvdh\DomPDF\Facade\Pdf;
 
 class AdminPanelController extends Controller
 {
@@ -3292,43 +3291,33 @@ class AdminPanelController extends Controller
     }
 
     /**
-     * Export Reports as PDF (Kitchen Prep & Food Estimates, Sales & Orders Log)
+     * Export Reports as PDF (Kitchen Prep & Food Estimates, Detailed Orders, Sales & Orders Log)
      */
     public function exportPdf(Request $request)
     {
-        $type = $request->input('type', 'kitchen_prep'); // kitchen_prep, sales
+        $type = $request->input('type', 'kitchen_prep'); // kitchen_prep, detailed_orders, sales
+
+        $viewName = 'pdf.kitchen_prep_pdf';
+        $viewData = [];
+        $fileName = 'Report_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
 
         if ($type === 'kitchen_prep' || $type === 'prep' || $type === 'kitchen') {
             $kitchenPrep = $this->calculateKitchenPrepReport($request);
             $fileName = 'Kitchen_Prep_Report_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
-
-            $pdf = Pdf::loadView('pdf.kitchen_prep_pdf', [
+            $viewName = 'pdf.kitchen_prep_pdf';
+            $viewData = [
                 'kitchenPrep' => $kitchenPrep,
                 'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
-            ])->setPaper('a4', 'landscape');
-
-            if ($request->has('inline') && $request->input('inline') == '1') {
-                return $pdf->stream($fileName);
-            }
-            return $pdf->download($fileName);
-        }
-
-        if ($type === 'detailed_orders' || $type === 'orders' || $type === 'breakdown') {
+            ];
+        } elseif ($type === 'detailed_orders' || $type === 'orders' || $type === 'breakdown') {
             $kitchenPrep = $this->calculateKitchenPrepReport($request);
             $fileName = 'Detailed_Kitchen_Orders_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
-
-            $pdf = Pdf::loadView('pdf.detailed_orders_pdf', [
+            $viewName = 'pdf.detailed_orders_pdf';
+            $viewData = [
                 'kitchenPrep' => $kitchenPrep,
                 'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
-            ])->setPaper('a4', 'landscape');
-
-            if ($request->has('inline') && $request->input('inline') == '1') {
-                return $pdf->stream($fileName);
-            }
-            return $pdf->download($fileName);
-        }
-
-        if ($type === 'sales') {
+            ];
+        } elseif ($type === 'sales') {
             $ordersQuery = Order::orderBy('date', 'desc');
 
             if ($request->filled('start_date') && $request->filled('end_date')) {
@@ -3347,20 +3336,36 @@ class AdminPanelController extends Controller
 
             $orders = $ordersQuery->get();
             $fileName = 'Sales_Orders_Report_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
-
-            $pdf = Pdf::loadView('pdf.sales_report_pdf', [
+            $viewName = 'pdf.sales_report_pdf';
+            $viewData = [
                 'orders' => $orders,
                 'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
                 'filterRange' => $filterRange,
-            ])->setPaper('a4', 'landscape');
-
-            if ($request->has('inline') && $request->input('inline') == '1') {
-                return $pdf->stream($fileName);
-            }
-            return $pdf->download($fileName);
+            ];
+        } else {
+            return redirect()->back()->with('error', 'Invalid report type requested.');
         }
 
-        return redirect()->back()->with('error', 'Invalid report type requested.');
+        // 1. If Barryvdh\DomPDF is installed and available, generate binary PDF file
+        if (class_exists(\Barryvdh\DomPDF\Facade\Pdf::class)) {
+            try {
+                $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView($viewName, $viewData)->setPaper('a4', 'landscape');
+
+                if ($request->has('inline') && $request->input('inline') == '1') {
+                    return $pdf->stream($fileName);
+                }
+                return $pdf->download($fileName);
+            } catch (\Throwable $e) {
+                \Log::warning('DomPDF generation error, falling back to printable view: ' . $e->getMessage());
+            }
+        }
+
+        // 2. High-reliability fallback: Render the exact printable report view with auto-print & Save as PDF toolbar
+        $viewData['isPrintableView'] = true;
+        $viewData['autoPrint'] = true;
+        $viewData['fileName'] = $fileName;
+
+        return response()->view($viewName, $viewData);
     }
 
     /**
