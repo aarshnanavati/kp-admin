@@ -345,20 +345,65 @@ class AdminPanelController extends Controller
 
     public function reports(Request $request)
     {
-        $kitchenPrep = $this->calculateKitchenPrepReport($request);
-        $trips = Trip::with(['driver', 'order'])->orderBy('created_at', 'desc')->get();
-        $drivers = Driver::all();
-        $customers = Customer::all();
-        return view('reports', compact('kitchenPrep', 'trips', 'drivers', 'customers'));
+        @ini_set('memory_limit', '256M');
+        @set_time_limit(60);
+
+        try {
+            $kitchenPrep = $this->calculateKitchenPrepReport($request);
+        } catch (\Throwable $e) {
+            \Log::error('Kitchen Prep report calculation failed: ' . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            $now = Carbon::now();
+            $kitchenPrep = [
+                'items' => [],
+                'category_cards' => [],
+                'summary' => ['total_orders' => 0, 'total_tiffins' => 0],
+                'orders_list' => [],
+                'month_weeks' => [],
+                'available_months' => [
+                    ['value' => $now->format('Y-m'), 'label' => $now->format('F Y'), 'is_current' => true],
+                ],
+                'categories' => collect(),
+                'filters' => [
+                    'filter_type' => 'today',
+                    'selected_date' => Carbon::today()->toDateString(),
+                    'selected_month' => $now->format('Y-m'),
+                    'selected_week' => 'all',
+                    'start_date' => Carbon::today()->toDateString(),
+                    'end_date' => Carbon::today()->toDateString(),
+                    'date_range_label' => 'Today (' . Carbon::today()->format('d M Y') . ')',
+                    'category' => 'all',
+                    'search' => '',
+                    'status' => 'all',
+                ],
+            ];
+        }
+
+        return view('reports', compact('kitchenPrep'));
     }
 
     public function getKitchenPrepJson(Request $request)
     {
-        $data = $this->calculateKitchenPrepReport($request);
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
+        @ini_set('memory_limit', '256M');
+        @set_time_limit(60);
+
+        try {
+            $data = $this->calculateKitchenPrepReport($request);
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Throwable $e) {
+            \Log::error('getKitchenPrepJson error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to calculate kitchen prep report at this time.',
+            ], 500);
+        }
     }
 
     /**
@@ -366,6 +411,9 @@ class AdminPanelController extends Controller
      */
     public function calculateKitchenPrepReport(Request $request)
     {
+        @ini_set('memory_limit', '256M');
+        @set_time_limit(60);
+
         $filterType = $request->input('filter_type', 'today'); // today, yesterday, this_week, last_week, month, custom, single_date
         $selectedDate = $request->input('selected_date', Carbon::today()->toDateString());
         $selectedMonth = $request->input('selected_month', Carbon::now()->format('Y-m'));
@@ -381,16 +429,21 @@ class AdminPanelController extends Controller
         $queryStartDate = Carbon::today()->toDateString();
         $queryEndDate = Carbon::today()->toDateString();
 
+        // Sanitize and validate selectedMonth
+        if (empty($selectedMonth) || !preg_match('/^\d{4}-\d{2}$/', (string)$selectedMonth)) {
+            $selectedMonth = Carbon::now()->format('Y-m');
+        }
+
         // Month weeks setup
         $monthDt = Carbon::parse($selectedMonth . '-01');
         $startOfMonth = $monthDt->copy()->startOfMonth();
         $endOfMonth = $monthDt->copy()->endOfMonth();
 
-        // Construct 4-5 weeks within the selected month
+        // Construct 4-5 weeks within the selected month (safeguarded against infinite loop)
         $monthWeeks = [];
         $wCursor = $startOfMonth->copy();
         $wIdx = 1;
-        while ($wCursor->lte($endOfMonth)) {
+        while ($wCursor->lte($endOfMonth) && $wIdx <= 6) {
             $wEndCursor = $wCursor->copy()->addDays(6);
             if ($wEndCursor->gt($endOfMonth)) {
                 $wEndCursor = $endOfMonth->copy();
@@ -469,8 +522,8 @@ class AdminPanelController extends Controller
                 break;
         }
 
-        // Fetch Orders for the date range
-        $ordersQuery = Order::whereBetween('date', [$queryStartDate, $queryEndDate]);
+        // Fetch Orders for the date range (eager loading customerRelation to prevent N+1 queries)
+        $ordersQuery = Order::with(['customerRelation'])->whereBetween('date', [$queryStartDate, $queryEndDate]);
         if ($statusFilter !== 'all') {
             $ordersQuery->where('status', $statusFilter);
         } else {
@@ -478,9 +531,10 @@ class AdminPanelController extends Controller
         }
         $orders = $ordersQuery->orderBy('date', 'asc')->get();
 
-        // Also fetch month orders if we are in month view or to populate week comparison
+        // Also fetch month orders lightweight projection for week comparison
         $monthOrders = Order::whereBetween('date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
             ->where('status', '!=', 'Cancelled')
+            ->select('id', 'date', 'quantity')
             ->get();
 
         $dbCategories = Category::orderBy('id', 'asc')->get();
@@ -3295,6 +3349,9 @@ class AdminPanelController extends Controller
      */
     public function exportPdf(Request $request)
     {
+        @ini_set('memory_limit', '512M');
+        @set_time_limit(120);
+
         $type = $request->input('type', 'kitchen_prep'); // kitchen_prep, detailed_orders, sales
 
         $viewName = 'pdf.kitchen_prep_pdf';
@@ -3318,7 +3375,7 @@ class AdminPanelController extends Controller
                 'generatedAt' => Carbon::now()->format('d M Y, h:i A'),
             ];
         } elseif ($type === 'sales') {
-            $ordersQuery = Order::orderBy('date', 'desc');
+            $ordersQuery = Order::with(['customerRelation'])->orderBy('date', 'desc');
 
             if ($request->filled('start_date') && $request->filled('end_date')) {
                 $ordersQuery->whereBetween('date', [$request->start_date, $request->end_date]);
@@ -3327,14 +3384,15 @@ class AdminPanelController extends Controller
                 $ordersQuery->whereDate('date', $request->date);
                 $filterRange = Carbon::parse($request->date)->format('d M Y');
             } else {
-                $filterRange = 'All Historical Orders';
+                $filterRange = 'Recent Orders (Last 30 Days)';
+                $ordersQuery->where('date', '>=', Carbon::now()->subDays(30)->toDateString());
             }
 
             if ($request->filled('status') && $request->status !== 'all') {
                 $ordersQuery->where('status', $request->status);
             }
 
-            $orders = $ordersQuery->get();
+            $orders = $ordersQuery->take(300)->get();
             $fileName = 'Sales_Orders_Report_' . Carbon::now()->format('Y-m-d_His') . '.pdf';
             $viewName = 'pdf.sales_report_pdf';
             $viewData = [
