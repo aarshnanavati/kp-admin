@@ -1041,8 +1041,8 @@ class AuthController extends Controller
                     $order->save();
                 }
 
-                $paymentStatus = $isPaid 
-                    ? 'Paid' 
+                $paymentStatus = $isPaid
+                    ? 'Paid'
                     : (in_array($orderStatus, ['Delivered', 'Completed']) ? 'Paid' : 'Weekly Billed');
 
                 $addrDetails = AddressHelper::extractAndFormat($order, $customer);
@@ -1223,7 +1223,13 @@ class AuthController extends Controller
             $cutoffDetails = TimezoneHelper::getOrderingCutoffDetails();
             return response()->json([
                 'success' => false,
-                'message' => 'Orders are closed for today. Kitchen order cut-off time is 11:00 PM Adelaide time. Please place your order tomorrow.',
+                'message' => 'Oops! You Just Missed Today’s Order!**
+
+Our kitchen is now closed for today, but don’t worry — a fresh menu and delicious meals are waiting for you tomorrow!
+
+ Orders close daily at **11:00 PM**.
+
+ **Come back tomorrow, explore the next menu, and don’t miss out on your next delicious meal!** ',
                 'is_cutoff' => true,
                 'can_order' => false,
                 'cutoff_time' => '11:00 PM',
@@ -1330,6 +1336,7 @@ class AuthController extends Controller
                 'mode' => 'custom',
                 'custom_items' => $resolved['items'],
                 'item_count' => $resolved['count'],
+                'total_quantity' => $resolved['total_quantity'] ?? $resolved['count'],
                 'items_total' => $resolved['items_total'],
                 'summary' => $resolved['summary'],
                 'unit_price' => $resolved['unit_price'],
@@ -1764,8 +1771,8 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
-            $settleAmount = $actualPaidAmount > 0 
-                ? $actualPaidAmount 
+            $settleAmount = $actualPaidAmount > 0
+                ? $actualPaidAmount
                 : ((float) ($request->input('amount') ?: $totalAmount));
 
             // Settle all resolved invoices first
@@ -1832,8 +1839,8 @@ class AuthController extends Controller
 
             $finalPaidAmount = $settleAmount > 0 ? $settleAmount : (float) $settledInvoices->sum('amount');
             $weekCount = $settledInvoices->count();
-            $planLabel = $weekCount > 1 
-                ? "Overdue Weekly Bills ({$weekCount} weeks)" 
+            $planLabel = $weekCount > 1
+                ? "Overdue Weekly Bills ({$weekCount} weeks)"
                 : ($resolved['label'] ?: 'Weekly Bill Payment');
 
             \App\Models\Payment::create([
@@ -3272,6 +3279,7 @@ class AuthController extends Controller
                     'mode' => 'custom',
                     'custom_items' => $resolved['items'],
                     'item_count' => $resolved['count'],
+                    'total_quantity' => $resolved['total_quantity'] ?? $resolved['count'],
                     'items_total' => $resolved['items_total'],
                     'summary' => $resolved['summary'],
                     'unit_price' => $resolved['unit_price'],
@@ -5329,8 +5337,8 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
-            $settleAmount = $actualPaidAmount > 0 
-                ? $actualPaidAmount 
+            $settleAmount = $actualPaidAmount > 0
+                ? $actualPaidAmount
                 : ((float) ($request->input('amount') ?: $totalAmount));
 
             // Settle all resolved invoices first
@@ -5397,8 +5405,8 @@ class AuthController extends Controller
 
             $finalPaidAmount = $settleAmount > 0 ? $settleAmount : (float) $settledInvoices->sum('amount');
             $weekCount = $settledInvoices->count();
-            $planLabel = $weekCount > 1 
-                ? "Overdue Weekly Bills ({$weekCount} weeks)" 
+            $planLabel = $weekCount > 1
+                ? "Overdue Weekly Bills ({$weekCount} weeks)"
                 : ($resolved['label'] ?: 'Weekly Bill Payment');
 
             \App\Models\Payment::create([
@@ -5635,8 +5643,8 @@ class AuthController extends Controller
         }
 
         if ($paymentCleared) {
-            $settleAmount = $actualPaidAmount > 0 
-                ? $actualPaidAmount 
+            $settleAmount = $actualPaidAmount > 0
+                ? $actualPaidAmount
                 : ((float) ($request->input('amount') ?: $totalAmount));
 
             if ($order) {

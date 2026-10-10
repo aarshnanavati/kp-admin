@@ -462,11 +462,20 @@
                                         <div class="inline-badge-list">
 
                                             @foreach ($customItems as $cItem)
-
+                                                @php
+                                                    $cName = is_array($cItem) ? ($cItem['name'] ?? '') : (string)$cItem;
+                                                    $cQty = is_array($cItem) ? (int)($cItem['qty'] ?? $cItem['quantity'] ?? $cItem['count'] ?? 1) : 1;
+                                                    if ($cQty <= 1 && preg_match('/\(x?(\d+)(?:\s*pcs?)?\)/i', $cName, $mQty)) {
+                                                        $cQty = (int)$mQty[1];
+                                                    }
+                                                @endphp
                                                 <span
                                                     class="kp_kitchen_admin_panel_tiffin_item_chip kp_kitchen_admin_panel_chip_green"
                                                 >
-                                                    {{ $cItem['name'] ?? $cItem }}
+                                                    {{ $cName }}
+                                                    @if($cQty > 1 && !str_contains($cName, '('))
+                                                        (x{{ $cQty }})
+                                                    @endif
                                                 </span>
 
                                             @endforeach

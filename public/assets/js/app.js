@@ -2567,11 +2567,15 @@
               <div style="margin-top: 14px; margin-bottom: 14px;">
                 <span style="font-size: 0.85rem; color: #27ae60; display: block; margin-bottom: 8px; font-weight: 600;">Customized Meal Items:</span>
                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                  ${order.custom_items.map(ci => `
-                    <span style="background: rgba(46, 204, 113, 0.12); color: #27ae60; border: 1px solid rgba(46, 204, 113, 0.3); border-radius: 6px; padding: 5px 12px; font-size: 0.85rem; font-weight: 600;">
-                      ${escapeHtml(ci.name || ci)} ${ci.price ? `<span style="font-weight: normal; color: #555;">($${Number(ci.price).toFixed(2)})</span>` : ''}
-                    </span>
-                  `).join('')}
+                  ${order.custom_items.map(ci => {
+                    const cName = escapeHtml(ci.name || ci);
+                    const cQty = parseInt(ci.qty || ci.quantity || ci.count || 1);
+                    const qtyLabel = (cQty > 1 && !cName.includes('(')) ? ` (x${cQty})` : '';
+                    const linePrice = ci.price ? (Number(ci.price) * cQty).toFixed(2) : null;
+                    return `<span style="background: rgba(46, 204, 113, 0.12); color: #27ae60; border: 1px solid rgba(46, 204, 113, 0.3); border-radius: 6px; padding: 5px 12px; font-size: 0.85rem; font-weight: 600;">
+                      ${cName}${qtyLabel} ${linePrice ? `<span style="font-weight: normal; color: #555;">($${linePrice})</span>` : ''}
+                    </span>`;
+                  }).join('')}
                 </div>
               </div>
             `;

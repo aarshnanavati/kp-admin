@@ -16,7 +16,6 @@ use App\Models\Trip;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use App\Services\FcmService;
@@ -30,304 +29,40 @@ class AdminPanelController extends Controller
 {
     // --- Page Views ---
 
-    public function dashboard(Request $request)
+    public function dashboard()
     {
-        @ini_set('memory_limit', '256M');
-        @set_time_limit(60);
+        $todayStr = now()->toDateString();
 
-        // 1. Date Selection (Defaults to Today, supports ?date=YYYY-MM-DD)
-        $selectedDateInput = $request->query('date');
-        if (!empty($selectedDateInput) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$selectedDateInput)) {
-            try {
-                $selectedCarbon = Carbon::parse($selectedDateInput);
-            } catch (\Throwable $e) {
-                $selectedCarbon = Carbon::today();
-            }
-        } else {
-            $selectedCarbon = Carbon::today();
-        }
-        $selectedDate = $selectedCarbon->toDateString();
-        $formattedSelectedDate = $selectedCarbon->format('D, d M Y');
-        $yesterdayCarbon = $selectedCarbon->copy()->subDay();
-        $yesterdayDate = $yesterdayCarbon->toDateString();
-        $last7DaysStart = $selectedCarbon->copy()->subDays(6)->toDateString();
-
-        // 2. Revenue & Orders for Selected Date
-        $selectedOrdersQuery = Order::whereDate('date', $selectedDate);
-        $totalOrdersCount = (clone $selectedOrdersQuery)->count();
-        $todayRevenue = (float) (clone $selectedOrdersQuery)->where('status', '!=', 'Cancelled')->sum('amount');
-
-        // Yesterday comparisons
-        $yesterdayOrdersQuery = Order::whereDate('date', $yesterdayDate);
-        $yesterdayOrdersCount = (clone $yesterdayOrdersQuery)->count();
-        $yesterdayRevenue = (float) (clone $yesterdayOrdersQuery)->where('status', '!=', 'Cancelled')->sum('amount');
-
-        $revenueChangePercent = $yesterdayRevenue > 0
-            ? round((($todayRevenue - $yesterdayRevenue) / $yesterdayRevenue) * 100)
-            : ($todayRevenue > 0 ? 100 : 0);
-
-        $ordersChangePercent = $yesterdayOrdersCount > 0
-            ? round((($totalOrdersCount - $yesterdayOrdersCount) / $yesterdayOrdersCount) * 100)
-            : ($totalOrdersCount > 0 ? 100 : 0);
-
-        // Fulfilment breakdown for Selected Date
-        $deliveryOrdersCount = (clone $selectedOrdersQuery)->where(function($q) {
-            $q->where('order_type', 'delivery')
-              ->orWhereNull('order_type')
-              ->orWhere('order_type', '');
-        })->count();
-        $pickupOrdersCount = (clone $selectedOrdersQuery)->where('order_type', 'pickup')->count();
-        $deliveryPercent = $totalOrdersCount > 0 ? round(($deliveryOrdersCount / $totalOrdersCount) * 100) : 54;
-        $pickupPercent = $totalOrdersCount > 0 ? (100 - $deliveryPercent) : 46;
-
-        // 3. Active Customers (Distinct customers who ordered on date, or active directory count)
-        $activeCustomersCount = (clone $selectedOrdersQuery)
-            ->whereNotNull('customer_id')
-            ->distinct('customer_id')
-            ->count('customer_id');
-        if ($activeCustomersCount === 0) {
-            $activeCustomersCount = (clone $selectedOrdersQuery)
-                ->whereNotNull('customer')
-                ->where('customer', '!=', '')
-                ->distinct('customer')
-                ->count('customer');
-        }
-        $totalCustomersCount = Customer::where('status', 'Active')->count();
-        if ($activeCustomersCount === 0 && $totalCustomersCount > 0) {
-            $displayCustomersCount = $totalCustomersCount;
-            $customersSubtitle = 'Active Customer Directory';
-        } else {
-            $displayCustomersCount = $activeCustomersCount;
-            $customersSubtitle = 'Placed orders today';
-        }
-
-        // 4. Active Tiffin Plans
-        $activeTiffinsCount = Tiffin::where('status', 'Active')->count();
-
-        // 5. Average Order Value (AOV)
-        $aov = $totalOrdersCount > 0 ? round($todayRevenue / $totalOrdersCount, 2) : 0;
-        $last7DaysOrders = Order::whereBetween('date', [$last7DaysStart, $yesterdayDate])
-            ->where('status', '!=', 'Cancelled')
-            ->get(['id', 'amount']);
-        $last7DaysTotalAmount = (float)$last7DaysOrders->sum('amount');
-        $last7DaysCount = $last7DaysOrders->count();
-        $priorAov = $last7DaysCount > 0 ? round($last7DaysTotalAmount / $last7DaysCount, 2) : ($aov ?: 15.90);
-        $aovChangePercent = $priorAov > 0 ? round((($aov - $priorAov) / $priorAov) * 100) : 0;
-
-        // 6. Order Status breakdown (Today)
-        $statusCounts = [
-            'Pending' => (clone $selectedOrdersQuery)->where('status', 'Pending')->count(),
-            'Preparing' => (clone $selectedOrdersQuery)->where('status', 'Preparing')->count(),
-            'Ready' => (clone $selectedOrdersQuery)->where('status', 'Ready')->count(),
-            'Out for Delivery' => (clone $selectedOrdersQuery)->where('status', 'Out for Delivery')->count(),
-            'Delivered' => (clone $selectedOrdersQuery)->where('status', 'Delivered')->count(),
-        ];
-        $pickupsReadyCount = (clone $selectedOrdersQuery)
-            ->where('order_type', 'pickup')
-            ->whereIn('status', ['Ready', 'Preparing', 'Pending'])
-            ->count();
-
-        // 7. Today's Menu (Active Tiffin Plans & daily availability)
-        $activeTiffins = Tiffin::where('status', 'Active')->orderBy('id', 'asc')->get();
-        $todayMenuList = [];
-        foreach ($activeTiffins as $tif) {
-            $orderedForTif = (clone $selectedOrdersQuery)
-                ->where(function($q) use ($tif) {
-                    $q->where('tiffin_id', $tif->id)
-                      ->orWhere('tiffin', $tif->name);
-                })->count();
-
-            $desc = $tif->description;
-            if (empty($desc) && !empty($tif->items)) {
-                $rawItems = is_array($tif->items) ? $tif->items : json_decode($tif->items, true);
-                if (!empty($rawItems['components'])) {
-                    $compLabels = [];
-                    foreach ($rawItems['components'] as $c) {
-                        if (!empty($c['label'])) $compLabels[] = $c['label'];
-                    }
-                    $desc = implode(', ', $compLabels);
-                } elseif (!empty($rawItems['basic'])) {
-                    $desc = implode(', ', (array)$rawItems['basic']);
-                }
-            }
-            if (empty($desc)) {
-                $desc = 'Freshly prepared daily meal with authentic Indian flavours.';
-            }
-
-            // Estimate daily capacity (50 portions daily capacity base)
-            $leftStock = max(0, 50 - $orderedForTif);
-
-            $todayMenuList[] = [
-                'id' => $tif->id,
-                'name' => $tif->name,
-                'description' => $desc,
-                'price' => (float)$tif->price,
-                'price_formatted' => 'A$ ' . number_format($tif->price, 2),
-                'image' => $tif->image ? asset($tif->image) : null,
-                'stock_left' => $leftStock,
-                'ordered_count' => $orderedForTif,
-            ];
-        }
-
-        // 8. Revenue & Orders Trend (Last 7 Days ending on selected date)
-        $trendLabels = [];
-        $trendRevenue = [];
-        $trendOrders = [];
-        $trendAov = [];
-        $trendProfit = [];
-
-        for ($i = 6; $i >= 0; $i--) {
-            $dayCarbon = $selectedCarbon->copy()->subDays($i);
-            $dayStr = $dayCarbon->toDateString();
-            $trendLabels[] = $dayCarbon->format('d M');
-
-            $dayOrders = Order::whereDate('date', $dayStr)->get(['id', 'amount', 'status']);
-            $dayNonCancelled = $dayOrders->where('status', '!=', 'Cancelled');
-            $dayRev = (float)$dayNonCancelled->sum('amount');
-            $dayCnt = $dayOrders->count();
-            $dayAov = $dayCnt > 0 ? round($dayRev / $dayCnt, 2) : 0;
-            $dayProf = round($dayRev * 0.42, 2);
-
-            $trendRevenue[] = $dayRev;
-            $trendOrders[] = $dayCnt;
-            $trendAov[] = $dayAov;
-            $trendProfit[] = $dayProf;
-        }
-
-        // 9. Popular Menu Items (Today)
-        $popularItems = (clone $selectedOrdersQuery)
-            ->whereNotNull('tiffin')
-            ->where('tiffin', '!=', '')
-            ->select('tiffin', DB::raw('count(*) as count'))
-            ->groupBy('tiffin')
-            ->orderBy('count', 'desc')
-            ->take(5)
-            ->get();
-
-        // If today has fewer than 3 items, augment with last 7 days to keep the dashboard vibrant and insightful
-        if ($popularItems->count() < 3) {
-            $popularItems = Order::whereBetween('date', [$last7DaysStart, $selectedDate])
-                ->whereNotNull('tiffin')
-                ->where('tiffin', '!=', '')
-                ->select('tiffin', DB::raw('count(*) as count'))
-                ->groupBy('tiffin')
-                ->orderBy('count', 'desc')
-                ->take(5)
-                ->get();
-        }
-
-        $maxPopularCount = $popularItems->max('count') ?: 1;
-        $popularList = [];
-        foreach ($popularItems as $idx => $pItem) {
-            $matchedTiffin = $activeTiffins->firstWhere('name', $pItem->tiffin);
-            $popularList[] = [
-                'rank' => $idx + 1,
-                'name' => $pItem->tiffin,
-                'count' => (int)$pItem->count,
-                'percent' => round(($pItem->count / $maxPopularCount) * 100),
-                'image' => ($matchedTiffin && $matchedTiffin->image) ? asset($matchedTiffin->image) : null,
-            ];
-        }
-
-        // 10. Orders Timeline (Today)
-        $timelineOrders = (clone $selectedOrdersQuery)
-            ->with(['customerRelation'])
-            ->orderBy('created_at', 'desc')
-            ->orderBy('id', 'desc')
-            ->take(6)
-            ->get();
-
-        // 11. Delivery Areas (Top Postcodes) - past 7 days
-        $topAreas = Order::whereBetween('date', [$last7DaysStart, $selectedDate])
-            ->whereNotNull('area')
-            ->where('area', '!=', '')
-            ->select('area', DB::raw('count(*) as count'))
-            ->groupBy('area')
-            ->orderBy('count', 'desc')
-            ->take(5)
-            ->get();
-        $maxAreaCount = $topAreas->max('count') ?: 1;
-        $topAreasList = [];
-        foreach ($topAreas as $area) {
-            $topAreasList[] = [
-                'postcode' => $area->area,
-                'count' => (int)$area->count,
-                'percent' => round(($area->count / $maxAreaCount) * 100),
-            ];
-        }
-
-        // 12. Upcoming Pickups & Deliveries
-        $upcomingOrders = (clone $selectedOrdersQuery)
-            ->with(['customerRelation'])
-            ->whereNotIn('status', ['Delivered', 'Cancelled'])
-            ->orderBy('created_at', 'asc')
-            ->take(5)
-            ->get();
-        if ($upcomingOrders->isEmpty()) {
-            $upcomingOrders = (clone $selectedOrdersQuery)
-                ->with(['customerRelation'])
-                ->orderBy('created_at', 'desc')
-                ->take(5)
-                ->get();
-        }
-
-        // Quick list of recent order dates for the date selector
-        $recentOrderDates = Order::select('date')
-            ->distinct()
-            ->orderBy('date', 'desc')
-            ->take(7)
-            ->pluck('date')
-            ->map(function($d) {
-                return [
-                    'date' => $d,
-                    'label' => Carbon::parse($d)->format('D, d M Y'),
-                ];
-            });
-
-        // Legacy compatibility variables
+        // Count total drivers from the drivers tab
         $driversCount = Driver::count();
-        $ordersCount = $totalOrdersCount;
-        $totalRevenue = $todayRevenue;
-        $customersCount = $totalCustomersCount;
-        $tiffinsCount = $activeTiffinsCount;
-        $recentOrders = $timelineOrders;
+
+        // Count orders placed today
+        $ordersCount = Order::where('date', $todayStr)->count();
+
+        // Sum successful payments today
+        $totalRevenue = Payment::where('status', 'Successful')
+            ->where('date', $todayStr)
+            ->sum('amount');
+
+        $customersCount = Customer::count();
+        $tiffinsCount = Tiffin::count();
+
+        $recentOrders = Order::orderBy('date', 'desc')->take(5)->get();
         $latestPayments = Payment::orderBy('date', 'desc')->take(5)->get();
+
+        $statuses = ['Pending', 'Confirmed', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'];
         $deliverySummary = [];
+        foreach ($statuses as $status) {
+            $count = Order::where('status', $status)->count();
+            $percent = $ordersCount ? round(($count / $ordersCount) * 100) : 0;
+            $deliverySummary[] = [
+                'status' => $status,
+                'count' => $count,
+                'percent' => $percent
+            ];
+        }
 
         return view('dashboard', compact(
-            'selectedDate',
-            'selectedCarbon',
-            'formattedSelectedDate',
-            'yesterdayDate',
-            'todayRevenue',
-            'yesterdayRevenue',
-            'revenueChangePercent',
-            'totalOrdersCount',
-            'yesterdayOrdersCount',
-            'ordersChangePercent',
-            'deliveryOrdersCount',
-            'pickupOrdersCount',
-            'deliveryPercent',
-            'pickupPercent',
-            'displayCustomersCount',
-            'customersSubtitle',
-            'activeTiffinsCount',
-            'aov',
-            'priorAov',
-            'aovChangePercent',
-            'statusCounts',
-            'pickupsReadyCount',
-            'todayMenuList',
-            'trendLabels',
-            'trendRevenue',
-            'trendOrders',
-            'trendAov',
-            'trendProfit',
-            'popularList',
-            'timelineOrders',
-            'topAreasList',
-            'upcomingOrders',
-            'recentOrderDates',
             'driversCount',
             'ordersCount',
             'totalRevenue',
@@ -1016,13 +751,16 @@ class AdminPanelController extends Controller
                 foreach ($selections['custom_items'] as $cItem) {
                     $name = trim($cItem['name'] ?? '');
                     if (!$name) continue;
-                    $cQty = (int)($cItem['qty'] ?? 1);
+                    $cQty = (int)($cItem['qty'] ?? $cItem['quantity'] ?? $cItem['count'] ?? 1);
+                    if ($cQty <= 1 && preg_match('/\(x?(\d+)(?:\s*pcs?)?\)/i', $name, $mQty)) {
+                        $cQty = (int)$mQty[1];
+                    }
                     $resolvedItems[] = [
                         'name' => $name,
                         'component' => 'Custom Choice',
                         'qty' => $cQty,
                     ];
-                    $choicesDisplayList[] = $cQty > 1 ? "{$name} (x{$cQty})" : $name;
+                    $choicesDisplayList[] = ($cQty > 1 && !str_contains($name, '(')) ? "{$name} (x{$cQty})" : $name;
                 }
             } else {
                 // Fallback to base tiffin components / items
@@ -1090,7 +828,9 @@ class AdminPanelController extends Controller
                             stripos($catName, 'bread') !== false || stripos($catName, 'roti') !== false ||
                             stripos($component, 'bread') !== false);
 
-                $multiplier = $isBread ? 4 : 1;
+                // For standard set meal plans, 1 bread component = 4 rotis,
+                // BUT for Custom Choice (build-your-own), $baseQty is already the exact pieces chosen by customer
+                $multiplier = ($component === 'Custom Choice') ? 1 : ($isBread ? 4 : 1);
                 if (preg_match('/\((\d+)\s*pcs?\)/i', $name, $m)) {
                     $multiplier = (int)$m[1];
                 }
@@ -3285,6 +3025,28 @@ class AdminPanelController extends Controller
             $order->customer_address ?? ($order->customerRelation ? $order->customerRelation->address : 'N/A')
         );
 
+        $formattedCustomItems = [];
+        if (is_array($customItems)) {
+            foreach ($customItems as $ci) {
+                if (is_array($ci)) {
+                    $qty = (int)($ci['qty'] ?? $ci['quantity'] ?? $ci['count'] ?? 1);
+                    $cName = $ci['name'] ?? '';
+                    if ($qty <= 1 && preg_match('/\(x?(\d+)(?:\s*pcs?)?\)/i', $cName, $mQty)) {
+                        $qty = (int)$mQty[1];
+                    }
+                    $ci['qty'] = $qty;
+                    $ci['quantity'] = $qty;
+                    $formattedCustomItems[] = $ci;
+                } else {
+                    $formattedCustomItems[] = [
+                        'name' => (string)$ci,
+                        'qty' => 1,
+                        'quantity' => 1,
+                    ];
+                }
+            }
+        }
+
         return response()->json([
             'success' => true,
             'order' => [
@@ -3311,7 +3073,7 @@ class AdminPanelController extends Controller
                 'status' => $order->status,
                 'add_ons' => json_decode($order->add_ons, true) ?: [],
                 'selections' => $choices,
-                'custom_items' => $customItems,
+                'custom_items' => $formattedCustomItems,
                 'choices_summary' => $summary,
                 'note' => $order->note ?: 'No special instructions provided.',
                 'driver_name' => $order->driver ?: 'Unassigned',
@@ -3547,9 +3309,18 @@ class AdminPanelController extends Controller
                             }, $addons));
                         }
                     }
-                    $choicesStr = (is_array($order->selections) && !empty($order->selections['summary']))
-                        ? $order->selections['summary']
-                        : '';
+                    $choicesStr = '';
+                    if (is_array($order->selections)) {
+                        if (!empty($order->selections['summary'])) {
+                            $choicesStr = $order->selections['summary'];
+                        } elseif (!empty($order->selections['custom_items'])) {
+                            $choicesStr = implode(', ', array_map(function ($ci) {
+                                $cName = is_array($ci) ? ($ci['name'] ?? '') : (string)$ci;
+                                $cQty = is_array($ci) ? (int)($ci['qty'] ?? $ci['quantity'] ?? 1) : 1;
+                                return ($cQty > 1 && !str_contains($cName, '(')) ? "{$cName} (x{$cQty})" : $cName;
+                            }, $order->selections['custom_items']));
+                        }
+                    }
                     $fulfillmentStr = ($order->order_type === 'pickup') ? 'Customer Pickup' : 'Home Delivery';
                     fputcsv($file, [
                         $order->id,

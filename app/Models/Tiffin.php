@@ -563,6 +563,15 @@ class Tiffin extends Model
             $picked = [];
         }
 
+        // Unpack nested wrapper arrays if passed (e.g. ['custom_items' => [...]] or ['items' => [...]])
+        if (isset($picked['custom_items']) && is_array($picked['custom_items'])) {
+            $picked = $picked['custom_items'];
+        } elseif (isset($picked['items']) && is_array($picked['items'])) {
+            $picked = $picked['items'];
+        } elseif (isset($picked['choices']) && is_array($picked['choices'])) {
+            $picked = $picked['choices'];
+        }
+
         $pool = static::customizableItemPool();
         $byId = [];
         $byItemId = [];
@@ -579,28 +588,68 @@ class Tiffin extends Model
         $errors = [];
         $itemsTotal = 0.0;
 
-        foreach ($picked as $raw) {
-            $token = is_array($raw)
-                ? ($raw['id'] ?? $raw['item_id'] ?? $raw['name'] ?? null)
-                : $raw;
+        foreach ($picked as $key => $raw) {
+            $token = null;
+            $qty = 1;
+
+            if (is_array($raw)) {
+                $token = $raw['id'] ?? $raw['item_id'] ?? $raw['name'] ?? null;
+                $qty = (int) ($raw['qty'] ?? $raw['quantity'] ?? $raw['count'] ?? $raw['selected_qty'] ?? $raw['pieces'] ?? 1);
+            } elseif (is_numeric($raw) && is_string($key) && !is_numeric($key)) {
+                $token = $key;
+                $qty = (int) $raw;
+            } else {
+                $token = $raw;
+                $qty = 1;
+            }
+
             if ($token === null || $token === '') {
                 continue;
             }
+
+            $qty = max(1, $qty);
 
             $entry = $byId[(string) $token]
                 ?? ($byItemId[(int) $token] ?? null)
                 ?? ($byName[mb_strtolower(trim((string) $token))] ?? null);
 
+            // Fallback match directly against Item model if not found in pool
+            if (! $entry) {
+                $matchedItem = null;
+                if (is_numeric($token)) {
+                    $matchedItem = Item::find((int) $token);
+                } else {
+                    $matchedItem = Item::whereRaw('LOWER(name) = ?', [mb_strtolower(trim((string) $token))])->first();
+                }
+                if ($matchedItem) {
+                    $entry = [
+                        'id' => 'i:' . $matchedItem->id,
+                        'item_id' => $matchedItem->id,
+                        'name' => $matchedItem->name,
+                        'price' => round((float) $matchedItem->price, 2),
+                        'category' => $matchedItem->category->name ?? 'Other',
+                    ];
+                }
+            }
+
             if (! $entry) {
                 $errors[] = "\"{$token}\" is not on today's menu.";
                 continue;
             }
-            if (isset($chosen[$entry['id']])) {
-                continue;
-            }
 
-            $chosen[$entry['id']] = $entry;
-            $itemsTotal += $entry['price'];
+            $entryKey = $entry['id'];
+
+            if (isset($chosen[$entryKey])) {
+                $chosen[$entryKey]['qty'] += $qty;
+                $chosen[$entryKey]['quantity'] += $qty;
+                $itemsTotal += ($entry['price'] * $qty);
+            } else {
+                $itemEntry = $entry;
+                $itemEntry['qty'] = $qty;
+                $itemEntry['quantity'] = $qty;
+                $chosen[$entryKey] = $itemEntry;
+                $itemsTotal += ($entry['price'] * $qty);
+            }
         }
 
         $chosen = array_values($chosen);
@@ -610,15 +659,22 @@ class Tiffin extends Model
             $errors[] = 'Please pick at least one item for your custom tiffin.';
         }
 
-        // Price is simply the sum of the picked items' prices (no base price).
+        // Price is the sum of the picked items' prices multiplied by their quantities
         $unitPrice = round($itemsTotal, 2);
+
+        $summaryParts = [];
+        foreach ($chosen as $c) {
+            $cQty = (int) ($c['qty'] ?? 1);
+            $summaryParts[] = ($cQty > 1) ? "{$c['name']} (x{$cQty})" : $c['name'];
+        }
 
         return [
             'items' => $chosen,
             'count' => $count,
-            'items_total' => round($itemsTotal, 2),
+            'total_quantity' => array_sum(array_column($chosen, 'qty')),
+            'items_total' => $unitPrice,
             'unit_price' => $unitPrice,
-            'summary' => implode(', ', array_column($chosen, 'name')),
+            'summary' => implode(', ', $summaryParts),
             'errors' => $errors,
         ];
     }
