@@ -723,7 +723,6 @@ class AdminPanelController extends Controller
 
         foreach ($orders as $order) {
             $orderQty = (int)($order->quantity ?: 1);
-            $totalTiffinsCount += $orderQty;
             $orderDate = $order->date;
 
             // 1. Resolve selections / choices / custom items / base tiffin
@@ -731,6 +730,9 @@ class AdminPanelController extends Controller
             if (is_string($selections)) {
                 $selections = json_decode($selections, true);
             }
+
+            $isCustomOrder = is_array($selections) && !empty($selections['custom_items']);
+            $totalTiffinsCount += $isCustomOrder ? 1 : $orderQty;
 
             $resolvedItems = [];
             $choicesDisplayList = [];
@@ -835,7 +837,13 @@ class AdminPanelController extends Controller
                     $multiplier = (int)$m[1];
                 }
 
-                $itemTotalUnits = $orderQty * $baseQty * $multiplier;
+                // For Custom Choice or custom orders, $baseQty already contains the customer's selected count (e.g. Rice x3 = 3).
+                // Do NOT multiply with $orderQty (the column quantity table), keeping it strictly at the selected item count.
+                if ($component === 'Custom Choice' || $isCustomOrder) {
+                    $itemTotalUnits = $baseQty;
+                } else {
+                    $itemTotalUnits = $orderQty * $baseQty * $multiplier;
+                }
                 $unit = $isBread ? 'Rotis' : (preg_match('/\((\d+)\s*pcs?\)/i', $name) ? 'Pieces' : 'Portions');
 
                 // Update Category Card
@@ -897,9 +905,8 @@ class AdminPanelController extends Controller
                 $addons = is_array($order->add_ons) ? $order->add_ons : json_decode($order->add_ons, true);
                 if (is_array($addons)) {
                     foreach ($addons as $addon) {
-                        $name = trim($addon['name'] ?? '');
-                        if (!$name) continue;
-                        $aQty = (int)($addon['qty'] ?? 1) * $orderQty;
+                        $addonBaseQty = (int)($addon['qty'] ?? 1);
+                        $aQty = $isCustomOrder ? $addonBaseQty : ($addonBaseQty * $orderQty);
                         $addonsDisplayList[] = $aQty > 1 ? "{$name} (x{$aQty})" : $name;
 
                         $catInfo = $resolveCategory($name, 'Addon');
@@ -977,7 +984,7 @@ class AdminPanelController extends Controller
                     : (optional($order->customerRelation)->name ?: ($order->customer_id ? 'Customer #' . $order->customer_id : 'Customer')));
 
             $tiffinPlanName = $order->tiffin ?: ($order->tiffin_id ? optional($allTiffins->get($order->tiffin_id))->name : 'Standard Tiffin');
-            if ($orderQty > 1) {
+            if ($orderQty > 1 && !$isCustomOrder) {
                 $tiffinPlanName .= " (x{$orderQty})";
             }
             $optionalItemChosen = !empty($choicesDisplayList) ? implode(', ', $choicesDisplayList) : '-';
@@ -1014,10 +1021,17 @@ class AdminPanelController extends Controller
         foreach ($monthOrders as $mOrder) {
             $mQty = (int)($mOrder->quantity ?: 1);
             $mDate = $mOrder->date;
+            $mSel = $mOrder->selections;
+            if (is_string($mSel)) {
+                $mSel = json_decode($mSel, true);
+            }
+            $isMCustom = is_array($mSel) && !empty($mSel['custom_items']);
+            $mTiffinCount = $isMCustom ? 1 : $mQty;
+
             foreach ($monthWeeks as $wNum => &$wRef) {
                 if ($mDate >= $wRef['start_date'] && $mDate <= $wRef['end_date']) {
                     $wRef['total_orders']++;
-                    $wRef['total_tiffins'] += $mQty;
+                    $wRef['total_tiffins'] += $mTiffinCount;
                     break;
                 }
             }
