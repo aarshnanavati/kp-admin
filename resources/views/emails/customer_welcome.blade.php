@@ -33,7 +33,7 @@
             text-align: center;
         }
         .brand-title {
-            color: #ffffff;
+            color: #ffffff !important;
             font-size: 26px;
             font-weight: 800;
             letter-spacing: 2px;

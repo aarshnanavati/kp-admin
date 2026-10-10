@@ -1466,6 +1466,11 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $deliveryFee = (!$isPickup && $foodAmount > 0 && $foodAmount < 12.00) ? 5.00 : 0.00;
         $totalAmount = round($foodAmount + $deliveryFee, 2);
 
+        $effectiveQuantity = $quantity;
+        if ($tiffin->is_customizable && !empty($resolved['total_quantity'])) {
+            $effectiveQuantity = (int)$resolved['total_quantity'] * $quantity;
+        }
+
         $order = \App\Models\Order::create([
             'id' => $orderId,
             'customer_id' => $customer->id,
@@ -1476,7 +1481,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             'pincode' => $orderPincode,
             'tiffin_id' => $tiffin->id,
             'tiffin' => $tiffin->name,
-            'quantity' => $quantity,
+            'quantity' => $effectiveQuantity,
             'area' => $orderPincode,
             'amount' => $totalAmount,
             'delivery_fee' => $deliveryFee,

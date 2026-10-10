@@ -536,9 +536,26 @@
 
                                 {{-- Quantity --}}
                                 <td class="kp_kitchen_admin_panel_table_cell col-order-qty">
+                                    @php
+                                        $displayOrderQty = max(1, (int) ($order->quantity ?? 1));
+                                        if (!empty($customItems) && is_array($customItems)) {
+                                            $cTotalQty = 0;
+                                            foreach ($customItems as $cItm) {
+                                                $q = is_array($cItm) ? (int) ($cItm['qty'] ?? $cItm['quantity'] ?? $cItm['count'] ?? 1) : 1;
+                                                $nm = is_array($cItm) ? ($cItm['name'] ?? '') : (string) $cItm;
+                                                if ($q <= 1 && preg_match('/\(x?(\d+)(?:\s*pcs?)?\)/i', $nm, $mQ)) {
+                                                    $q = (int) $mQ[1];
+                                                }
+                                                $cTotalQty += max(1, $q);
+                                            }
+                                            if ($cTotalQty > 0 && ($displayOrderQty === 1 || $displayOrderQty < $cTotalQty)) {
+                                                $displayOrderQty = $cTotalQty;
+                                            }
+                                        }
+                                    @endphp
 
                                     <strong>
-                                        {{ $order->quantity ?? 1 }}
+                                        {{ $displayOrderQty }}
                                     </strong>
 
                                 </td>

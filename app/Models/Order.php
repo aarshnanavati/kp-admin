@@ -59,6 +59,31 @@ class Order extends Model
         return ($this->order_type ?? 'delivery') === 'pickup';
     }
 
+    public function getQuantityAttribute($value)
+    {
+        $rawQty = max(1, (int) ($value ?? 1));
+        $selections = is_array($this->selections) ? $this->selections : (json_decode($this->selections, true) ?: []);
+        $customItems = $selections['custom_items'] ?? [];
+        if (!empty($customItems) && is_array($customItems)) {
+            $totalCustomQty = 0;
+            foreach ($customItems as $ci) {
+                $cQty = is_array($ci) ? (int) ($ci['qty'] ?? $ci['quantity'] ?? $ci['count'] ?? 1) : 1;
+                $cName = is_array($ci) ? ($ci['name'] ?? '') : (string) $ci;
+                if ($cQty <= 1 && preg_match('/\(x?(\d+)(?:\s*pcs?)?\)/i', $cName, $mQty)) {
+                    $cQty = (int) $mQty[1];
+                }
+                $totalCustomQty += max(1, $cQty);
+            }
+            if ($totalCustomQty > 0) {
+                if ($rawQty === 1 || $rawQty < $totalCustomQty) {
+                    return $totalCustomQty;
+                }
+                return $rawQty;
+            }
+        }
+        return $rawQty;
+    }
+
     public function getDeliveryFeeAttribute($value)
     {
         return (float) ($value ?? 0.00);

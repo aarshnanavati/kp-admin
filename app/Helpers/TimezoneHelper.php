@@ -72,7 +72,13 @@ class TimezoneHelper
             'current_date' => $adelaideNow->toDateString(),
             'current_datetime' => $adelaideNow->toIso8601String(),
             'message' => $isCutoff
-                ? 'Orders are closed for today. Kitchen order cut-off time is 11:00 PM Adelaide time. Please place your order tomorrow.'
+                ? '**Oops! You Just Missed Today’s Order!**
+
+Our kitchen is now closed for today, but don’t worry — a fresh menu and delicious meals are waiting for you tomorrow!
+
+Orders close daily at **11:00 PM**.
+
+**Come back tomorrow, explore the next menu, and don’t miss out on your next delicious meal!** '
                 : 'Ordering is currently open (Daily cut-off is 11:00 PM Adelaide time).',
         ];
     }

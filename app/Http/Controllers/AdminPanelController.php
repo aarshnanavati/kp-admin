@@ -3063,7 +3063,19 @@ class AdminPanelController extends Controller
                 'formatted_address' => $formattedAddress,
                 'tiffin_name' => $order->tiffin,
                 'tiffin_price' => $order->tiffinRelation ? $order->tiffinRelation->price : '0.00',
-                'quantity' => $order->quantity ?: 1,
+                'quantity' => (function() use ($order, $formattedCustomItems) {
+                    $q = max(1, (int) ($order->quantity ?: 1));
+                    if (!empty($formattedCustomItems)) {
+                        $cTot = 0;
+                        foreach ($formattedCustomItems as $fci) {
+                            $cTot += max(1, (int) ($fci['qty'] ?? 1));
+                        }
+                        if ($cTot > 0 && ($q === 1 || $q < $cTot)) {
+                            return $cTot;
+                        }
+                    }
+                    return $q;
+                })(),
                 'amount' => $order->amount,
                 'delivery_fee' => (float)($order->delivery_fee ?? 0.00),
                 'subtotal' => round((float)$order->amount - (float)($order->delivery_fee ?? 0.00), 2),
