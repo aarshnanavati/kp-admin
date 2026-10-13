@@ -595,10 +595,19 @@ class AdminPanelController extends Controller
 
         $resolveCategory = function ($name, $component = '') use ($dbCategories, $itemByName) {
             $normName = mb_strtolower(trim((string)$name));
+            $cleanName = trim(preg_replace('/\(.*?\)/', '', $normName));
 
             // 1. Direct match in Item table
             if (isset($itemByName[$normName]) && $itemByName[$normName]->category) {
                 $cat = $itemByName[$normName]->category;
+                return [
+                    'id' => $cat->id,
+                    'name' => $cat->name,
+                    'slug' => \Illuminate\Support\Str::slug($cat->name) ?: 'cat_' . $cat->id,
+                ];
+            }
+            if ($cleanName !== $normName && isset($itemByName[$cleanName]) && $itemByName[$cleanName]->category) {
+                $cat = $itemByName[$cleanName]->category;
                 return [
                     'id' => $cat->id,
                     'name' => $cat->name,
@@ -688,6 +697,21 @@ class AdminPanelController extends Controller
                     'name' => $bevCat ? $bevCat->name : 'Beverages',
                     'slug' => $bevCat ? (\Illuminate\Support\Str::slug($bevCat->name) ?: 'cat_' . $bevCat->id) : 'beverage',
                 ];
+            }
+
+            // If component is Addon, prefer Today's Special or Extrazzz if no direct match
+            if ($component === 'Addon') {
+                $specialCat = $dbCategories->first(function ($c) {
+                    $cn = mb_strtolower(trim($c->name));
+                    return str_contains($cn, 'special') || str_contains($cn, 'extra');
+                });
+                if ($specialCat) {
+                    return [
+                        'id' => $specialCat->id,
+                        'name' => $specialCat->name,
+                        'slug' => \Illuminate\Support\Str::slug($specialCat->name) ?: 'cat_' . $specialCat->id,
+                    ];
+                }
             }
 
             // Default fallback: Curries / Subzi
@@ -905,9 +929,35 @@ class AdminPanelController extends Controller
                 $addons = is_array($order->add_ons) ? $order->add_ons : json_decode($order->add_ons, true);
                 if (is_array($addons)) {
                     foreach ($addons as $addon) {
-                        $addonBaseQty = (int)($addon['qty'] ?? 1);
+                        $addonName = '';
+                        if (is_array($addon)) {
+                            $addonName = trim($addon['name'] ?? $addon['item_name'] ?? $addon['item'] ?? '');
+                            if (!$addonName && !empty($addon['id']) && $allItems->has($addon['id'])) {
+                                $addonName = trim($allItems->get($addon['id'])->name);
+                            } elseif (!$addonName && !empty($addon['item_id']) && $allItems->has($addon['item_id'])) {
+                                $addonName = trim($allItems->get($addon['item_id'])->name);
+                            }
+                        } elseif (is_string($addon)) {
+                            $addonName = trim($addon);
+                        } elseif (is_numeric($addon) && $allItems->has($addon)) {
+                            $addonName = trim($allItems->get($addon)->name);
+                        }
+
+                        if (!$addonName) {
+                            continue;
+                        }
+
+                        $addonBaseQty = 1;
+                        if (is_array($addon)) {
+                            $addonBaseQty = max(1, (int)($addon['qty'] ?? $addon['quantity'] ?? $addon['count'] ?? 1));
+                        }
+                        if ($addonBaseQty <= 1 && preg_match('/\(x?(\d+)(?:\s*pcs?)?\)/i', $addonName, $mAddonQty)) {
+                            $addonBaseQty = (int)$mAddonQty[1];
+                        }
+
+                        $name = $addonName;
                         $aQty = $isCustomOrder ? $addonBaseQty : ($addonBaseQty * $orderQty);
-                        $addonsDisplayList[] = $aQty > 1 ? "{$name} (x{$aQty})" : $name;
+                        $addonsDisplayList[] = ($aQty > 1 && !str_contains($name, '(')) ? "{$name} (x{$aQty})" : $name;
 
                         $catInfo = $resolveCategory($name, 'Addon');
                         $catName = $catInfo['name'];
