@@ -179,7 +179,7 @@
                     <strong class="kp_kitchen_admin_panel_sidebar_help_title">Need help?</strong>
                     <span class="kp_kitchen_admin_panel_sidebar_help_text">Contact technical support.</span>
                 </div>
-                <form method="POST" action="{{ route('logout') }}" style="width: 100%; margin: 0;">
+                <form method="POST" action="{{ route('logout') }}" style="width: 100%; margin: 0;" onsubmit="try { localStorage.removeItem('kp_admin_token'); } catch (e) {}">
                     @csrf
                     <button type="submit" class="kp_kitchen_admin_panel_logout_button"
                         style="width: 100%; border: none; cursor: pointer; display: block; text-align: center;">

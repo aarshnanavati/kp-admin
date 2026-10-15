@@ -56,45 +56,6 @@ class LoginController extends Controller
     }
 
     /**
-     * Show the registration form.
-     */
-    public function showRegister()
-    {
-        return view('register');
-    }
-
-    /**
-     * Handle registration submit.
-     */
-    public function registerSubmit(Request $request)
-    {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email',
-            'password' => 'required|string|min:6',
-            'confirm_password' => 'required|same:password',
-        ], [
-            'confirm_password.same' => 'Passwords do not match.',
-        ]);
-
-        $user = User::create([
-            'name' => trim($request->name),
-            'email' => strtolower(trim($request->email)),
-            'password' => Hash::make($request->password),
-            'user_type' => 'admin',
-        ]);
-
-        try {
-            Mail::to($user->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Admin Panel!", "Thank you {$user->name} for registering in KP's Kitchen admin team!"));
-            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$user->name} have registerd"));
-        } catch (\Exception $e) {
-            Log::warning("Web admin registration email triggers failed: " . $e->getMessage());
-        }
-
-        return redirect()->route('login')->with('success', 'Admin registration successful. You can now log in.');
-    }
-
-    /**
      * Show the password recovery form.
      */
     public function showForgotPassword()
@@ -112,34 +73,22 @@ class LoginController extends Controller
         ]);
 
         $email = strtolower(trim($request->email));
-        if (!User::where('email', $email)->exists()) {
-            return back()->withErrors([
-                'email' => 'No admin account found with that email address.',
-            ])->onlyInput('email');
-        }
 
-        // Generate 6-digit OTP
-        $otp = (string)rand(100000, 999999);
+        // Only send a code to real admin accounts, but respond the same way either
+        // way so the form cannot be used to discover admin emails.
+        if (User::where('email', $email)->exists()) {
+            $otp = PasswordOtp::issue($email);
 
-        // Save OTP
-        PasswordOtp::where('email', $email)->delete();
-        PasswordOtp::create([
-            'email' => $email,
-            'otp' => $otp,
-            'expires_at' => Carbon::now()->addMinutes(10),
-        ]);
-
-        Log::info("Web Admin Password Reset OTP for {$email}: {$otp}");
-
-        try {
-            Mail::to($email)->send(new SendOtpMail($otp));
-        } catch (\Exception $e) {
-            Log::warning("SMTP email sending failed. Fallback logged in laravel.log.");
+            try {
+                Mail::to($email)->send(new SendOtpMail($otp));
+            } catch (\Exception $e) {
+                Log::warning('Admin password reset OTP email failed: ' . $e->getMessage());
+            }
         }
 
         session(['reset_email' => $email, 'reset_step' => 'verify']);
 
-        return redirect()->route('forgot-password')->with('success', 'A verification OTP has been sent to your email.');
+        return redirect()->route('forgot-password')->with('success', 'If that email belongs to an admin account, a verification code has been sent to it.');
     }
 
     /**
@@ -156,10 +105,7 @@ class LoginController extends Controller
             return redirect()->route('forgot-password')->withErrors(['email' => 'Session expired. Please request a new OTP.']);
         }
 
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return back()->withErrors([
@@ -178,7 +124,7 @@ class LoginController extends Controller
     public function resetPassword(Request $request)
     {
         $request->validate([
-            'password' => 'required|string|min:6',
+            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::min(8)->letters()->numbers()],
             'confirm_password' => 'required|same:password',
         ], [
             'confirm_password.same' => 'Passwords do not match.',
@@ -193,10 +139,7 @@ class LoginController extends Controller
         }
 
         // Re-verify OTP record
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', $otp)
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $otp);
 
         if (!$otpRecord) {
             return redirect()->route('forgot-password')->withErrors(['email' => 'OTP expired. Please try again.']);

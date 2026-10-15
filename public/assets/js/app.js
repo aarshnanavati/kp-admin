@@ -46,6 +46,12 @@
 
         const base = getBaseUrl().replace(/\/+$/, '');
 
+        // Driver ID documents are private: load them through the admin-only route.
+        const privateDoc = cleanPath.replace(/^public\//, '').match(/^uploads\/(licenses|vehicles)\/([A-Za-z0-9._-]+)$/);
+        if (privateDoc) {
+            return `${base}/secure-media/${privateDoc[1]}/${privateDoc[2]}`;
+        }
+
         // Prepend public/ root for uploads and assets if not already prefixed
         if (!cleanPath.startsWith('public/')) {
             cleanPath = 'public/' + cleanPath;
@@ -201,12 +207,21 @@
     const apiRequest = async (url, method = 'GET', body = null) => {
         const cleanUrl = url.startsWith('/') ? url : '/' + url;
         const absoluteUrl = getBaseUrl() + cleanUrl;
+        const headers = {
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': getCsrfToken()
+        };
+        try {
+            const token = localStorage.getItem('kp_admin_token');
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+                headers['X-API-TOKEN'] = token;
+            }
+        } catch (e) {}
+
         const options = {
             method,
-            headers: {
-                'Accept': 'application/json',
-                'X-CSRF-TOKEN': getCsrfToken()
-            }
+            headers
         };
         if (body) {
             options.headers['Content-Type'] = 'application/json';
@@ -214,7 +229,10 @@
         }
         const response = await fetch(absoluteUrl, options);
         if (!response.ok) {
-            const errData = await response.json();
+            if (response.status === 401) {
+                try { localStorage.removeItem('kp_admin_token'); } catch (e) {}
+            }
+            const errData = await response.json().catch(() => ({}));
             throw new Error(errData.message || 'API request failed.');
         }
         return response.json();
@@ -864,7 +882,14 @@
     </label>
     <label class="kp_kitchen_admin_panel_form_group">
       <span class="kp_kitchen_admin_panel_form_label">Password ${u ? '(leave blank to keep current)' : ''}</span>
-      <input name="password" type="password" class="kp_kitchen_admin_panel_form_input" ${u ? '' : 'required'} placeholder="password">
+      <input name="password" type="password" class="kp_kitchen_admin_panel_form_input" ${u ? '' : 'required'} minlength="8" placeholder="At least 8 characters, letters and numbers">
+    </label>
+    <label class="kp_kitchen_admin_panel_form_group">
+      <span class="kp_kitchen_admin_panel_form_label">Role</span>
+      <select name="role" class="kp_kitchen_admin_panel_form_input">
+        <option value="manager" ${u?.role === 'owner' ? '' : 'selected'}>Manager (runs the kitchen, cannot manage admins)</option>
+        <option value="owner" ${u?.role === 'owner' ? 'selected' : ''}>Owner (can also add and remove admins)</option>
+      </select>
     </label>
   `;
 
@@ -1389,7 +1414,8 @@
             const u = {
                 id: userBtn.dataset.id,
                 name: userBtn.dataset.name,
-                email: userBtn.dataset.email
+                email: userBtn.dataset.email,
+                role: userBtn.dataset.role
             };
             openModal('Edit Admin Credentials', userFields(u) + `<input type="hidden" name="id" value="${u.id}">`, 'Save Changes', getBaseUrl() + '/users/save');
             return;
@@ -1841,7 +1867,7 @@
                 <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 20px;">
                   ${addresses.map(addr => `
                     <div style="background-color: var(--bg-color); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
-                      <span style="position: absolute; top: 14px; right: 14px; font-size: 0.75rem; padding: 3px 10px; border-radius: 20px; background-color: ${addr.type === 'Primary Address' ? 'rgba(46,204,113,0.1)' : 'rgba(52,152,219,0.1)'}; color: ${addr.type === 'Primary Address' ? '#2ECC71' : '#3498DB'}; font-weight: 600;">${addr.type}</span>
+                      <span style="position: absolute; top: 14px; right: 14px; font-size: 0.75rem; padding: 3px 10px; border-radius: 20px; background-color: ${addr.type === 'Primary Address' ? 'rgba(46,204,113,0.1)' : 'rgba(52,152,219,0.1)'}; color: ${addr.type === 'Primary Address' ? '#2ECC71' : '#3498DB'}; font-weight: 600;">${escapeHtml(addr.type)}</span>
                       <p style="margin: 0 0 8px 0; font-size: 0.9rem; font-weight: 600; padding-right: 120px; color: var(--text-primary);">Postcode: ${escapeHtml(addr.pincode)}</p>
                       <p style="margin: 0; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">${escapeHtml(addr.address)}</p>
                     </div>
@@ -2772,12 +2798,21 @@
 
                                 try {
                                     const csrfToken = getCsrfToken();
+                                    const headers = {
+                                        'Accept': 'application/json',
+                                        'X-CSRF-TOKEN': csrfToken
+                                    };
+                                    try {
+                                        const token = localStorage.getItem('kp_admin_token');
+                                        if (token) {
+                                            headers['Authorization'] = `Bearer ${token}`;
+                                            headers['X-API-TOKEN'] = token;
+                                        }
+                                    } catch (err) {}
+
                                     const res = await fetch(`${getBaseUrl()}/api/orders/${orderId}/upload-pod`, {
                                         method: 'POST',
-                                        headers: {
-                                            'Accept': 'application/json',
-                                            'X-CSRF-TOKEN': csrfToken
-                                        },
+                                        headers: headers,
                                         body: formData
                                     });
                                     const data = await res.json();
@@ -3033,16 +3068,16 @@
                         <strong style="color: var(--primary-color);">${item.orderId}</strong>
                     </td>
                     <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
-                        <strong>${item.customer || '-'}</strong>
+                        <strong>${escapeHtml(item.customer || '-')}</strong>
                     </td>
                     <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
                         <span style="background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.8rem;">
-                            ${item.area || '-'}
+                            ${escapeHtml(item.area || '-')}
                         </span>
                     </td>
                     <td class="kp_kitchen_admin_panel_table_cell" style="padding: 8px 12px;">
                         <strong style="color: ${item.driverName === 'Unassigned' ? '#e74c3c' : '#2ecc71'};">
-                            ${item.driverName}
+                            ${escapeHtml(item.driverName)}
                         </strong>
                     </td>
                 </tr>
@@ -3092,36 +3127,24 @@
 
         // Helper function to assign driver to single order or batch of orders via AJAX
         async function assignDriverApi(orderId, driverName) {
-            const response = await fetch(`${getBaseUrl()}/api/orders`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                },
-                body: JSON.stringify({
+            try {
+                return await apiRequest('api/orders', 'POST', {
                     id: orderId,
                     driver: driverName
-                })
-            });
-
-            return await response.json();
+                });
+            } catch (err) {
+                return { success: false, message: err.message };
+            }
         }
 
         async function assignBatchDriversApi(batchEntries) {
-            const response = await fetch(`${getBaseUrl()}/api/orders`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                },
-                body: JSON.stringify({
+            try {
+                return await apiRequest('api/orders', 'POST', {
                     batch: batchEntries
-                })
-            });
-
-            return await response.json();
+                });
+            } catch (err) {
+                return { success: false, message: err.message };
+            }
         }
 
         function updateRowStatusBadge(row, statusText) {
@@ -3540,19 +3563,10 @@
                     dispatchConfirmBtn.innerHTML = '<span class="kp_kitchen_admin_panel_spinner" style="display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;margin-right:6px;"></span> Dispatching...';
 
                     try {
-                        const response = await fetch(`${getBaseUrl()}/api/orders/dispatch`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Accept': 'application/json',
-                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                            },
-                            body: JSON.stringify({
-                                order_ids: dispatchableOrders.map(o => o.orderId)
-                            })
+                        const res = await apiRequest('api/orders/dispatch', 'POST', {
+                            order_ids: dispatchableOrders.map(o => o.orderId)
                         });
 
-                        const res = await response.json();
                         if (res.success) {
                             showToast(res.message || `Successfully dispatched ${dispatchableOrders.length} orders! Drivers have been notified.`);
                             closeDispatchModal();
@@ -3573,6 +3587,15 @@
             });
         }
     }
+
+    // Ensure admin token is removed from localStorage on logout form submit
+    document.addEventListener('submit', function (e) {
+        if (e.target && e.target.action && e.target.action.includes('logout')) {
+            try {
+                localStorage.removeItem('kp_admin_token');
+            } catch (err) {}
+        }
+    });
 
     // --- Initialise ---
     initSearchQuery();

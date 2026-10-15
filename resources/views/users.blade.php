@@ -12,7 +12,9 @@
       <h2 class="kp_kitchen_admin_panel_section_title">Administrators</h2>
       <p class="kp_kitchen_admin_panel_section_text">Control panel users with database access.</p>
     </div>
-    <button class="kp_kitchen_admin_panel_primary_button" id="addUserButton">+ Add Administrator</button>
+    @can('manage-admins')
+      <button class="kp_kitchen_admin_panel_primary_button" id="addUserButton">+ Add Administrator</button>
+    @endcan
   </div>
 
   <article class="kp_kitchen_admin_panel_card">
@@ -23,6 +25,7 @@
             <th class="kp_kitchen_admin_panel_table_heading">Admin ID</th>
             <th class="kp_kitchen_admin_panel_table_heading">Name</th>
             <th class="kp_kitchen_admin_panel_table_heading">Email</th>
+            <th class="kp_kitchen_admin_panel_table_heading">Role</th>
             <th class="kp_kitchen_admin_panel_table_heading">Created Date</th>
             <th class="kp_kitchen_admin_panel_table_heading">Actions</th>
           </tr>
@@ -33,13 +36,16 @@
               <td class="kp_kitchen_admin_panel_table_cell">#ADM{{ $user->id }}</td>
               <td class="kp_kitchen_admin_panel_table_cell"><strong>{{ $user->name }}</strong></td>
               <td class="kp_kitchen_admin_panel_table_cell">{{ $user->email }}</td>
+              <td class="kp_kitchen_admin_panel_table_cell">{{ ucfirst($user->role ?? 'manager') }}</td>
               <td class="kp_kitchen_admin_panel_table_cell">{{ $user->created_at->toDateString() }}</td>
               <td class="kp_kitchen_admin_panel_table_cell">
+                @can('manage-admins')
                 <div class="kp_kitchen_admin_panel_table_actions">
                   <button class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_edit edit-user-btn"
                     data-id="{{ $user->id }}"
                     data-name="{{ $user->name }}"
-                    data-email="{{ $user->email }}">
+                    data-email="{{ $user->email }}"
+                    data-role="{{ $user->role ?? 'manager' }}">
                     Edit
                   </button>
                   <form method="POST" action="{{ route('users.delete', $user->id) }}" style="display: inline;" onsubmit="return confirm('Are you sure you want to remove this administrator?');">
@@ -47,11 +53,14 @@
                     <button type="submit" class="kp_kitchen_admin_panel_action_button kp_kitchen_admin_panel_action_delete">Delete</button>
                   </form>
                 </div>
+                @else
+                <span class="kp_kitchen_admin_panel_section_text">Owner only</span>
+                @endcan
               </td>
             </tr>
           @empty
             <tr>
-              <td colspan="5" class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">No administrators found.</td>
+              <td colspan="6" class="kp_kitchen_admin_panel_table_cell" style="text-align: center;">No administrators found.</td>
             </tr>
           @endforelse
         </tbody>

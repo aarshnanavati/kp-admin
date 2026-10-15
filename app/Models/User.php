@@ -23,6 +23,8 @@ class User extends Authenticatable
         'email',
         'password',
         'api_token',
+        'api_token_expires_at',
+        'role',
         'user_type',
         'profile_image',
         'fcm_token',

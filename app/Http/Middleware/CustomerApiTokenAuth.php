@@ -17,7 +17,7 @@ class CustomerApiTokenAuth
      */
     public function handle(Request $request, Closure $next)
     {
-        $token = $request->bearerToken();
+        $token = $request->bearerToken() ?: $request->header('x-api-token') ?: $request->input('api_token') ?: $request->input('token');
         if (!$token) {
             return response()->json([
                 'success' => false,
@@ -25,7 +25,7 @@ class CustomerApiTokenAuth
             ], 401);
         }
 
-        $customer = Customer::where('api_token', $token)->first();
+        $customer = \App\Helpers\ApiTokenHelper::find(\App\Models\Customer::class, $token);
         if (!$customer) {
             return response()->json([
                 'success' => false,

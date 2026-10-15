@@ -17,7 +17,7 @@ class DriverApiTokenAuth
      */
     public function handle(Request $request, Closure $next)
     {
-        $token = $request->bearerToken();
+        $token = $request->bearerToken() ?: $request->header('x-api-token') ?: $request->input('api_token') ?: $request->input('token');
         if (!$token) {
             return response()->json([
                 'success' => false,
@@ -25,7 +25,7 @@ class DriverApiTokenAuth
             ], 401);
         }
 
-        $driver = Driver::where('api_token', $token)->first();
+        $driver = \App\Helpers\ApiTokenHelper::find(\App\Models\Driver::class, $token);
         if (!$driver) {
             return response()->json([
                 'success' => false,

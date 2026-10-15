@@ -2,12 +2,15 @@
 
 use App\Http\Controllers\AdminPanelController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
 
 // --- Guest API Routes ---
+// All guest auth endpoints are rate limited (see AppServiceProvider 'auth' limiter).
+Route::middleware('throttle:auth')->group(function () {
 // Stateless Admin Auth (Postman/Mobile clients)
+// Admin accounts are created by a logged-in admin via /users; there is no public admin sign-up.
 Route::post('/login', [AuthController::class, 'login']);
-Route::post('/register', [AuthController::class, 'register']);
 Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
 Route::post('/forgot-password', [AuthController::class, 'forgetPassword']);
 Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
@@ -16,7 +19,6 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 // Stateful Web Admin Auth (Browser Dashboard)
 Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/register', [AuthController::class, 'register']);
     Route::post('/forget-password', [AuthController::class, 'forgetPassword']);
     Route::post('/forgot-password', [AuthController::class, 'forgetPassword']);
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
@@ -49,6 +51,10 @@ Route::post('/driver/forget-password', [AuthController::class, 'driverForgetPass
 Route::post('/driver/forgot-password', [AuthController::class, 'driverForgetPassword']);
 Route::post('/driver/verify-otp', [AuthController::class, 'driverVerifyOtp']);
 Route::post('/driver/reset-password', [AuthController::class, 'driverResetPassword']);
+});
+
+// --- Stripe webhook (verified by signature, not by login) ---
+Route::post('/stripe/webhook', [StripeWebhookController::class, 'handle'])->middleware('throttle:120,1');
 
 // --- Customer Guest Catalog & Cart Routes ---
 Route::get('/customer/tiffins', [AdminPanelController::class, 'getTiffins']);
@@ -64,14 +70,17 @@ Route::get('/customer/ordering-status', [AuthController::class, 'getOrderingStat
 Route::get('/customer/cutoff-status', [AuthController::class, 'getOrderingStatus']);
 Route::get('/ordering-status', [AuthController::class, 'getOrderingStatus']);
 Route::get('/cutoff-status', [AuthController::class, 'getOrderingStatus']);
-Route::get('/customer/cart', [AuthController::class, 'getCart']);
-Route::post('/customer/cart', [AuthController::class, 'addToCart']);
-Route::post('/customer/cart/remove', [AuthController::class, 'removeFromCart']);
+// Guest carts are keyed by an app-generated ID; rate limit to stop ID guessing.
+Route::middleware('throttle:60,1')->group(function () {
+    Route::get('/customer/cart', [AuthController::class, 'getCart']);
+    Route::post('/customer/cart', [AuthController::class, 'addToCart']);
+    Route::post('/customer/cart/remove', [AuthController::class, 'removeFromCart']);
+});
 
 // --- Customer Authenticated API Routes ---
 Route::middleware('customer.auth')->group(function () {
-    Route::get('/customer/ordering-status', [AuthController::class, 'getOrderingStatus']);
-    Route::get('/customer/cutoff-status', [AuthController::class, 'getOrderingStatus']);
+    // ordering-status / cutoff-status are public (registered above); re-registering them
+    // here overrode the public routes and made guests get 401.
     Route::post('/customer/logout', [AuthController::class, 'customerLogout']);
     Route::get('/customer/profile', [AuthController::class, 'customerProfile']);
     Route::post('/customer/profile/edit', [AuthController::class, 'editCustomerProfile']);
@@ -135,10 +144,6 @@ Route::middleware('driver.auth')->group(function () {
     Route::post('/driver/notifications/clear-all', [AuthController::class, 'clearDriverNotifications']);
     Route::post('/driver/fcm-token', [AuthController::class, 'updateDriverFcmToken']);
 });
-
-// Fallback direct endpoint for driver upload POD
-Route::post('/driver/orders/upload-pod', [AuthController::class, 'driverUploadPod']);
-Route::post('/driver/orders/{id}/upload-pod', [AuthController::class, 'driverUploadPod']);
 
 // --- Admin Dashboard & Operational API Routes (Session & Bearer Token Protected) ---
 Route::middleware('api.or.session')->group(function () {
@@ -223,7 +228,7 @@ Route::middleware('api.or.session')->group(function () {
 
     // Users API
     Route::get('/users', [AdminPanelController::class, 'getUsers']);
-    Route::post('/users', [AdminPanelController::class, 'manageUser']);
+    Route::post('/users', [AdminPanelController::class, 'manageUser'])->middleware('can:manage-admins');
 
     // Web-based Logout
     Route::post('/auth/logout', [AuthController::class, 'logout']);

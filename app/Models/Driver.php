@@ -32,6 +32,7 @@ class Driver extends Model
         'reviewed_at',
         'reviewed_by',
         'api_token',
+        'api_token_expires_at',
         'user_type',
         'profile_image',
         'fcm_token',

@@ -18,6 +18,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use App\Services\FcmService;
 use App\Helpers\AddressHelper;
 use App\Helpers\ImageUploadHelper;
@@ -1275,17 +1276,17 @@ class AdminPanelController extends Controller
 
         if ($request->hasFile('image_file')) {
             $file = $request->file('image_file');
-            $fileName = 'item_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $fileName = 'item_' . uniqid() . '.' . ImageUploadHelper::safeExtension($file);
             $file->move(public_path('uploads/items'), $fileName);
             $imagePath = 'uploads/items/' . $fileName;
         } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
             $uploadsDir = public_path('uploads/items');
             if (!File::exists($uploadsDir)) {
-                File::makeDirectory($uploadsDir, 0777, true, true);
+                File::makeDirectory($uploadsDir, 0755, true, true);
             }
             $imageParts = explode(';base64,', $request->image);
             $imageTypeAux = explode('image/', $imageParts[0]);
-            $imageType = $imageTypeAux[1];
+            $imageType = ImageUploadHelper::cleanImageType($imageTypeAux[1] ?? null);
             $imageDecoded = base64_decode($imageParts[1]);
             $fileName = 'item_' . uniqid() . '.' . $imageType;
             File::put($uploadsDir . '/' . $fileName, $imageDecoded);
@@ -1295,7 +1296,7 @@ class AdminPanelController extends Controller
         $baseData = [
             'category_id' => $request->category_id,
             'description' => $request->description ? trim($request->description) : null,
-            'status' => $request->status,
+            'status' => $request->status ?: (optional(Item::find($request->input('id')))->status ?? 'Active'),
             'image' => $imagePath,
         ];
 
@@ -1389,24 +1390,24 @@ class AdminPanelController extends Controller
 
         if ($request->hasFile('image_file')) {
             $file = $request->file('image_file');
-            $fileName = 'tiffin_'.time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+            $fileName = 'tiffin_'.time().'_'.uniqid().'.'.ImageUploadHelper::safeExtension($file);
             $uploadsDir = public_path('uploads');
             if (! File::exists($uploadsDir)) {
-                File::makeDirectory($uploadsDir, 0777, true, true);
+                File::makeDirectory($uploadsDir, 0755, true, true);
             }
             $file->move($uploadsDir, $fileName);
             $imagePath = 'uploads/'.$fileName;
         } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
             $imageParts = explode(';base64,', $request->image);
             $imageTypeAux = explode('image/', $imageParts[0]);
-            $imageType = $imageTypeAux[1];
+            $imageType = ImageUploadHelper::cleanImageType($imageTypeAux[1] ?? null);
             $imageDecoded = base64_decode($imageParts[1]);
 
             $fileName = 'tiffin_'.uniqid().'.'.$imageType;
             $uploadsDir = public_path('uploads');
 
             if (! File::exists($uploadsDir)) {
-                File::makeDirectory($uploadsDir, 0777, true, true);
+                File::makeDirectory($uploadsDir, 0755, true, true);
             }
 
             File::put($uploadsDir.'/'.$fileName, $imageDecoded);
@@ -1423,7 +1424,7 @@ class AdminPanelController extends Controller
             'category_id' => $request->category_id,
             'description' => $request->description ? trim($request->description) : null,
             'prep_time' => (int) ($request->prep_time ?? 0),
-            'status' => $request->status,
+            'status' => $request->status ?: (optional(Tiffin::find($request->input('id')))->status ?? 'Active'),
             'items' => $items,
             'image' => $imagePath,
             'is_customizable' => $isCustomizable,
@@ -1630,7 +1631,7 @@ class AdminPanelController extends Controller
             'vehicle_reg_no' => $request->vehicle_reg_no ? trim($request->vehicle_reg_no) : null,
             'assigned_zip' => $assignedZip,
             'area' => $assignedZip,
-            'status' => $request->status,
+            'status' => $request->status ?: ($existingDriver->status ?? 'Active'),
             'license_copy_front' => $frontPath,
             'license_copy_back' => $backPath,
             'vehicle_reg_image' => $vehicleRegPath,
@@ -2026,7 +2027,7 @@ class AdminPanelController extends Controller
 
         if ($request->hasFile('collected_photo')) {
             $file = $request->file('collected_photo');
-            $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $filename = time() . '_' . uniqid() . '.' . ImageUploadHelper::safeExtension($file);
             $file->move(public_path('uploads/collected'), $filename);
             $data['collected_photo'] = 'uploads/collected/' . $filename;
         }
@@ -2211,13 +2212,15 @@ class AdminPanelController extends Controller
 
     public function saveUser(Request $request)
     {
+        $id = $request->input('id');
+
         $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email',
-            'password' => 'nullable|string|min:6',
+            'email' => 'required|email|max:255|unique:users,email' . ($id ? ',' . (int) $id : ''),
+            'password' => ['nullable', 'string', \Illuminate\Validation\Rules\Password::min(8)->letters()->numbers()],
+            'role' => 'nullable|in:owner,manager',
         ]);
 
-        $id = $request->input('id');
         $data = [
             'name' => trim($request->name),
             'email' => strtolower(trim($request->email)),
@@ -2229,12 +2232,20 @@ class AdminPanelController extends Controller
 
         if ($id) {
             $user = User::findOrFail($id);
+            if ($request->filled('role')) {
+                if ($user->role === 'owner' && $request->role !== 'owner' && User::where('role', 'owner')->count() <= 1) {
+                    return back()->withErrors(['role' => 'There must always be at least one owner.']);
+                }
+                $data['role'] = $request->role;
+            }
             $user->update($data);
             $msg = 'User details updated successfully.';
         } else {
             if (!$request->filled('password')) {
                 return back()->withErrors(['password' => 'A password is required for new users.']);
             }
+            $data['role'] = $request->input('role', 'manager');
+            $data['user_type'] = 'admin';
             User::create($data);
             $msg = 'System administrator added successfully.';
         }
@@ -2249,6 +2260,12 @@ class AdminPanelController extends Controller
         }
 
         $user = User::findOrFail($id);
+        if ((int) $user->id === (int) auth()->id()) {
+            return redirect()->back()->with('error', 'You cannot delete your own account.');
+        }
+        if ($user->role === 'owner' && User::where('role', 'owner')->count() <= 1) {
+            return redirect()->back()->with('error', 'Cannot delete the only remaining owner.');
+        }
         $user->delete();
         return redirect()->back()->with('success', 'System administrator removed successfully.');
     }
@@ -3181,11 +3198,11 @@ class AdminPanelController extends Controller
 
         $podDir = public_path('uploads/pod');
         if (!File::exists($podDir)) {
-            File::makeDirectory($podDir, 0777, true, true);
+            File::makeDirectory($podDir, 0755, true, true);
         }
 
         if ($photoFile) {
-            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $photoFile->getClientOriginalExtension();
+            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . ImageUploadHelper::safeExtension($photoFile);
             $photoFile->move($podDir, $fileName);
             $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
         } else {
@@ -3200,7 +3217,7 @@ class AdminPanelController extends Controller
                 if (str_starts_with($base64Input, 'data:image/')) {
                     $parts = explode(';base64,', $base64Input);
                     $typeParts = explode('image/', $parts[0]);
-                    $imageType = $typeParts[1] ?? 'jpg';
+                    $imageType = ImageUploadHelper::cleanImageType($typeParts[1] ?? null);
                     $imageData = $parts[1] ?? '';
                 }
                 $decoded = base64_decode($imageData);
@@ -3576,7 +3593,7 @@ class AdminPanelController extends Controller
                 'vehicle_reg_no' => trim($request->vehicle_reg_no ?? ''),
                 'assigned_zip' => $assignedZip,
                 'area' => $assignedZip, // Compatibility copy of postcode
-                'status' => $request->status,
+                'status' => $request->status ?: ($existingDriver->status ?? 'Active'),
                 'license_copy_front' => $frontPath,
                 'license_copy_back' => $backPath,
                 'vehicle_reg_image' => $vehicleRegPath,
@@ -3635,28 +3652,34 @@ class AdminPanelController extends Controller
         $action = $request->input('action');
 
         if ($action === 'create' || $action === 'update') {
+            $request->validate([
+                'name' => 'required|string|max:255',
+                'price' => 'required|numeric|min:0',
+                'category_id' => 'nullable|exists:categories,id',
+                'id' => $action === 'update' ? 'required|exists:tiffins,id' : 'nullable',
+            ]);
             $imagePath = $request->image;
 
             if ($request->hasFile('image_file')) {
                 $file = $request->file('image_file');
-                $fileName = 'tiffin_'.time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+                $fileName = 'tiffin_'.time().'_'.uniqid().'.'.ImageUploadHelper::safeExtension($file);
                 $uploadsDir = public_path('uploads');
                 if (! File::exists($uploadsDir)) {
-                    File::makeDirectory($uploadsDir, 0777, true, true);
+                    File::makeDirectory($uploadsDir, 0755, true, true);
                 }
                 $file->move($uploadsDir, $fileName);
                 $imagePath = 'uploads/'.$fileName;
             } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
                 $imageParts = explode(';base64,', $request->image);
                 $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1];
+                $imageType = ImageUploadHelper::cleanImageType($imageTypeAux[1] ?? null);
                 $imageDecoded = base64_decode($imageParts[1]);
 
                 $fileName = 'tiffin_'.uniqid().'.'.$imageType;
                 $uploadsDir = public_path('uploads');
 
                 if (! File::exists($uploadsDir)) {
-                    File::makeDirectory($uploadsDir, 0777, true, true);
+                    File::makeDirectory($uploadsDir, 0755, true, true);
                 }
 
                 File::put($uploadsDir.'/'.$fileName, $imageDecoded);
@@ -3669,7 +3692,7 @@ class AdminPanelController extends Controller
                 'items' => is_array($request->items) ? $request->items : [],
                 'description' => trim($request->description),
                 'prep_time' => (int) ($request->prepTime ?? $request->prep_time ?? 0),
-                'status' => $request->status,
+                'status' => $request->status ?: (optional(Tiffin::find($request->input('id')))->status ?? 'Active'),
                 'image' => $imagePath,
                 'category_id' => $request->category_id ?: null,
                 'is_customizable' => filter_var($request->input('is_customizable', false), FILTER_VALIDATE_BOOLEAN),
@@ -4093,28 +4116,34 @@ class AdminPanelController extends Controller
         $action = $request->input('action');
 
         if ($action === 'create' || $action === 'update') {
+            $request->validate([
+                'name' => 'required|string|max:255',
+                'price' => 'required|numeric|min:0',
+                'category_id' => 'nullable|exists:categories,id',
+                'id' => $action === 'update' ? 'required|exists:items,id' : 'nullable',
+            ]);
             $imagePath = $request->image;
 
             if ($request->hasFile('image_file')) {
                 $file = $request->file('image_file');
-                $fileName = 'item_'.time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+                $fileName = 'item_'.time().'_'.uniqid().'.'.ImageUploadHelper::safeExtension($file);
                 $uploadsDir = public_path('uploads/items');
                 if (! File::exists($uploadsDir)) {
-                    File::makeDirectory($uploadsDir, 0777, true, true);
+                    File::makeDirectory($uploadsDir, 0755, true, true);
                 }
                 $file->move($uploadsDir, $fileName);
                 $imagePath = 'uploads/items/'.$fileName;
             } elseif ($request->filled('image') && str_starts_with($request->image, 'data:image/')) {
                 $imageParts = explode(';base64,', $request->image);
                 $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1];
+                $imageType = ImageUploadHelper::cleanImageType($imageTypeAux[1] ?? null);
                 $imageDecoded = base64_decode($imageParts[1]);
 
                 $fileName = 'item_'.uniqid().'.'.$imageType;
                 $uploadsDir = public_path('uploads/items');
 
                 if (! File::exists($uploadsDir)) {
-                    File::makeDirectory($uploadsDir, 0777, true, true);
+                    File::makeDirectory($uploadsDir, 0755, true, true);
                 }
 
                 File::put($uploadsDir.'/'.$fileName, $imageDecoded);
@@ -4125,7 +4154,7 @@ class AdminPanelController extends Controller
                 'name' => trim($request->name),
                 'price' => (float) $request->price,
                 'description' => trim($request->description),
-                'status' => $request->status,
+                'status' => $request->status ?: (optional(Item::find($request->input('id')))->status ?? 'Active'),
                 'image' => $imagePath,
                 'category_id' => $request->category_id,
             ];
@@ -4287,7 +4316,7 @@ class AdminPanelController extends Controller
                 'type' => $request->type,
                 'value' => (float) $request->value,
                 'expiry_date' => $request->expiry_date,
-                'status' => $request->status,
+                'status' => $request->status ?: 'Active',
             ]);
 
             return response()->json(['success' => true, 'coupon' => $coupon]);
@@ -4300,7 +4329,7 @@ class AdminPanelController extends Controller
                 'type' => $request->type,
                 'value' => (float) $request->value,
                 'expiry_date' => $request->expiry_date,
-                'status' => $request->status,
+                'status' => $request->status ?: $coupon->status,
             ]);
 
             return response()->json(['success' => true, 'coupon' => $coupon]);
@@ -4486,12 +4515,22 @@ class AdminPanelController extends Controller
     public function manageUser(Request $request)
     {
         $action = $request->input('action');
+        $passwordRule = \Illuminate\Validation\Rules\Password::min(8)->letters()->numbers();
 
         if ($action === 'create') {
+            $request->validate([
+                'name' => 'required|string|max:255',
+                'email' => 'required|email|max:255|unique:users,email',
+                'password' => ['required', 'string', $passwordRule],
+                'role' => 'nullable|in:owner,manager',
+            ]);
+
             $user = User::create([
                 'name' => trim($request->name),
-                'email' => trim($request->email),
+                'email' => strtolower(trim($request->email)),
                 'password' => Hash::make($request->password),
+                'user_type' => 'admin',
+                'role' => $request->input('role', 'manager'),
             ]);
 
             return response()->json(['success' => true, 'user' => $user]);
@@ -4499,12 +4538,24 @@ class AdminPanelController extends Controller
 
         if ($action === 'update') {
             $user = User::findOrFail($request->id);
+            $request->validate([
+                'name' => 'required|string|max:255',
+                'email' => 'required|email|max:255|unique:users,email,' . $user->id,
+                'password' => ['nullable', 'string', $passwordRule],
+                'role' => 'nullable|in:owner,manager',
+            ]);
             $data = [
                 'name' => trim($request->name),
-                'email' => trim($request->email),
+                'email' => strtolower(trim($request->email)),
             ];
             if ($request->filled('password')) {
                 $data['password'] = Hash::make($request->password);
+            }
+            if ($request->filled('role')) {
+                if ($user->role === 'owner' && $request->role !== 'owner' && User::where('role', 'owner')->count() <= 1) {
+                    return response()->json(['success' => false, 'message' => 'There must always be at least one owner.'], 400);
+                }
+                $data['role'] = $request->role;
             }
             $user->update($data);
 
@@ -4515,6 +4566,12 @@ class AdminPanelController extends Controller
             $user = User::findOrFail($request->id);
             if (User::count() <= 1) {
                 return response()->json(['success' => false, 'message' => 'Cannot delete the last administrator.'], 400);
+            }
+            if ((int) $user->id === (int) auth()->id()) {
+                return response()->json(['success' => false, 'message' => 'You cannot delete your own account.'], 400);
+            }
+            if ($user->role === 'owner' && User::where('role', 'owner')->count() <= 1) {
+                return response()->json(['success' => false, 'message' => 'Cannot delete the only remaining owner.'], 400);
             }
             $user->delete();
 
@@ -4562,7 +4619,7 @@ class AdminPanelController extends Controller
         if (!$user) {
             $token = $request->bearerToken();
             if ($token) {
-                $user = User::where('api_token', $token)->first();
+                $user = \App\Helpers\ApiTokenHelper::find(\App\Models\User::class, $token);
             }
         }
 

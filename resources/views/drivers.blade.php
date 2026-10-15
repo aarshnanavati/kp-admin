@@ -50,7 +50,7 @@
             <div class="kp_kitchen_admin_panel_doc_preview_card">
               <span>License Front</span>
               @if ($driver->license_copy_front)
-                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset(str_starts_with($driver->license_copy_front, 'public/') ? $driver->license_copy_front : 'public/' . ltrim($driver->license_copy_front, '/')) }}" alt="Front"></div>
+                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ \App\Helpers\ImageUploadHelper::url($driver->license_copy_front) }}" alt="Front"></div>
               @else
                 <div class="kp_kitchen_admin_panel_doc_image_wrap">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -66,7 +66,7 @@
             <div class="kp_kitchen_admin_panel_doc_preview_card">
               <span>License Back</span>
               @if ($driver->license_copy_back)
-                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset(str_starts_with($driver->license_copy_back, 'public/') ? $driver->license_copy_back : 'public/' . ltrim($driver->license_copy_back, '/')) }}" alt="Back"></div>
+                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ \App\Helpers\ImageUploadHelper::url($driver->license_copy_back) }}" alt="Back"></div>
               @else
                 <div class="kp_kitchen_admin_panel_doc_image_wrap">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -82,7 +82,7 @@
             <div class="kp_kitchen_admin_panel_doc_preview_card">
               <span>Vehicle Rego</span>
               @if ($driver->vehicle_reg_image)
-                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ asset(str_starts_with($driver->vehicle_reg_image, 'public/') ? $driver->vehicle_reg_image : 'public/' . ltrim($driver->vehicle_reg_image, '/')) }}" alt="Vehicle Rego"></div>
+                <div class="kp_kitchen_admin_panel_doc_image_wrap"><img src="{{ \App\Helpers\ImageUploadHelper::url($driver->vehicle_reg_image) }}" alt="Vehicle Rego"></div>
               @else
                 <div class="kp_kitchen_admin_panel_doc_image_wrap">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

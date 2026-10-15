@@ -2,22 +2,29 @@
 
 use App\Http\Controllers\AdminPanelController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\SecureMediaController;
 use Illuminate\Support\Facades\Route;
 
 // --- Guest Routes ---
 Route::middleware('guest')->group(function () {
     // Show forms
     Route::get('/login', [LoginController::class, 'showLogin'])->name('login');
-    Route::get('/register', [LoginController::class, 'showRegister'])->name('register');
     Route::get('/forgot-password', [LoginController::class, 'showForgotPassword'])->name('forgot-password');
 
-    // Submit forms
-    Route::post('/login', [LoginController::class, 'loginSubmit'])->name('login.submit');
-    Route::post('/register', [LoginController::class, 'registerSubmit'])->name('register.submit');
-    Route::post('/forgot-password/send-otp', [LoginController::class, 'sendOtp'])->name('forgot-password.send-otp');
-    Route::post('/forgot-password/verify-otp', [LoginController::class, 'verifyOtp'])->name('forgot-password.verify-otp');
-    Route::post('/forgot-password/reset', [LoginController::class, 'resetPassword'])->name('forgot-password.reset');
+    // Submit forms (rate limited; there is no public admin sign-up)
+    Route::middleware('throttle:auth')->group(function () {
+        Route::post('/login', [LoginController::class, 'loginSubmit'])->name('login.submit');
+        Route::post('/forgot-password/send-otp', [LoginController::class, 'sendOtp'])->name('forgot-password.send-otp');
+        Route::post('/forgot-password/verify-otp', [LoginController::class, 'verifyOtp'])->name('forgot-password.verify-otp');
+        Route::post('/forgot-password/reset', [LoginController::class, 'resetPassword'])->name('forgot-password.reset');
+    });
 });
+
+// --- Private driver documents (signed link, admin session or admin token) ---
+Route::get('/secure-media/{folder}/{file}', [SecureMediaController::class, 'show'])
+    ->where(['folder' => 'licenses|vehicles', 'file' => '[A-Za-z0-9._-]+'])
+    ->middleware('throttle:120,1')
+    ->name('secure-media');
 
 // --- Authenticated Admin Routes (Pages & Actions) ---
 Route::middleware('api.or.session')->group(function () {
@@ -76,8 +83,8 @@ Route::middleware('api.or.session')->group(function () {
     Route::post('/invoices/{id}/notify', [AdminPanelController::class, 'sendInvoiceNotification'])->name('invoices.notify');
     Route::post('/invoices/generate-and-notify', [AdminPanelController::class, 'generateAndNotifyAllWeeklyInvoices'])->name('invoices.generate-and-notify');
 
-    Route::post('/users/save', [AdminPanelController::class, 'saveUser'])->name('users.save');
-    Route::post('/users/delete/{id}', [AdminPanelController::class, 'deleteUser'])->name('users.delete');
+    Route::post('/users/save', [AdminPanelController::class, 'saveUser'])->middleware('can:manage-admins')->name('users.save');
+    Route::post('/users/delete/{id}', [AdminPanelController::class, 'deleteUser'])->middleware('can:manage-admins')->name('users.delete');
 
     Route::post('/notifications/read-all', [AdminPanelController::class, 'readAllNotifications'])->name('notifications.read-all');
     Route::post('/notifications/read/{id}', [AdminPanelController::class, 'readSingleNotification'])->name('notifications.read');

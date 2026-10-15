@@ -20,6 +20,7 @@ class Customer extends Authenticatable
         'address',
         'password',
         'api_token',
+        'api_token_expires_at',
         'user_type',
         'login_count',
         'profile_image',

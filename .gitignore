@@ -22,3 +22,14 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Uploaded files (ID documents, photos) never belong in git
+/public/uploads/*
+!/public/uploads/.htaccess
+!/public/uploads/licenses/
+/public/uploads/licenses/*
+!/public/uploads/licenses/.htaccess
+!/public/uploads/vehicles/
+/public/uploads/vehicles/*
+!/public/uploads/vehicles/.htaccess
+*.zip

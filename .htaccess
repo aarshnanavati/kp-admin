@@ -1,3 +1,23 @@
+# NOTE: The safest setup is to point the web server's document root at the
+# public/ folder. This file exists for hosts where the project root is served,
+# so it must stop every private file (.env, .git, storage, vendor...) from
+# being downloaded.
+
+Options -Indexes
+
+# Security headers for static files served directly by Apache
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header unset X-Powered-By
+</IfModule>
+
+# Fallback protection if mod_rewrite is unavailable: never serve dotfiles.
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
@@ -11,7 +31,12 @@
     RewriteCond %{DOCUMENT_ROOT}%1/public/%2 -d
     RewriteRule ^(.*)$ public/$1 [L]
 
-    # 2. Send all router paths to the root index.php
+    # 2. Block private files and folders outside public/
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+    RewriteRule ^(app|bootstrap|config|database|node_modules|resources|routes|scratch|storage|tests|vendor)(/|$) - [F,L]
+    RewriteRule ^(artisan|composer\.(json|lock)|package(-lock)?\.json|phpunit\.xml|vite\.config\.js|README\.md)$ - [F,L]
+
+    # 3. Send all router paths to the root index.php
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^ index.php [L]

@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Log;
 use App\Services\FcmService;
 use App\Helpers\AddressHelper;
 use App\Helpers\ImageUploadHelper;
+use App\Helpers\ApiTokenHelper;
 use App\Helpers\TimezoneHelper;
 use Carbon\Carbon;
 
@@ -55,7 +56,7 @@ class AuthController extends Controller
             }
             $user = Auth::user();
             $token = Str::random(60);
-            $user->update(['api_token' => $token]);
+            $user->update(ApiTokenHelper::columns($token));
 
             try {
                 Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("User Login Notification", "{$user->name} has logged in into KP's Kitchen."));
@@ -77,61 +78,7 @@ class AuthController extends Controller
         return response()->json([
             'success' => false,
             'message' => 'Invalid email or password.',
-        ]);
-    }
-
-    /**
-     * Handle admin registration request.
-     */
-    public function register(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
-            'password' => 'required|string|min:6',
-            'confirm_password' => 'required|string|min:6',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation error: ' . implode(' ', $validator->errors()->all()),
-            ], 422);
-        }
-
-        if ($request->password !== $request->confirm_password) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Passwords do not match.',
-            ]);
-        }
-
-        $email = strtolower(trim($request->email));
-        if (User::where('email', $email)->exists()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'An admin with this email already exists.',
-            ]);
-        }
-
-        $user = User::create([
-            'name' => trim($request->name),
-            'email' => $email,
-            'password' => Hash::make($request->password),
-            'user_type' => 'admin',
-        ]);
-
-        try {
-            Mail::to($user->email)->send(new KitchenAlertMail("Welcome to KP's Kitchen Admin Panel!", "Thank you {$user->name} for registering in KP's Kitchen admin team!"));
-            Mail::to('admin@kpkitchen.com')->send(new KitchenAlertMail("New User Registration", "new user {$user->name} have registerd"));
-        } catch (\Exception $e) {
-            Log::warning("Admin registration email triggers failed: " . $e->getMessage());
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Registration successful. Redirecting to login...',
-        ]);
+        ], 401);
     }
 
     /**
@@ -171,39 +118,21 @@ class AuthController extends Controller
         }
 
         $email = strtolower(trim($request->email));
-        if (!User::where('email', $email)->exists()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No admin account found with that email address.',
-            ]);
-        }
+        // Respond the same way whether or not the account exists, so this
+        // endpoint cannot be used to discover registered emails.
+        if (User::where('email', $email)->exists()) {
+            $otp = PasswordOtp::issue($email);
 
-        // Generate 6-digit OTP
-        $otp = (string)rand(100000, 999999);
-
-        // Delete old OTPs for this email
-        PasswordOtp::where('email', $email)->delete();
-
-        // Create new OTP valid for 10 minutes
-        PasswordOtp::create([
-            'email' => $email,
-            'otp' => $otp,
-            'expires_at' => Carbon::now()->addMinutes(10),
-        ]);
-
-        // Log OTP locally for easy testing without SMTP setup
-        Log::info("Password Reset OTP for {$email}: {$otp}");
-
-        // Send actual email via Laravel Mail
-        try {
-            Mail::to($email)->send(new SendOtpMail($otp));
-        } catch (\Exception $e) {
-            Log::warning("SMTP email sending failed. Fallback: Check storage/logs/laravel.log. Error: " . $e->getMessage());
+            try {
+                Mail::to($email)->send(new SendOtpMail($otp));
+            } catch (\Exception $e) {
+                Log::warning('Password reset OTP email failed: ' . $e->getMessage());
+            }
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'A verification OTP has been sent to your email. (Also logged to laravel.log for local testing)',
+            'message' => 'If an account exists for that email, a verification code has been sent to it.',
         ]);
     }
 
@@ -225,10 +154,7 @@ class AuthController extends Controller
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -251,7 +177,7 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'otp' => 'required|string|size:6',
-            'password' => 'required|string|min:6',
+            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::min(8)->letters()->numbers()],
             'confirm_password' => 'required|string|min:6',
         ]);
 
@@ -272,10 +198,7 @@ class AuthController extends Controller
         $email = strtolower(trim($request->email));
 
         // Re-verify OTP to prevent bypasses
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -329,19 +252,8 @@ class AuthController extends Controller
         }
 
         // Generate 6-digit OTP
-        $otp = (string)rand(100000, 999999);
+        $otp = PasswordOtp::issue($email);
 
-        // Delete old OTPs for this email
-        PasswordOtp::where('email', $email)->delete();
-
-        // Create new OTP valid for 10 minutes
-        PasswordOtp::create([
-            'email' => $email,
-            'otp' => $otp,
-            'expires_at' => Carbon::now()->addMinutes(10),
-        ]);
-
-        Log::info("Customer Registration Verification OTP for {$email}: {$otp}");
 
         // Send OTP email
         try {
@@ -375,10 +287,7 @@ class AuthController extends Controller
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -394,7 +303,7 @@ class AuthController extends Controller
             $customer->update([
                 'is_verified' => true,
                 'email_verified_at' => Carbon::now(),
-                'api_token' => $token,
+                ...ApiTokenHelper::columns($token),
             ]);
 
             // Delete verified OTP record
@@ -574,19 +483,10 @@ class AuthController extends Controller
         $otpRecord = null;
 
         if ($providedOtp) {
-            $otpRecord = PasswordOtp::where('email', $email)
-                ->where(function ($q) use ($providedOtp) {
-                    $q->where('otp', $providedOtp)
-                      ->orWhere('otp', 'VERIFIED');
-                })
-                ->where('expires_at', '>', Carbon::now())
-                ->first();
+            $otpRecord = PasswordOtp::findValid($email, $providedOtp, true);
         } else {
             // Check if user already verified their email via verify-otp endpoint earlier on the same screen
-            $otpRecord = PasswordOtp::where('email', $email)
-                ->where('otp', 'VERIFIED')
-                ->where('expires_at', '>', Carbon::now())
-                ->first();
+            $otpRecord = PasswordOtp::findVerified($email);
         }
 
         $isVerified = ($otpRecord !== null);
@@ -612,7 +512,7 @@ class AuthController extends Controller
                     'city' => $city,
                     'pincode' => $pincode ?: trim($request->pincode),
                     'address' => $formattedAddress ?: trim($request->address),
-                    'api_token' => $token,
+                    ...ApiTokenHelper::columns($token),
                     'is_verified' => true,
                     'email_verified_at' => Carbon::now(),
                     'fcm_token' => $request->input('fcm_token') ?: $existingCustomer->fcm_token,
@@ -629,7 +529,7 @@ class AuthController extends Controller
                     'city' => $city,
                     'pincode' => $pincode ?: trim($request->pincode),
                     'address' => $formattedAddress ?: trim($request->address),
-                    'api_token' => $token,
+                    ...ApiTokenHelper::columns($token),
                     'user_type' => 'customer',
                     'is_verified' => true,
                     'email_verified_at' => Carbon::now(),
@@ -751,15 +651,8 @@ class AuthController extends Controller
         );
 
         // Generate and send 6-digit OTP
-        $otp = (string)rand(100000, 999999);
-        PasswordOtp::where('email', $email)->delete();
-        PasswordOtp::create([
-            'email' => $email,
-            'otp' => $otp,
-            'expires_at' => Carbon::now()->addMinutes(10),
-        ]);
+        $otp = PasswordOtp::issue($email);
 
-        Log::info("Customer Registration Verification OTP for {$email}: {$otp}");
 
         try {
             Mail::to($email)->send(new SendOtpMail($otp, null, 'verification'));
@@ -804,15 +697,8 @@ class AuthController extends Controller
 
         // Gate: Customer must be verified before logging in
         if ($customer->is_verified === false || $customer->is_verified === 0) {
-            $otp = (string)rand(100000, 999999);
-            PasswordOtp::where('email', $customer->email)->delete();
-            PasswordOtp::create([
-                'email' => $customer->email,
-                'otp' => $otp,
-                'expires_at' => Carbon::now()->addMinutes(10),
-            ]);
+            $otp = PasswordOtp::issue($customer->email);
 
-            Log::info("Unverified login attempt - OTP generated for {$customer->email}: {$otp}");
 
             try {
                 Mail::to($customer->email)->send(new SendOtpMail($otp, null, 'verification'));
@@ -830,7 +716,7 @@ class AuthController extends Controller
         }
 
         $token = Str::random(60);
-        $updateFields = ['api_token' => $token];
+        $updateFields = ApiTokenHelper::columns($token);
         if ($request->filled('fcm_token')) {
             $updateFields['fcm_token'] = $request->fcm_token;
         }
@@ -1109,7 +995,7 @@ class AuthController extends Controller
      */
     public function getCurrentWeeklyPayment(Request $request)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json([
                 'success' => false,
@@ -1212,7 +1098,7 @@ class AuthController extends Controller
      */
     public function placeCustomerOrder(Request $request)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json(['success' => false, 'message' => 'Customer not found or unauthorized.'], 401);
         }
@@ -1611,7 +1497,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
 
     public function payWeeklyBill(Request $request)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json([
                 'success' => false,
@@ -1649,6 +1535,9 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                     'amount' => (int) round($totalAmount * 100),
                     'currency' => 'aud',
                     'automatic_payment_methods[enabled]' => 'true',
+                    'metadata[customer_id]' => (string) $customer->id,
+                    'metadata[kind]' => 'weekly',
+                    'metadata[bill_id]' => (string) ($billId ?? ''),
                 ]);
 
                 if ($response->failed()) {
@@ -1700,7 +1589,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
 
     public function confirmWeeklyBillPayment(Request $request)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json([
                 'success' => false,
@@ -1744,41 +1633,19 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             ], 400);
         }
 
-        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
-        $paymentCleared = false;
-        $actualPaidAmount = 0.0;
-
-        if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
-            try {
-                $response = \Illuminate\Support\Facades\Http::withHeaders([
-                    'Authorization' => 'Bearer ' . $stripeSecret,
-                ])->get('https://api.stripe.com/v1/payment_intents/' . $paymentIntentId);
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    if (isset($data['status']) && in_array($data['status'], ['succeeded', 'processing', 'requires_capture'])) {
-                        $paymentCleared = true;
-                    } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
-                        $paymentCleared = true;
-                    }
-                    if (isset($data['amount'])) {
-                        $actualPaidAmount = ((float) $data['amount']) / 100.0;
-                    }
-                }
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Stripe connection error: ' . $e->getMessage(),
-                ], 500);
-            }
-        } else {
-            $paymentCleared = true;
+        $verification = $this->verifyStripePayment($paymentIntentId, $customer, $totalAmount);
+        if (!empty($verification['error'])) {
+            return response()->json([
+                'success' => false,
+                'message' => $verification['error'],
+            ], $verification['status'] ?? 400);
         }
+        $paymentCleared = $verification['cleared'];
+        $actualPaidAmount = $verification['paid'];
 
         if ($paymentCleared) {
-            $settleAmount = $actualPaidAmount > 0
-                ? $actualPaidAmount
-                : ((float) ($request->input('amount') ?: $totalAmount));
+            // Only the amount Stripe actually received counts; never the client's figure.
+            $settleAmount = $actualPaidAmount;
 
             // Settle all resolved invoices first
             $settledInvoices = collect([]);
@@ -1803,7 +1670,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                     ->get();
 
                 foreach ($otherUnpaidInvoices as $otherInv) {
-                    if ($remainingPayment >= ((float) $otherInv->amount - 0.05) || (($resolved['is_overdue'] ?? false) && $settleAmount >= (float) $otherInv->amount)) {
+                    if ($remainingPayment >= ((float) $otherInv->amount - 0.05)) {
                         $otherInv->status = 'Paid';
                         $otherInv->save();
                         $settledInvoices->push($otherInv);
@@ -2207,7 +2074,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
      */
     public function customerInvoiceDetails(Request $request, $id)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json([
                 'success' => false,
@@ -2539,7 +2406,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             Log::warning("Driver registration email triggers failed: " . $e->getMessage());
         }
 
-        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+        $vehicleRegUrl = $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null;
 
         $driverData = array_merge([
             'id' => $driver->id,
@@ -2553,8 +2420,8 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             'license_no' => $driver->license_no,
             'license_number' => $driver->license_no,
             'license_expiry' => $driver->license_expiry,
-            'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
-            'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+            'license_copy_front' => $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null,
+            'license_copy_back' => $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null,
             'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
             'vehicle_reg_image' => $vehicleRegUrl,
             'vehicle_registration_image' => $vehicleRegUrl,
@@ -2627,7 +2494,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $token = Str::random(60);
-        $updateFields = ['api_token' => $token];
+        $updateFields = ApiTokenHelper::columns($token);
         if ($request->filled('fcm_token')) {
             $updateFields['fcm_token'] = $request->fcm_token;
         }
@@ -2655,7 +2522,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             Log::warning("Driver login alert email failed: " . $e->getMessage());
         }
 
-        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+        $vehicleRegUrl = $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null;
 
         $driverData = array_merge([
             'id' => $driver->id,
@@ -2669,8 +2536,8 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             'license_no' => $driver->license_no,
             'license_number' => $driver->license_no,
             'license_expiry' => $driver->license_expiry,
-            'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
-            'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+            'license_copy_front' => $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null,
+            'license_copy_back' => $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null,
             'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
             'vehicle_reg_image' => $vehicleRegUrl,
             'vehicle_registration_image' => $vehicleRegUrl,
@@ -2719,7 +2586,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
     public function driverProfile(Request $request)
     {
         $driver = $request->attributes->get('driver');
-        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+        $vehicleRegUrl = $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null;
 
         $driverData = array_merge([
             'id' => $driver->id,
@@ -2730,8 +2597,8 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             'phone' => $driver->phone,
             'license_no' => $driver->license_no,
             'license_expiry' => $driver->license_expiry,
-            'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
-            'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+            'license_copy_front' => $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null,
+            'license_copy_back' => $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null,
             'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
             'vehicle_reg_no' => $driver->vehicle_reg_no,
             'vehicle_reg_image' => $vehicleRegUrl,
@@ -2770,32 +2637,21 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        if (!Customer::where('email', $email)->exists()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No customer account found with that email address.',
-            ], 422);
-        }
+        // Respond the same way whether or not the account exists, so this
+        // endpoint cannot be used to discover registered emails.
+        if (Customer::where('email', $email)->exists()) {
+            $otp = PasswordOtp::issue($email);
 
-        $otp = (string)rand(100000, 999999);
-        PasswordOtp::where('email', $email)->delete();
-        PasswordOtp::create([
-            'email' => $email,
-            'otp' => $otp,
-            'expires_at' => Carbon::now()->addMinutes(10),
-        ]);
-
-        Log::info("Customer Password Reset OTP for {$email}: {$otp}");
-
-        try {
-            Mail::to($email)->send(new SendOtpMail($otp));
-        } catch (\Exception $e) {
-            Log::warning("SMTP email sending failed. Fallback logged in laravel.log.");
+            try {
+                Mail::to($email)->send(new SendOtpMail($otp));
+            } catch (\Exception $e) {
+                Log::warning('Password reset OTP email failed: ' . $e->getMessage());
+            }
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'A verification OTP has been sent to your email.',
+            'message' => 'If an account exists for that email, a verification code has been sent to it.',
         ]);
     }
 
@@ -2817,10 +2673,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -2872,10 +2725,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -2916,32 +2766,21 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        if (!\App\Models\Driver::where('email', $email)->exists()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No driver account found with that email address.',
-            ], 422);
-        }
+        // Respond the same way whether or not the account exists, so this
+        // endpoint cannot be used to discover registered emails.
+        if (\App\Models\Driver::where('email', $email)->exists()) {
+            $otp = PasswordOtp::issue($email);
 
-        $otp = (string)rand(100000, 999999);
-        PasswordOtp::where('email', $email)->delete();
-        PasswordOtp::create([
-            'email' => $email,
-            'otp' => $otp,
-            'expires_at' => Carbon::now()->addMinutes(10),
-        ]);
-
-        Log::info("Driver Password Reset OTP for {$email}: {$otp}");
-
-        try {
-            Mail::to($email)->send(new SendOtpMail($otp));
-        } catch (\Exception $e) {
-            Log::warning("SMTP email sending failed. Fallback logged in laravel.log.");
+            try {
+                Mail::to($email)->send(new SendOtpMail($otp));
+            } catch (\Exception $e) {
+                Log::warning('Password reset OTP email failed: ' . $e->getMessage());
+            }
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'A verification OTP has been sent to your email.',
+            'message' => 'If an account exists for that email, a verification code has been sent to it.',
         ]);
     }
 
@@ -2963,10 +2802,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -3018,10 +2854,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::where('email', $email)
-            ->where('otp', trim($request->otp))
-            ->where('expires_at', '>', Carbon::now())
-            ->first();
+        $otpRecord = PasswordOtp::findValid($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -3102,7 +2935,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $customerId = null;
         $token = $request->bearerToken();
         if ($token) {
-            $customer = Customer::where('api_token', $token)->first();
+            $customer = \App\Helpers\ApiTokenHelper::find(\App\Models\Customer::class, $token);
             if ($customer) {
                 $customerId = $customer->id;
             }
@@ -3196,7 +3029,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $customerId = null;
         $token = $request->bearerToken();
         if ($token) {
-            $customer = Customer::where('api_token', $token)->first();
+            $customer = \App\Helpers\ApiTokenHelper::find(\App\Models\Customer::class, $token);
             if ($customer) {
                 $customerId = $customer->id;
             }
@@ -3371,7 +3204,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $customerId = null;
         $token = $request->bearerToken();
         if ($token) {
-            $customer = Customer::where('api_token', $token)->first();
+            $customer = \App\Helpers\ApiTokenHelper::find(\App\Models\Customer::class, $token);
             if ($customer) {
                 $customerId = $customer->id;
             }
@@ -3637,7 +3470,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         // Ensure pod directory exists
         $podDir = public_path('uploads/pod');
         if (!\Illuminate\Support\Facades\File::exists($podDir)) {
-            \Illuminate\Support\Facades\File::makeDirectory($podDir, 0777, true, true);
+            \Illuminate\Support\Facades\File::makeDirectory($podDir, 0755, true, true);
         }
 
         // Handle proof of delivery photo upload (accept proof_photo, delivery_proof, photo, image, proof_of_delivery_photo, drop_photo, pod_photo, delivery_image, etc.)
@@ -3654,7 +3487,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             ?: $request->file('attachment');
 
         if ($photoFile) {
-            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $photoFile->getClientOriginalExtension();
+            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . ImageUploadHelper::safeExtension($photoFile);
             $photoFile->move($podDir, $fileName);
             $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
         } else {
@@ -3673,7 +3506,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 if (str_starts_with($base64Input, 'data:image/')) {
                     $parts = explode(';base64,', $base64Input);
                     $typeParts = explode('image/', $parts[0]);
-                    $imageType = $typeParts[1] ?? 'jpg';
+                    $imageType = ImageUploadHelper::cleanImageType($typeParts[1] ?? null);
                     $imageData = $parts[1] ?? '';
                 }
                 $decoded = base64_decode($imageData);
@@ -3691,7 +3524,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             ?: $request->file('customer_signature');
 
         if ($sigFile) {
-            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $sigFile->getClientOriginalExtension();
+            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . ImageUploadHelper::safeExtension($sigFile);
             $sigFile->move($podDir, $fileName);
             $order->proof_of_delivery_signature = 'uploads/pod/' . $fileName;
         } else {
@@ -3705,7 +3538,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 if (str_starts_with($sigInput, 'data:image/')) {
                     $parts = explode(';base64,', $sigInput);
                     $typeParts = explode('image/', $parts[0]);
-                    $imageType = $typeParts[1] ?? 'png';
+                    $imageType = ImageUploadHelper::cleanImageType($typeParts[1] ?? null);
                     $sigData = $parts[1] ?? '';
                 }
                 $decoded = base64_decode($sigData);
@@ -3768,30 +3601,31 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             ], 422);
         }
 
+        // Only reachable through the driver.auth middleware; never trust a
+        // driver_id or token sent in the request body.
         $driver = $request->attributes->get('driver');
         if (!$driver) {
-            // Check Authorization Bearer Token
-            $authHeader = $request->header('Authorization');
-            if ($authHeader && preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
-                $token = $matches[1];
-                $driver = \App\Models\Driver::where('remember_token', $token)->first();
-            }
-            if (!$driver && $request->filled('driver_id')) {
-                $driver = \App\Models\Driver::find($request->input('driver_id'));
-            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.'
+            ], 401);
         }
 
-        $query = \App\Models\Order::where('id', $orderId);
-        if ($driver) {
-            $order = (clone $query)->where(function ($q) use ($driver) {
+        // A driver may only upload proof for orders assigned to them (or still unassigned).
+        $order = \App\Models\Order::where('id', $orderId)
+            ->where(function ($q) use ($driver) {
                 $q->where('driver_id', $driver->id)
-                    ->orWhere('driver', $driver->name)
-                    ->orWhereNull('driver_id')
-                    ->orWhere('driver', 'Unassigned');
-            })->first() ?: $query->first();
-        } else {
-            $order = $query->first();
-        }
+                    ->orWhere(function ($q2) use ($driver) {
+                        $q2->whereNull('driver_id')
+                            ->where(function ($q3) use ($driver) {
+                                $q3->whereNull('driver')
+                                    ->orWhere('driver', 'Unassigned')
+                                    ->orWhere('driver', '')
+                                    ->orWhere('driver', $driver->name);
+                            });
+                    });
+            })
+            ->first();
 
         if (!$order) {
             return response()->json([
@@ -3807,7 +3641,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
 
         $podDir = public_path('uploads/pod');
         if (!\Illuminate\Support\Facades\File::exists($podDir)) {
-            \Illuminate\Support\Facades\File::makeDirectory($podDir, 0777, true, true);
+            \Illuminate\Support\Facades\File::makeDirectory($podDir, 0755, true, true);
         }
 
         // Handle proof of delivery photo upload
@@ -3824,7 +3658,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             ?: $request->file('attachment');
 
         if ($photoFile) {
-            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . $photoFile->getClientOriginalExtension();
+            $fileName = 'pod_photo_' . $order->id . '_' . time() . '.' . ImageUploadHelper::safeExtension($photoFile);
             $photoFile->move($podDir, $fileName);
             $order->proof_of_delivery_photo = 'uploads/pod/' . $fileName;
         } else {
@@ -3843,7 +3677,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 if (str_starts_with($base64Input, 'data:image/')) {
                     $parts = explode(';base64,', $base64Input);
                     $typeParts = explode('image/', $parts[0]);
-                    $imageType = $typeParts[1] ?? 'jpg';
+                    $imageType = ImageUploadHelper::cleanImageType($typeParts[1] ?? null);
                     $imageData = $parts[1] ?? '';
                 }
                 $decoded = base64_decode($imageData);
@@ -3861,7 +3695,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             ?: $request->file('customer_signature');
 
         if ($sigFile) {
-            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . $sigFile->getClientOriginalExtension();
+            $fileName = 'pod_sig_' . $order->id . '_' . time() . '.' . ImageUploadHelper::safeExtension($sigFile);
             $sigFile->move($podDir, $fileName);
             $order->proof_of_delivery_signature = 'uploads/pod/' . $fileName;
         } else {
@@ -3875,7 +3709,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 if (str_starts_with($sigInput, 'data:image/')) {
                     $parts = explode(';base64,', $sigInput);
                     $typeParts = explode('image/', $parts[0]);
-                    $imageType = $typeParts[1] ?? 'png';
+                    $imageType = ImageUploadHelper::cleanImageType($typeParts[1] ?? null);
                     $sigData = $parts[1] ?? '';
                 }
                 $decoded = base64_decode($sigData);
@@ -4135,13 +3969,10 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
     public function getCustomerAddresses(Request $request)
     {
         $customer = $request->attributes->get('customer');
-        if (!$customer && $request->filled('customer_id')) {
-            $customer = Customer::find($request->input('customer_id'));
-        }
         if (!$customer) {
             $token = $request->bearerToken() ?: $request->input('api_token');
             if ($token) {
-                $customer = Customer::where('api_token', $token)->first();
+                $customer = \App\Helpers\ApiTokenHelper::find(\App\Models\Customer::class, $token);
             }
         }
         if (!$customer) {
@@ -4176,13 +4007,10 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
     public function addOrUpdateCustomerAddress(Request $request)
     {
         $customer = $request->attributes->get('customer');
-        if (!$customer && $request->filled('customer_id')) {
-            $customer = Customer::find($request->input('customer_id'));
-        }
         if (!$customer) {
             $token = $request->bearerToken() ?: $request->input('api_token');
             if ($token) {
-                $customer = Customer::where('api_token', $token)->first();
+                $customer = \App\Helpers\ApiTokenHelper::find(\App\Models\Customer::class, $token);
             }
         }
         if (!$customer) {
@@ -4375,13 +4203,10 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
     public function editDriverProfile(Request $request)
     {
         $driver = $request->attributes->get('driver');
-        if (!$driver && $request->filled('driver_id')) {
-            $driver = Driver::find($request->input('driver_id'));
-        }
         if (!$driver) {
             $token = $request->bearerToken() ?: $request->input('api_token');
             if ($token) {
-                $driver = Driver::where('api_token', $token)->first();
+                $driver = \App\Helpers\ApiTokenHelper::find(\App\Models\Driver::class, $token);
             }
         }
         if (!$driver) {
@@ -4559,9 +4384,9 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $driver->refresh();
 
         $profileImageUrl = $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null;
-        $licFrontUrl = $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null;
-        $licBackUrl = $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null;
-        $vehicleRegUrl = $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null;
+        $licFrontUrl = $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null;
+        $licBackUrl = $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null;
+        $vehicleRegUrl = $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null;
 
         $driverData = array_merge([
             'id' => $driver->id,
@@ -4650,7 +4475,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users,email,' . $user->id,
-            'password' => 'nullable|string|min:6',
+            'password' => ['nullable', 'string', \Illuminate\Validation\Rules\Password::min(8)->letters()->numbers()],
             'profile_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
@@ -4675,10 +4500,10 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 \Illuminate\Support\Facades\File::delete(public_path($user->profile_image));
             }
             $file = $request->file('profile_image');
-            $fileName = 'profile_adm_' . $user->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $fileName = 'profile_adm_' . $user->id . '_' . time() . '.' . ImageUploadHelper::safeExtension($file);
             $uploadsDir = public_path('uploads/profiles');
             if (!\Illuminate\Support\Facades\File::exists($uploadsDir)) {
-                \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0777, true, true);
+                \Illuminate\Support\Facades\File::makeDirectory($uploadsDir, 0755, true, true);
             }
             $file->move($uploadsDir, $fileName);
             $data['profile_image'] = 'uploads/profiles/' . $fileName;
@@ -4694,12 +4519,69 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
     }
 
     /**
+     * Check a Stripe PaymentIntent before settling anything against it.
+     *
+     * Returns ['cleared' => bool, 'paid' => float, 'error' => ?string, 'status' => ?int].
+     * A payment clears only when Stripe reports it "succeeded", it belongs to this
+     * customer (when the intent carries customer metadata) and the amount received
+     * covers what is owed. Mock intents are accepted only for local development
+     * without Stripe keys.
+     */
+    private function verifyStripePayment(string $paymentIntentId, $customer, float $owed): array
+    {
+        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
+        $stripeConfigured = $stripeSecret && $stripeSecret !== 'mock';
+
+        if (str_starts_with($paymentIntentId, 'pi_mock_')) {
+            if (!$stripeConfigured && app()->environment('local', 'testing')) {
+                return ['cleared' => true, 'paid' => $owed, 'error' => null];
+            }
+            return ['cleared' => false, 'paid' => 0.0, 'error' => 'Invalid payment intent.', 'status' => 400];
+        }
+
+        if (!$stripeConfigured || !preg_match('/^pi_[A-Za-z0-9]+$/', $paymentIntentId)) {
+            return ['cleared' => false, 'paid' => 0.0, 'error' => 'Invalid payment intent.', 'status' => 400];
+        }
+
+        try {
+            $response = \Illuminate\Support\Facades\Http::withToken($stripeSecret)
+                ->get('https://api.stripe.com/v1/payment_intents/' . $paymentIntentId);
+        } catch (\Exception $e) {
+            Log::error('Stripe payment verification failed: ' . $e->getMessage());
+            return ['cleared' => false, 'paid' => 0.0, 'error' => 'Could not reach the payment provider. Please try again.', 'status' => 502];
+        }
+
+        if (!$response->successful()) {
+            return ['cleared' => false, 'paid' => 0.0, 'error' => 'Payment could not be verified.', 'status' => 400];
+        }
+
+        $data = $response->json();
+        $metaCustomer = $data['metadata']['customer_id'] ?? null;
+        if ($metaCustomer !== null && (string) $metaCustomer !== (string) $customer->id) {
+            return ['cleared' => false, 'paid' => 0.0, 'error' => 'This payment does not belong to your account.', 'status' => 403];
+        }
+
+        if (($data['status'] ?? null) !== 'succeeded') {
+            return ['cleared' => false, 'paid' => 0.0, 'error' => null];
+        }
+
+        $receivedCents = (int) ($data['amount_received'] ?? 0);
+        $owedCents = (int) round($owed * 100);
+        if ($owedCents > 0 && $receivedCents < $owedCents) {
+            Log::warning("Stripe payment {$paymentIntentId} for customer {$customer->id} received {$receivedCents} cents but {$owedCents} cents are owed.");
+            return ['cleared' => false, 'paid' => 0.0, 'error' => 'The amount paid does not cover this bill. Please contact support.', 'status' => 400];
+        }
+
+        return ['cleared' => true, 'paid' => $receivedCents / 100.0, 'error' => null];
+    }
+
+    /**
      * Helper to resolve target invoices and calculate total amount for a bill/week payment request.
      */
     private function resolveWeeklyInvoicesForPayment($customer, $billId = null, Request $request = null)
     {
         if (!$customer && $request) {
-            $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+            $customer = $request->attributes->get('customer');
         }
         if ($customer && is_numeric($customer)) {
             $customer = \App\Models\Customer::find($customer);
@@ -5178,7 +5060,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
 
     public function createBillPaymentIntent(Request $request, $billId)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json([
                 'success' => false,
@@ -5215,6 +5097,9 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                     'amount' => (int) round($totalAmount * 100),
                     'currency' => 'aud',
                     'automatic_payment_methods[enabled]' => 'true',
+                    'metadata[customer_id]' => (string) $customer->id,
+                    'metadata[kind]' => 'bill',
+                    'metadata[bill_id]' => (string) ($billId ?? ''),
                 ]);
 
                 if ($response->failed()) {
@@ -5266,7 +5151,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
 
     public function confirmBillPayment(Request $request, $billId)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json([
                 'success' => false,
@@ -5310,41 +5195,19 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             ]);
         }
 
-        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
-        $paymentCleared = false;
-        $actualPaidAmount = 0.0;
-
-        if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
-            try {
-                $response = \Illuminate\Support\Facades\Http::withHeaders([
-                    'Authorization' => 'Bearer ' . $stripeSecret,
-                ])->get('https://api.stripe.com/v1/payment_intents/' . $paymentIntentId);
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    if (isset($data['status']) && in_array($data['status'], ['succeeded', 'processing', 'requires_capture'])) {
-                        $paymentCleared = true;
-                    } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
-                        $paymentCleared = true;
-                    }
-                    if (isset($data['amount'])) {
-                        $actualPaidAmount = ((float) $data['amount']) / 100.0;
-                    }
-                }
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Stripe connection error: ' . $e->getMessage(),
-                ], 500);
-            }
-        } else {
-            $paymentCleared = true;
+        $verification = $this->verifyStripePayment($paymentIntentId, $customer, $totalAmount);
+        if (!empty($verification['error'])) {
+            return response()->json([
+                'success' => false,
+                'message' => $verification['error'],
+            ], $verification['status'] ?? 400);
         }
+        $paymentCleared = $verification['cleared'];
+        $actualPaidAmount = $verification['paid'];
 
         if ($paymentCleared) {
-            $settleAmount = $actualPaidAmount > 0
-                ? $actualPaidAmount
-                : ((float) ($request->input('amount') ?: $totalAmount));
+            // Only the amount Stripe actually received counts; never the client's figure.
+            $settleAmount = $actualPaidAmount;
 
             // Settle all resolved invoices first
             $settledInvoices = collect([]);
@@ -5369,7 +5232,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                     ->get();
 
                 foreach ($otherUnpaidInvoices as $otherInv) {
-                    if ($remainingPayment >= ((float) $otherInv->amount - 0.05) || (($resolved['is_overdue'] ?? false) && $settleAmount >= (float) $otherInv->amount)) {
+                    if ($remainingPayment >= ((float) $otherInv->amount - 0.05)) {
                         $otherInv->status = 'Paid';
                         $otherInv->save();
                         $settledInvoices->push($otherInv);
@@ -5500,7 +5363,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
 
     public function createOrderPaymentIntent(Request $request, $orderId)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json(['success' => false, 'message' => 'Customer not found or unauthorized.'], 401);
         }
@@ -5532,6 +5395,9 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                     'amount' => (int)round($totalAmount * 100),
                     'currency' => 'aud',
                     'automatic_payment_methods[enabled]' => 'true',
+                    'metadata[customer_id]' => (string) $customer->id,
+                    'metadata[kind]' => 'order',
+                    'metadata[order_id]' => (string) $orderId,
                 ]);
 
                 if ($response->failed()) {
@@ -5578,7 +5444,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
 
     public function confirmOrderPayment(Request $request, $id)
     {
-        $customer = $request->attributes->get('customer') ?: \App\Models\Customer::find($request->input('customer_id'));
+        $customer = $request->attributes->get('customer');
         if (!$customer) {
             return response()->json(['success' => false, 'message' => 'Customer not found or unauthorized.'], 401);
         }
@@ -5616,41 +5482,19 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             $totalAmount = (float) $order->amount;
         }
 
-        $stripeSecret = config('services.stripe.secret') ?: env('STRIPE_SECRET');
-        $paymentCleared = false;
-        $actualPaidAmount = 0.0;
-
-        if ($stripeSecret && $stripeSecret !== 'mock' && !str_starts_with($paymentIntentId, 'pi_mock_')) {
-            try {
-                $response = \Illuminate\Support\Facades\Http::withHeaders([
-                    'Authorization' => 'Bearer ' . $stripeSecret,
-                ])->get('https://api.stripe.com/v1/payment_intents/' . $paymentIntentId);
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    if (isset($data['status']) && in_array($data['status'], ['succeeded', 'processing', 'requires_capture'])) {
-                        $paymentCleared = true;
-                    } elseif (isset($data['status']) && in_array($data['status'], ['requires_payment_method', 'requires_confirmation', 'requires_action']) && app()->environment('local')) {
-                        $paymentCleared = true;
-                    }
-                    if (isset($data['amount'])) {
-                        $actualPaidAmount = ((float) $data['amount']) / 100.0;
-                    }
-                }
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Stripe connection error: ' . $e->getMessage()
-                ], 500);
-            }
-        } else {
-            $paymentCleared = true;
+        $verification = $this->verifyStripePayment($paymentIntentId, $customer, $totalAmount);
+        if (!empty($verification['error'])) {
+            return response()->json([
+                'success' => false,
+                'message' => $verification['error'],
+            ], $verification['status'] ?? 400);
         }
+        $paymentCleared = $verification['cleared'];
+        $actualPaidAmount = $verification['paid'];
 
         if ($paymentCleared) {
-            $settleAmount = $actualPaidAmount > 0
-                ? $actualPaidAmount
-                : ((float) ($request->input('amount') ?: $totalAmount));
+            // Only the amount Stripe actually received counts; never the client's figure.
+            $settleAmount = $actualPaidAmount;
 
             if ($order) {
                 $order->status = 'Pending';
@@ -5856,13 +5700,13 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 'address' => $driver->address,
                 'license_no' => $driver->license_no,
                 'license_expiry' => $driver->license_expiry,
-                'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
-                'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+                'license_copy_front' => $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null,
+                'license_copy_back' => $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null,
                 'profile_image' => $imageUrl,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
                 'assigned_zip' => $driver->assigned_zip,
                 'area' => $driver->area,
                 'status' => $driver->status,
@@ -5893,7 +5737,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $driver->update(['vehicle_reg_image' => $savedImage]);
         $driver->refresh();
 
-        $imageUrl = str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image);
+        $imageUrl = ImageUploadHelper::url($driver->vehicle_reg_image);
 
         return response()->json([
             'success' => true,
@@ -5911,8 +5755,8 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 'address' => $driver->address,
                 'license_no' => $driver->license_no,
                 'license_expiry' => $driver->license_expiry,
-                'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
-                'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+                'license_copy_front' => $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null,
+                'license_copy_back' => $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null,
                 'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
                 'vehicle_reg_image' => $imageUrl,
@@ -5948,7 +5792,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $driver->update(['license_copy_front' => $savedImage]);
         $driver->refresh();
 
-        $imageUrl = str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front);
+        $imageUrl = ImageUploadHelper::url($driver->license_copy_front);
 
         return response()->json([
             'success' => true,
@@ -5965,12 +5809,12 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 'license_no' => $driver->license_no,
                 'license_expiry' => $driver->license_expiry,
                 'license_copy_front' => $imageUrl,
-                'license_copy_back' => $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null,
+                'license_copy_back' => $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null,
                 'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
                 'assigned_zip' => $driver->assigned_zip,
                 'area' => $driver->area,
                 'status' => $driver->status,
@@ -6001,7 +5845,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         $driver->update(['license_copy_back' => $savedImage]);
         $driver->refresh();
 
-        $imageUrl = str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back);
+        $imageUrl = ImageUploadHelper::url($driver->license_copy_back);
 
         return response()->json([
             'success' => true,
@@ -6017,13 +5861,13 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 'address' => $driver->address,
                 'license_no' => $driver->license_no,
                 'license_expiry' => $driver->license_expiry,
-                'license_copy_front' => $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null,
+                'license_copy_front' => $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null,
                 'license_copy_back' => $imageUrl,
                 'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
                 'assigned_zip' => $driver->assigned_zip,
                 'area' => $driver->area,
                 'status' => $driver->status,
@@ -6050,8 +5894,8 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
             $driver->refresh();
         }
 
-        $licFrontUrl = $driver->license_copy_front ? (str_starts_with($driver->license_copy_front, 'http') ? $driver->license_copy_front : asset($driver->license_copy_front)) : null;
-        $licBackUrl = $driver->license_copy_back ? (str_starts_with($driver->license_copy_back, 'http') ? $driver->license_copy_back : asset($driver->license_copy_back)) : null;
+        $licFrontUrl = $driver->license_copy_front ? ImageUploadHelper::url($driver->license_copy_front) : null;
+        $licBackUrl = $driver->license_copy_back ? ImageUploadHelper::url($driver->license_copy_back) : null;
 
         return response()->json([
             'success' => true,
@@ -6072,9 +5916,9 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
                 'license_copy_back' => $licBackUrl,
                 'profile_image' => $driver->profile_image ? (str_starts_with($driver->profile_image, 'http') ? $driver->profile_image : asset($driver->profile_image)) : null,
                 'vehicle_reg_no' => $driver->vehicle_reg_no,
-                'vehicle_reg_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_registration_image' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
-                'vehicle_reg_doc' => $driver->vehicle_reg_image ? (str_starts_with($driver->vehicle_reg_image, 'http') ? $driver->vehicle_reg_image : asset($driver->vehicle_reg_image)) : null,
+                'vehicle_reg_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_registration_image' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
+                'vehicle_reg_doc' => $driver->vehicle_reg_image ? ImageUploadHelper::url($driver->vehicle_reg_image) : null,
                 'assigned_zip' => $driver->assigned_zip,
                 'area' => $driver->area,
                 'status' => $driver->status,

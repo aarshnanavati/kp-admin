@@ -129,6 +129,107 @@ class ImageUploadHelper
     ];
 
     /**
+     * Upload folders holding identity documents. Files here are blocked from
+     * direct web access and served only through signed links (see SecureMediaController).
+     */
+    public const PRIVATE_FOLDERS = ['licenses', 'vehicles'];
+
+    /**
+     * Minutes a signed document link stays valid.
+     */
+    public const SIGNED_URL_MINUTES = 60;
+
+    public static function privateFolderPath(string $folder): string
+    {
+        return public_path('uploads/' . $folder);
+    }
+
+    /**
+     * Public URL for a stored upload path. Identity documents get a temporary
+     * signed link instead of a permanent public URL.
+     */
+    public static function url(?string $path): ?string
+    {
+        if (!$path) {
+            return null;
+        }
+
+        $clean = str_replace('\\', '/', trim($path));
+        if (preg_match('~(?:^|/)uploads/(' . implode('|', self::PRIVATE_FOLDERS) . ')/([A-Za-z0-9._-]+)$~', $clean, $m)) {
+            return \Illuminate\Support\Facades\URL::temporarySignedRoute(
+                'secure-media',
+                now()->addMinutes(self::SIGNED_URL_MINUTES),
+                ['folder' => $m[1], 'file' => $m[2]]
+            );
+        }
+
+        if (str_starts_with($clean, 'http://') || str_starts_with($clean, 'https://')) {
+            return $clean;
+        }
+
+        return asset($clean);
+    }
+
+    /**
+     * File types that may be uploaded. The extension is always derived from the
+     * file's content, never from the name the client sent.
+     */
+    public const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'pdf'];
+
+    /**
+     * Return a safe extension for an uploaded file, or stop the request with a
+     * 422 response when the file is not an allowed image or PDF.
+     */
+    public static function safeExtension(UploadedFile $file): string
+    {
+        $ext = strtolower((string) $file->guessExtension());
+        if ($ext === 'jpeg') {
+            $ext = 'jpg';
+        }
+
+        if (!in_array($ext, self::ALLOWED_EXTENSIONS, true)) {
+            abort(response()->json([
+                'success' => false,
+                'message' => 'Only image (JPG, PNG, GIF, WEBP, BMP) or PDF files can be uploaded.',
+            ], 422));
+        }
+
+        return $ext;
+    }
+
+    /**
+     * Map an image type declared by the client (e.g. from "data:image/png")
+     * to an allowed extension. Anything unknown is saved as .jpg so it can
+     * never be executed by the web server.
+     */
+    public static function cleanImageType(?string $declared): string
+    {
+        $type = strtolower(trim((string) $declared));
+        if ($type === 'jpeg') {
+            $type = 'jpg';
+        }
+
+        return in_array($type, self::ALLOWED_EXTENSIONS, true) && $type !== 'pdf' ? $type : 'jpg';
+    }
+
+    /**
+     * Delete a previously uploaded file, but only when it really lives inside
+     * public/uploads.
+     */
+    public static function deleteExisting(?string $existingPath): void
+    {
+        if (!$existingPath) {
+            return;
+        }
+
+        $base = realpath(public_path('uploads'));
+        $full = realpath(public_path($existingPath));
+        if ($base && $full && str_starts_with($full, $base . DIRECTORY_SEPARATOR) && is_file($full)) {
+            @File::delete($full);
+        }
+    }
+
+    /**
      * Universal file upload, Base64 parser, and path resolver.
      *
      * @param Request|array $input
@@ -146,16 +247,14 @@ class ImageUploadHelper
 
         $uploadsDir = public_path($uploadFolder);
         if (!File::exists($uploadsDir)) {
-            File::makeDirectory($uploadsDir, 0777, true, true);
+            File::makeDirectory($uploadsDir, 0755, true, true);
         }
 
         // 1. Check for Direct File Upload (multipart/form-data)
         $file = self::extractUploadedFile($input, $fieldNames);
         if ($file instanceof UploadedFile && $file->isValid()) {
-            if ($existingPath && File::exists(public_path($existingPath))) {
-                @File::delete(public_path($existingPath));
-            }
-            $ext = $file->getClientOriginalExtension() ?: ($file->guessExtension() ?: 'jpg');
+            self::deleteExisting($existingPath);
+            $ext = self::safeExtension($file);
             $fileName = $prefix . '_' . time() . '_' . Str::random(8) . '.' . strtolower($ext);
             $file->move($uploadsDir, $fileName);
             return $uploadFolder . '/' . $fileName;
@@ -172,10 +271,8 @@ class ImageUploadHelper
                     if (isset($allFiles[$baseKey]) && is_array($allFiles[$baseKey]) && isset($allFiles[$baseKey][$subIdx])) {
                         $f = $allFiles[$baseKey][$subIdx];
                         if ($f instanceof UploadedFile && $f->isValid()) {
-                            if ($existingPath && File::exists(public_path($existingPath))) {
-                                @File::delete(public_path($existingPath));
-                            }
-                            $ext = $f->getClientOriginalExtension() ?: ($f->guessExtension() ?: 'jpg');
+                            self::deleteExisting($existingPath);
+                            $ext = self::safeExtension($f);
                             $fileName = $prefix . '_' . time() . '_' . Str::random(8) . '.' . strtolower($ext);
                             $f->move($uploadsDir, $fileName);
                             return $uploadFolder . '/' . $fileName;
@@ -207,7 +304,11 @@ class ImageUploadHelper
 
             // B. Existing relative/absolute path or URL pointing to public uploads
             if (str_contains($str, 'uploads/') || str_contains($str, 'uploads\\')) {
-                return self::normalizeExistingUploadPath($str);
+                $normalized = self::normalizeExistingUploadPath($str);
+                if ($normalized !== null) {
+                    return $normalized;
+                }
+                continue;
             }
 
             // C. Raw Base64 string without data URI scheme (e.g. /9j/4AAQ... for JPEG, iVBORw... for PNG)
@@ -370,13 +471,11 @@ class ImageUploadHelper
      */
     protected static function writeDecodedBinary(string $decoded, string $ext, string $prefix, string $uploadFolder, ?string $existingPath = null): string
     {
-        if ($existingPath && File::exists(public_path($existingPath))) {
-            @File::delete(public_path($existingPath));
-        }
+        self::deleteExisting($existingPath);
 
         $uploadsDir = public_path($uploadFolder);
         if (!File::exists($uploadsDir)) {
-            File::makeDirectory($uploadsDir, 0777, true, true);
+            File::makeDirectory($uploadsDir, 0755, true, true);
         }
 
         $fileName = $prefix . '_' . time() . '_' . Str::random(8) . '.' . strtolower($ext);
@@ -388,9 +487,13 @@ class ImageUploadHelper
     /**
      * Normalize upload path string (strips domain, leading slashes, public/ prefixes).
      */
-    public static function normalizeExistingUploadPath(string $path): string
+    public static function normalizeExistingUploadPath(string $path): ?string
     {
         $clean = str_replace('\\', '/', trim($path));
+        // Never accept a reference that could point outside the uploads folder.
+        if (str_contains($clean, '..') || str_contains($clean, "\0")) {
+            return null;
+        }
         if (str_contains($clean, 'uploads/')) {
             $parts = explode('uploads/', $clean);
             return 'uploads/' . end($parts);
