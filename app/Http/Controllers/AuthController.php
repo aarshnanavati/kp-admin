@@ -29,6 +29,86 @@ use Carbon\Carbon;
 class AuthController extends Controller
 {
     /**
+     * Safely issue an OTP, compatible with both updated and legacy PasswordOtp models.
+     */
+    protected function issueOtp(string $email, int $minutes = 10): string
+    {
+        try {
+            if (method_exists(PasswordOtp::class, 'issue')) {
+                return PasswordOtp::issue($email, $minutes);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('PasswordOtp::issue failed, falling back to direct creation: ' . $e->getMessage());
+        }
+
+        $otp = (string) random_int(100000, 999999);
+        PasswordOtp::where('email', $email)->delete();
+        PasswordOtp::create([
+            'email' => $email,
+            'otp' => Hash::make($otp),
+            'expires_at' => Carbon::now()->addMinutes($minutes),
+        ]);
+
+        return $otp;
+    }
+
+    /**
+     * Safely find a valid OTP, compatible with both updated and legacy PasswordOtp models.
+     */
+    protected function findValidOtp(string $email, $otp, bool $allowVerified = false)
+    {
+        try {
+            if (method_exists(PasswordOtp::class, 'findValid')) {
+                return PasswordOtp::findValid($email, $otp, $allowVerified);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('PasswordOtp::findValid failed, falling back to direct query: ' . $e->getMessage());
+        }
+
+        $otp = trim((string) $otp);
+        $records = PasswordOtp::where('email', $email)
+            ->where('expires_at', '>', Carbon::now())
+            ->latest('id')
+            ->get();
+
+        foreach ($records as $record) {
+            if ($record->otp === 'VERIFIED') {
+                if ($allowVerified) {
+                    return $record;
+                }
+                continue;
+            }
+            if ($otp !== '' && $record->otp === $otp) {
+                return $record;
+            }
+            if ($otp !== '' && (str_starts_with($record->otp, '$2y$') || str_starts_with($record->otp, '$2a$')) && Hash::check($otp, $record->otp)) {
+                return $record;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Safely find an unexpired verified OTP record.
+     */
+    protected function findVerifiedOtp(string $email)
+    {
+        try {
+            if (method_exists(PasswordOtp::class, 'findVerified')) {
+                return PasswordOtp::findVerified($email);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('PasswordOtp::findVerified failed, falling back to direct query: ' . $e->getMessage());
+        }
+
+        return PasswordOtp::where('email', $email)
+            ->where('otp', 'VERIFIED')
+            ->where('expires_at', '>', Carbon::now())
+            ->first();
+    }
+
+    /**
      * Handle admin login request.
      */
     public function login(Request $request)
@@ -121,7 +201,7 @@ class AuthController extends Controller
         // Respond the same way whether or not the account exists, so this
         // endpoint cannot be used to discover registered emails.
         if (User::where('email', $email)->exists()) {
-            $otp = PasswordOtp::issue($email);
+            $otp = $this->issueOtp($email);
 
             try {
                 Mail::to($email)->send(new SendOtpMail($otp));
@@ -154,7 +234,7 @@ class AuthController extends Controller
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -198,7 +278,7 @@ class AuthController extends Controller
         $email = strtolower(trim($request->email));
 
         // Re-verify OTP to prevent bypasses
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -252,7 +332,7 @@ class AuthController extends Controller
         }
 
         // Generate 6-digit OTP
-        $otp = PasswordOtp::issue($email);
+        $otp = $this->issueOtp($email);
 
 
         // Send OTP email
@@ -287,7 +367,7 @@ class AuthController extends Controller
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -483,10 +563,10 @@ class AuthController extends Controller
         $otpRecord = null;
 
         if ($providedOtp) {
-            $otpRecord = PasswordOtp::findValid($email, $providedOtp, true);
+            $otpRecord = $this->findValidOtp($email, $providedOtp, true);
         } else {
             // Check if user already verified their email via verify-otp endpoint earlier on the same screen
-            $otpRecord = PasswordOtp::findVerified($email);
+            $otpRecord = $this->findVerifiedOtp($email);
         }
 
         $isVerified = ($otpRecord !== null);
@@ -651,7 +731,7 @@ class AuthController extends Controller
         );
 
         // Generate and send 6-digit OTP
-        $otp = PasswordOtp::issue($email);
+        $otp = $this->issueOtp($email);
 
 
         try {
@@ -697,7 +777,7 @@ class AuthController extends Controller
 
         // Gate: Customer must be verified before logging in
         if ($customer->is_verified === false || $customer->is_verified === 0) {
-            $otp = PasswordOtp::issue($customer->email);
+            $otp = $this->issueOtp($customer->email);
 
 
             try {
@@ -2640,7 +2720,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         // Respond the same way whether or not the account exists, so this
         // endpoint cannot be used to discover registered emails.
         if (Customer::where('email', $email)->exists()) {
-            $otp = PasswordOtp::issue($email);
+            $otp = $this->issueOtp($email);
 
             try {
                 Mail::to($email)->send(new SendOtpMail($otp));
@@ -2673,7 +2753,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -2725,7 +2805,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -2769,7 +2849,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         // Respond the same way whether or not the account exists, so this
         // endpoint cannot be used to discover registered emails.
         if (\App\Models\Driver::where('email', $email)->exists()) {
-            $otp = PasswordOtp::issue($email);
+            $otp = $this->issueOtp($email);
 
             try {
                 Mail::to($email)->send(new SendOtpMail($otp));
@@ -2802,7 +2882,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([
@@ -2854,7 +2934,7 @@ Our kitchen is now closed for today, but don’t worry — a fresh menu and deli
         }
 
         $email = strtolower(trim($request->email));
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return response()->json([

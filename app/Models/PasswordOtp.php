@@ -67,7 +67,10 @@ class PasswordOtp extends Model
                 }
                 continue;
             }
-            if ($otp !== '' && str_starts_with($record->otp, '$2y$') && Hash::check($otp, $record->otp)) {
+            if ($otp !== '' && $record->otp === $otp) {
+                return $record;
+            }
+            if ($otp !== '' && (str_starts_with($record->otp, '$2y$') || str_starts_with($record->otp, '$2a$')) && Hash::check($otp, $record->otp)) {
                 return $record;
             }
         }
@@ -84,5 +87,13 @@ class PasswordOtp extends Model
             ->where('otp', self::VERIFIED)
             ->where('expires_at', '>', now())
             ->first();
+    }
+
+    /**
+     * Fallback query scope if Eloquent routes static calls to query builder.
+     */
+    public function scopeIssue($query, string $email, int $minutes = 10): string
+    {
+        return static::issue($email, $minutes);
     }
 }

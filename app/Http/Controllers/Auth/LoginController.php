@@ -64,6 +64,67 @@ class LoginController extends Controller
     }
 
     /**
+     * Safely issue an OTP, compatible with both updated and legacy PasswordOtp models.
+     */
+    protected function issueOtp(string $email, int $minutes = 10): string
+    {
+        try {
+            if (method_exists(PasswordOtp::class, 'issue')) {
+                return PasswordOtp::issue($email, $minutes);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('PasswordOtp::issue failed in LoginController, falling back to direct creation: ' . $e->getMessage());
+        }
+
+        $otp = (string) random_int(100000, 999999);
+        PasswordOtp::where('email', $email)->delete();
+        PasswordOtp::create([
+            'email' => $email,
+            'otp' => Hash::make($otp),
+            'expires_at' => Carbon::now()->addMinutes($minutes),
+        ]);
+
+        return $otp;
+    }
+
+    /**
+     * Safely find a valid OTP, compatible with both updated and legacy PasswordOtp models.
+     */
+    protected function findValidOtp(string $email, $otp, bool $allowVerified = false)
+    {
+        try {
+            if (method_exists(PasswordOtp::class, 'findValid')) {
+                return PasswordOtp::findValid($email, $otp, $allowVerified);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('PasswordOtp::findValid failed in LoginController, falling back to direct query: ' . $e->getMessage());
+        }
+
+        $otp = trim((string) $otp);
+        $records = PasswordOtp::where('email', $email)
+            ->where('expires_at', '>', Carbon::now())
+            ->latest('id')
+            ->get();
+
+        foreach ($records as $record) {
+            if ($record->otp === 'VERIFIED') {
+                if ($allowVerified) {
+                    return $record;
+                }
+                continue;
+            }
+            if ($otp !== '' && $record->otp === $otp) {
+                return $record;
+            }
+            if ($otp !== '' && (str_starts_with($record->otp, '$2y$') || str_starts_with($record->otp, '$2a$')) && Hash::check($otp, $record->otp)) {
+                return $record;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Step 1: Send OTP to email.
      */
     public function sendOtp(Request $request)
@@ -77,7 +138,7 @@ class LoginController extends Controller
         // Only send a code to real admin accounts, but respond the same way either
         // way so the form cannot be used to discover admin emails.
         if (User::where('email', $email)->exists()) {
-            $otp = PasswordOtp::issue($email);
+            $otp = $this->issueOtp($email);
 
             try {
                 Mail::to($email)->send(new SendOtpMail($otp));
@@ -105,7 +166,7 @@ class LoginController extends Controller
             return redirect()->route('forgot-password')->withErrors(['email' => 'Session expired. Please request a new OTP.']);
         }
 
-        $otpRecord = PasswordOtp::findValid($email, $request->otp);
+        $otpRecord = $this->findValidOtp($email, $request->otp);
 
         if (!$otpRecord) {
             return back()->withErrors([
